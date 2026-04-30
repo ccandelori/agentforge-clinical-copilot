@@ -27,6 +27,7 @@ use OpenEMR\Core\OEGlobalsBag;
 use OpenEMR\Modules\AgentForge\Controllers\AgentProxyController;
 use OpenEMR\Modules\AgentForge\Services\AgentJwtService;
 use OpenEMR\Modules\AgentForge\Services\UserRoleLookup;
+use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\PhpBridgeSessionStorage;
@@ -61,6 +62,18 @@ $jwtService = AgentJwtService::fromEnvironment(
     ServiceContainer::getClock(),
 );
 
-$controller = new AgentProxyController($jwtService);
+$sidecarBaseUrl = getenv('AGENTFORGE_SIDECAR_URL');
+if ($sidecarBaseUrl === false || $sidecarBaseUrl === '') {
+    $sidecarBaseUrl = 'http://agentforge-sidecar:8000';
+}
+
+$controller = new AgentProxyController(
+    jwtService: $jwtService,
+    httpClient: HttpClient::create([
+        'timeout' => 8.0,        // total agent deadline is 7s; leave a small margin
+        'max_duration' => 30.0,  // hard ceiling so a wedged sidecar can't hang us
+    ]),
+    sidecarBaseUrl: $sidecarBaseUrl,
+);
 $response = $controller->turn($request);
 $response->send();

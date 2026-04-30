@@ -7,16 +7,18 @@ declare(strict_types=1);
  * validates the user/patient session context, mints a short-lived JWT,
  * and proxies the request to the Python sidecar.
  *
- * Subtasks 7.1 and 7.2 cover the patient-context + auth guards and the
- * JWT minting integration. Subtask 7.3 fills in the streaming proxy to
- * the sidecar; until then the success path returns a 501 placeholder
- * carrying the freshly minted token.
- *
  * The route URL `/agentforge/turn` is served by `public/turn.php`,
  * which boots OpenEMR and dispatches here. Production deployments may
  * front the module with a reverse-proxy rewrite to expose
  * `/agentforge/turn` at the root rather than under
  * `/interface/modules/custom_modules/oe-module-agentforge/public/turn.php`.
+ *
+ * Failure modes are mapped explicitly to HTTP status codes so the
+ * browser-side panel can act on them:
+ *   400  no patient context (open a chart first)
+ *   401  no auth (user not logged in)
+ *   502  sidecar returned non-2xx (orchestrator/agent error)
+ *   503  sidecar transport failure (unreachable / timeout)
  *
  * @package   OpenEMR
  * @link      https://www.open-emr.org
@@ -32,11 +34,18 @@ use OpenEMR\Modules\AgentForge\Services\BreakglassContext;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Contracts\HttpClient\Exception\ExceptionInterface as HttpClientExceptionInterface;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
+use Symfony\Contracts\HttpClient\ResponseInterface;
 
 class AgentProxyController
 {
     public function __construct(
         private readonly AgentJwtService $jwtService,
+        private readonly HttpClientInterface $httpClient,
+        private readonly string $sidecarBaseUrl,
     ) {
     }
 
@@ -78,15 +87,74 @@ class AgentProxyController
             breakglass: $breakglass,
         );
 
-        // Subtask 7.3 will replace this with a StreamedResponse forwarding
-        // to the sidecar over HTTP with `Authorization: Bearer <token>`.
-        return new JsonResponse(
-            [
-                '_pending_proxy' => true,
-                'token' => $token,
-            ],
-            Response::HTTP_NOT_IMPLEMENTED
-        );
+        try {
+            $sidecarResponse = $this->httpClient->request(
+                'POST',
+                rtrim($this->sidecarBaseUrl, '/') . '/turn',
+                [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $token,
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body' => $request->getContent(),
+                ]
+            );
+            $statusCode = $sidecarResponse->getStatusCode();
+        } catch (TransportExceptionInterface $e) {
+            return new JsonResponse(
+                [
+                    'error' => 'Agent sidecar unreachable. Please retry shortly.',
+                    'detail' => $e->getMessage(),
+                ],
+                Response::HTTP_SERVICE_UNAVAILABLE
+            );
+        } catch (HttpClientExceptionInterface $e) {
+            return new JsonResponse(
+                ['error' => 'Agent sidecar request failed.'],
+                Response::HTTP_BAD_GATEWAY
+            );
+        }
+
+        if ($statusCode < 200 || $statusCode >= 300) {
+            return new JsonResponse(
+                [
+                    'error' => 'Agent sidecar returned an error.',
+                    'sidecar_status' => $statusCode,
+                ],
+                Response::HTTP_BAD_GATEWAY
+            );
+        }
+
+        return $this->streamSidecarResponse($sidecarResponse);
+    }
+
+    /**
+     * Build a StreamedResponse that pipes the sidecar's response body
+     * through to the client without buffering the full body. The
+     * httpClient is captured by reference inside the streaming callback
+     * so streaming continues across the closure boundary.
+     */
+    private function streamSidecarResponse(ResponseInterface $sidecarResponse): StreamedResponse
+    {
+        $client = $this->httpClient;
+
+        $streamed = new StreamedResponse(function () use ($client, $sidecarResponse): void {
+            foreach ($client->stream($sidecarResponse) as $chunk) {
+                echo $chunk->getContent();
+                if (function_exists('flush')) {
+                    flush();
+                }
+            }
+        }, Response::HTTP_OK);
+
+        // Forward Content-Type from sidecar so JSON / SSE / plain text
+        // all reach the browser correctly.
+        $sidecarHeaders = $sidecarResponse->getHeaders(throw: false);
+        if (isset($sidecarHeaders['content-type'][0])) {
+            $streamed->headers->set('Content-Type', $sidecarHeaders['content-type'][0]);
+        }
+
+        return $streamed;
     }
 
     /**
@@ -102,8 +170,6 @@ class AgentProxyController
         if (!is_array($decoded)) {
             return [];
         }
-        // Filter to string-keyed entries: json_decode permits int keys
-        // but our consumer treats the body as a JSON object.
         $filtered = [];
         foreach ($decoded as $key => $value) {
             if (is_string($key)) {
