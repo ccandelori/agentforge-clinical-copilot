@@ -188,7 +188,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "OpenEMR\\": "tests"
+            "OpenEMR\\": "tests",
+            "OpenEMR\\Modules\\AgentForge\\": "interface/modules/custom_modules/oe-module-agentforge/src"
         }
     },
     "config": {
