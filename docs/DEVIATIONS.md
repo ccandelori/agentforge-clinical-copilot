@@ -152,3 +152,47 @@ Worth folding into the bootstrapping flow when we add modules going forward.
 [`tests/Tests/Isolated/Common/Twig/TwigTemplateCompilationTest.php`](../tests/Tests/Isolated/Common/Twig/TwigTemplateCompilationTest.php).
 
 ---
+
+## 2026-04-30 — Stripped half-finished dependency storage from Bootstrap.php
+
+**Plan:** Task 1.2 spec defined `Bootstrap.php` with constructor-stored
+`$twig`, `$logger`, and `$eventDispatcher` properties (mirroring the
+existing `oe-module-comlink-telehealth` and `oe-module-claimrev-connect`
+patterns).
+
+**Deviation:** Removed the `$twig`, `$logger`, and `$eventDispatcher`
+property storage. The constructor still accepts these parameters (per
+OpenEMR's module-loader contract) but does not retain them. Storage will
+be reintroduced in Task 2 when `subscribeToEvents()` begins registering
+listeners that actually need them. Also added `assert()` calls in
+`openemr.bootstrap.php` to narrow the `$classLoader` and `$eventDispatcher`
+globals injected by OpenEMR's `ModulesApplication`.
+
+**Why:** PHPStan level 10 (per CLAUDE.md) flagged the stored-but-unused
+properties as `property.onlyWritten`. Other modules suppress this with
+baseline entries — but CLAUDE.md says "Avoid baselines. Never add new
+baseline entries — fix the underlying type error" *and* "no half-finished
+implementations either." Both directives point the same way: don't store
+dependencies before you use them. Stripping is the honest fix.
+
+The bootstrap.php globals were similarly flagged (`method.nonObject`,
+`variable.undefined`) because PHPStan can't see through OpenEMR's
+inject-by-name pattern. CLAUDE.md says "Avoid inline `@var` casts" — so
+instead of `/** @var */`, we use `assert($x instanceof Y)`, which is
+runtime-defensive in dev (where `assert.active=1`) and a no-op in
+production. PHPStan understands the assertion for type narrowing.
+
+**What we learned:** Two things worth recording:
+1. The spec mirrored a pattern from established modules whose Bootstrap
+   classes are *complete*. Copying their structure for a stub class
+   imports the half-finished anti-pattern. Better to strip down and grow.
+2. OpenEMR's project practice (baseline entries for module bootstrap globals)
+   conflicts with CLAUDE.md's "avoid baselines" rule. The `assert(... instanceof ...)`
+   idiom satisfies both — it's the right pattern for any future module
+   bootstrap files we add.
+
+**Artifacts:**
+[`oe-module-agentforge/openemr.bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/openemr.bootstrap.php),
+[`oe-module-agentforge/src/Bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Bootstrap.php).
+
+---
