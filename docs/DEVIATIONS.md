@@ -329,3 +329,115 @@ sidecar — same problem shape.
 [`oe-module-agentforge/src/Bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Bootstrap.php).
 
 ---
+
+## 2026-04-30 — Used `lcobucci/jwt` not `firebase/php-jwt` for JWT minting
+
+**Plan:** Task 6 spec's implementation snippet used `Firebase\JWT\JWT` /
+`Firebase\JWT\Key`; subtask 6.5's title contradicted with "lcobucci/jwt
+Library and Full Claims."
+
+**Deviation:** Use `lcobucci/jwt` 4.x.
+
+**Why:** `composer.json` already requires `lcobucci/jwt: ^4.3.0`;
+`firebase/php-jwt` is not a dependency. OpenEMR's OAuth2, OpenID
+Connect, and JWKS code all use lcobucci. Adding a second JWT library
+just for one module would split the project's auth surface for no
+gain.
+
+**What we learned:** When a spec snippet and a subtask title disagree,
+verify against `composer.json` and existing project usage before
+picking. The spec was written ahead of implementation; what landed in
+the codebase wins.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/AgentJwtService.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/AgentJwtService.php).
+
+---
+
+## 2026-04-30 — Wrote GACL query directly; `AclMain::getUserRole()` doesn't exist
+
+**Plan:** Task 6 spec's implementation snippet had:
+```php
+return AclMain::getUserRole($userId);
+```
+
+**Deviation:** Created `UserRoleLookup` with a Doctrine DBAL query
+mirroring `OpenEMR\Common\Logging\BreakglassChecker`'s shape:
+```sql
+SELECT grp.value
+FROM gacl_aro JOIN gacl_groups_aro_map JOIN gacl_aro_groups
+WHERE BINARY aro.value = ?
+ORDER BY grp.id ASC LIMIT 1
+```
+(The lookup keys on username, not user id, because `gacl_aro.value`
+stores the username — same convention BreakglassChecker uses.)
+
+**Why:** `AclMain` only has ACL *check* methods (`aclCheckCore`,
+`aclCheckForm`, `zhAclCheck`, etc.) — no role-getter. The spec called
+a method that doesn't exist. Writing the GACL query directly is the
+right path; it matches the established BreakglassChecker pattern in
+the same area of the codebase.
+
+The `BINARY` collation match and the lowest-id deterministic
+tiebreaker are inherited from BreakglassChecker — case-sensitive
+match avoids a username-spoofing class of bug, and a deterministic
+"primary group" keeps role claims stable across requests for the same
+user.
+
+**What we learned:** Spec method references should be verified against
+the actual class file. Looking at OpenEMR's auth/ACL code reveals that
+"role" is not a single concept in OpenEMR — there's the OAuth coarse
+`user_role` (`users` / `patient` / `system`), and there are GACL
+group memberships. The spec conflated them.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/UserRoleLookup.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/UserRoleLookup.php),
+[`tests/Tests/Services/AgentForge/UserRoleLookupIntegrationTest.php`](../tests/Tests/Services/AgentForge/UserRoleLookupIntegrationTest.php).
+
+---
+
+## 2026-04-30 — `BreakglassContext` value object + PSR-20 clock injection
+
+**Plan:** Task 6 spec passed `bool $breakglassFlag` and
+`?string $breakglassReason` as separate parameters to `mintToken`,
+plus `time()` directly inside the method for `iat` / `exp`.
+
+**Deviation:** Two changes:
+1. Replaced the two breakglass parameters with a `BreakglassContext`
+   value object whose constructor enforces "flag=true requires non-empty
+   reason."
+2. Inject `Psr\\Clock\\ClockInterface` instead of calling `time()` /
+   `new DateTimeImmutable()` directly.
+
+**Why:**
+
+CLAUDE.md is explicit on both points. "Parse, don't validate" pushes
+constraints into the type system: the consistency rule (true flag →
+non-empty reason) is something every caller had to remember; making
+it a constructor invariant means `mintToken` only sees valid contexts.
+Whitespace-only reasons are caught too — the trim guard closes a
+foot-gun where a single-space reason would satisfy a naive empty
+check while leaving the audit trail with no actionable text.
+
+Clock injection is the PSR-20 idiom CLAUDE.md cites directly:
+
+> Inject ClockInterface instead of calling new DateTimeImmutable()
+> or time() directly. This makes time-dependent code deterministically
+> testable.
+
+The new tests use `Lcobucci\\Clock\\FrozenClock` so iat/exp values are
+predictable across runs. `lcobucci/clock` is already in
+`composer.json`.
+
+**What we learned:** Two ADR-flavored decisions worth preserving as
+patterns: (a) wrap related primitive parameters in a value object when
+they have a consistency invariant, (b) never embed clock reads in
+business logic. Both apply to many of the sidecar's coming
+implementations (verifier, orchestrator) where time and consistency
+matter.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/BreakglassContext.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/BreakglassContext.php),
+[`oe-module-agentforge/src/Services/AgentJwtService.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/AgentJwtService.php).
+
+---
