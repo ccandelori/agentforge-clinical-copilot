@@ -18,6 +18,9 @@ use OpenEMR\Modules\AgentForge\Bootstrap;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\EventDispatcher\EventDispatcher;
+use Twig\Environment;
+use Twig\Loader\ArrayLoader;
+use Twig\Loader\FilesystemLoader;
 
 /**
  * Behavior tests for the AgentForge module Bootstrap.
@@ -55,5 +58,34 @@ final class BootstrapTest extends TestCase
         );
         self::assertCount(1, $listeners);
         self::assertSame([$bootstrap, 'renderAgentPanel'], $listeners[0]);
+    }
+
+    #[Test]
+    public function addTemplateOverrideLoaderPrependsModulePathToFilesystemLoader(): void
+    {
+        $existingPath = sys_get_temp_dir();
+        $loader = new FilesystemLoader([$existingPath]);
+        $event = new TwigEnvironmentEvent(new Environment($loader));
+        $bootstrap = new Bootstrap(new EventDispatcher());
+
+        $bootstrap->addTemplateOverrideLoader($event);
+
+        // FilesystemLoader stores paths without a trailing separator.
+        $expected = rtrim($bootstrap->getTemplatePath(), DIRECTORY_SEPARATOR);
+        self::assertSame($expected, $loader->getPaths()[0]);
+        self::assertSame(rtrim($existingPath, DIRECTORY_SEPARATOR), $loader->getPaths()[1]);
+    }
+
+    #[Test]
+    public function addTemplateOverrideLoaderIsNoOpForNonFilesystemLoader(): void
+    {
+        $loader = new ArrayLoader(['template.twig' => 'unchanged']);
+        $event = new TwigEnvironmentEvent(new Environment($loader));
+        $bootstrap = new Bootstrap(new EventDispatcher());
+
+        // Should complete without throwing; loader is unchanged.
+        $bootstrap->addTemplateOverrideLoader($event);
+
+        self::assertTrue($loader->exists('template.twig'));
     }
 }

@@ -27,6 +27,7 @@ use OpenEMR\Events\Core\TwigEnvironmentEvent;
 use OpenEMR\Events\PatientDemographics\RenderEvent as PatientDemographicsRenderEvent;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Twig\Loader\FilesystemLoader;
 
 class Bootstrap
 {
@@ -61,8 +62,13 @@ class Bootstrap
 
     public function addTemplateOverrideLoader(TwigEnvironmentEvent $event): void
     {
-        // Implementation lands in subtask 2.3.
-        unset($event);
+        // Prepend our templates dir so module overrides win against the
+        // default OpenEMR Twig paths. Non-Filesystem loaders (ArrayLoader,
+        // ChainLoader, etc.) are left alone.
+        $loader = $event->getTwigEnvironment()->getLoader();
+        if ($loader instanceof FilesystemLoader) {
+            $loader->prependPath($this->getTemplatePath());
+        }
     }
 
     public function renderAgentPanel(PatientDemographicsRenderEvent $event): void
