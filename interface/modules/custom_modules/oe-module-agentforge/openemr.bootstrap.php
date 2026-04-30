@@ -18,18 +18,21 @@ declare(strict_types=1);
 
 namespace OpenEMR\Modules\AgentForge;
 
+use OpenEMR\Core\ModulesClassLoader;
 use OpenEMR\Core\OEGlobalsBag;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
- * @global \OpenEMR\Core\ModulesClassLoader $classLoader
+ * @global ModulesClassLoader $classLoader Injected by OpenEMR's ModulesApplication
+ * @global EventDispatcherInterface $eventDispatcher Injected by OpenEMR's ModulesApplication
  */
+
+assert(isset($classLoader) && $classLoader instanceof ModulesClassLoader);
 $classLoader->registerNamespaceIfNotExists(
     'OpenEMR\\Modules\\AgentForge\\',
     __DIR__ . DIRECTORY_SEPARATOR . 'src'
 );
 
-/**
- * @global \Symfony\Component\EventDispatcher\EventDispatcherInterface $eventDispatcher Injected by the OpenEMR module loader
- */
+assert(isset($eventDispatcher) && $eventDispatcher instanceof EventDispatcherInterface);
 $bootstrap = new Bootstrap($eventDispatcher, OEGlobalsBag::getInstance()->getKernel());
 $bootstrap->subscribeToEvents();
