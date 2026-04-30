@@ -1,0 +1,30 @@
+{#
+The AgentForge Clinical Co-Pilot chat panel.
+
+Renders inside the patient summary view as a card containing the conversational
+agent interface. The browser-side JS (public/js/) binds this card to the
+sidecar's /agentforge/turn endpoint, capturing patient_id from the chart
+context. The card body is the chat surface; the agent is bound to the active
+patient for the lifetime of the panel.
+
+Expected variables (provided by the controller in Task 2):
+- id: DOM id for the collapsible card body
+- title: card title (e.g. "Clinical Co-Pilot")
+- auth: bool, whether the user can interact with the agent
+- card: card object exposing canAdd()/canEdit()
+- forceAlwaysOpen, initiallyCollapsed, btnLink, btnClass, linkMethod, btnLabel,
+  requireRestore: see card_base.html.twig
+
+@package OpenEMR
+@subpackage Modules
+@author Cameron Candelori <cameron.candelori@challenger.gauntletai.com>
+@copyright Copyright (c) 2026 Cameron Candelori
+@license https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
+#}
+{% extends "patient/card/card_base.html.twig" %}
+
+{% block content %}
+    <div class="agentforge-panel" data-module="oe-module-agentforge">
+        {# Chat surface is rendered by public/js/ on mount. #}
+    </div>
+{% endblock %}
