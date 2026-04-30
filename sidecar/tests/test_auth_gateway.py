@@ -11,15 +11,53 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import jwt
 import pytest
+import redis.exceptions
 from fastapi import HTTPException
 
 from agentforge.gateway.auth_gateway import AuthGateway, RequestContext
 
 JWT_SECRET = "test-secret-32-bytes-or-more-padding"
 ISSUER = "openemr-agentforge"
+
+
+def make_redis_mock(
+    *,
+    policy_loaded: bool = True,
+    role_clearances: dict[str, set[bytes]] | None = None,
+    raise_on_get: bool = False,
+    raise_on_smembers: bool = False,
+) -> AsyncMock:
+    """Build an async Redis mock prepopulated with policy state.
+
+    `policy_loaded` controls the sentinel `agentforge:policy:version`.
+    `role_clearances` maps role names to the byte-encoded clearance set
+    Redis would return.
+    """
+    redis_mock = AsyncMock()
+
+    async def get(key: str) -> bytes | None:
+        if raise_on_get:
+            raise redis.exceptions.ConnectionError("simulated outage")
+        if key == "agentforge:policy:version":
+            return b"1" if policy_loaded else None
+        return None
+
+    async def smembers(key: str) -> set[bytes]:
+        if raise_on_smembers:
+            raise redis.exceptions.ConnectionError("simulated outage")
+        prefix = "agentforge:policy:role:"
+        if not key.startswith(prefix):
+            return set()
+        role = key[len(prefix):]
+        return (role_clearances or {}).get(role, set())
+
+    redis_mock.get.side_effect = get
+    redis_mock.smembers.side_effect = smembers
+    return redis_mock
 
 
 def make_token(secret: str = JWT_SECRET, **overrides: Any) -> str:
@@ -181,3 +219,129 @@ async def test_validate_request_raises_400_when_sub_is_not_a_numeric_string(
         await gateway.validate_request(f"Bearer {token}")
 
     assert exc_info.value.status_code == 400
+
+
+# ---------- Sensitivity clearance loading from Redis (subtask 8.2) ----------
+
+
+async def test_validate_request_loads_clearances_from_redis_for_role() -> None:
+    redis_mock = make_redis_mock(
+        role_clearances={
+            "Physicians": {b"mental_health_authorized", b"cfr42_authorized"},
+        },
+    )
+    gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    ctx = await gateway.validate_request(f"Bearer {make_token(role='Physicians')}")
+
+    assert ctx.sensitivity_clearances == frozenset(
+        {"mental_health_authorized", "cfr42_authorized"}
+    )
+
+
+async def test_validate_request_returns_empty_clearances_when_role_has_none() -> None:
+    # Role exists but has no special clearances in the policy — this is a
+    # valid configuration, distinct from "policy not loaded".
+    redis_mock = make_redis_mock(role_clearances={"Receptionists": set()})
+    gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    ctx = await gateway.validate_request(f"Bearer {make_token(role='Receptionists')}")
+
+    assert ctx.sensitivity_clearances == frozenset()
+
+
+async def test_validate_request_does_not_hit_redis_when_role_is_null() -> None:
+    redis_mock = make_redis_mock()
+    gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    ctx = await gateway.validate_request(f"Bearer {make_token(role=None)}")
+
+    assert ctx.sensitivity_clearances == frozenset()
+    redis_mock.get.assert_not_called()
+    redis_mock.smembers.assert_not_called()
+
+
+async def test_validate_request_raises_503_when_policy_sentinel_missing() -> None:
+    # Fail-closed: if the sentinel key isn't present, the policy YAML
+    # hasn't been loaded into Redis yet (or the keys were evicted).
+    # Refuse requests until the policy reload succeeds.
+    redis_mock = make_redis_mock(policy_loaded=False)
+    gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await gateway.validate_request(f"Bearer {make_token()}")
+
+    assert exc_info.value.status_code == 503
+
+
+async def test_validate_request_raises_503_when_redis_get_fails() -> None:
+    redis_mock = make_redis_mock(raise_on_get=True)
+    gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await gateway.validate_request(f"Bearer {make_token()}")
+
+    assert exc_info.value.status_code == 503
+
+
+async def test_validate_request_raises_503_when_redis_smembers_fails() -> None:
+    redis_mock = make_redis_mock(raise_on_smembers=True)
+    gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await gateway.validate_request(f"Bearer {make_token()}")
+
+    assert exc_info.value.status_code == 503
+
+
+async def test_validate_request_caches_clearances_within_ttl() -> None:
+    # Two requests for the same role within the cache TTL should hit
+    # Redis exactly once.
+    redis_mock = make_redis_mock(
+        role_clearances={"Physicians": {b"mental_health_authorized"}},
+    )
+
+    # Inject a fixed clock so the cache never expires during the test.
+    monotonic_value = [1000.0]
+
+    def fake_clock() -> float:
+        return monotonic_value[0]
+
+    gateway = AuthGateway(
+        jwt_secret=JWT_SECRET,
+        redis_client=redis_mock,
+        cache_ttl_seconds=60,
+        clock=fake_clock,
+    )
+
+    await gateway.validate_request(f"Bearer {make_token()}")
+    await gateway.validate_request(f"Bearer {make_token()}")
+
+    assert redis_mock.smembers.call_count == 1
+
+
+async def test_validate_request_refetches_after_cache_ttl_expires() -> None:
+    redis_mock = make_redis_mock(
+        role_clearances={"Physicians": {b"mental_health_authorized"}},
+    )
+
+    monotonic_value = [1000.0]
+
+    def fake_clock() -> float:
+        return monotonic_value[0]
+
+    gateway = AuthGateway(
+        jwt_secret=JWT_SECRET,
+        redis_client=redis_mock,
+        cache_ttl_seconds=60,
+        clock=fake_clock,
+    )
+
+    await gateway.validate_request(f"Bearer {make_token()}")
+
+    # Advance clock past TTL.
+    monotonic_value[0] = 1100.0
+
+    await gateway.validate_request(f"Bearer {make_token()}")
+
+    assert redis_mock.smembers.call_count == 2
