@@ -88,4 +88,57 @@ final class BootstrapTest extends TestCase
 
         self::assertTrue($loader->exists('template.twig'));
     }
+
+    #[Test]
+    public function renderAgentPanelEchoesPanelWhenPatientContextIsSet(): void
+    {
+        $bootstrap = new Bootstrap(
+            new EventDispatcher(),
+            twig: $this->makeTwigWithFakeAgentPanel()
+        );
+        $event = new PatientDemographicsRenderEvent(pid: 123);
+
+        $output = $this->captureOutput(fn() => $bootstrap->renderAgentPanel($event));
+
+        self::assertStringContainsString('agentforge-panel', $output);
+        self::assertStringContainsString('Clinical Co-Pilot', $output);
+    }
+
+    #[Test]
+    public function renderAgentPanelEmitsNothingWhenPatientIdIsZero(): void
+    {
+        // pid=0 is the sentinel "no patient" value (the event's @param
+        // integer docblock disallows null, so 0 is the canonical empty
+        // case). The empty() guard in renderAgentPanel must skip render.
+        $bootstrap = new Bootstrap(
+            new EventDispatcher(),
+            twig: $this->makeTwigWithFakeAgentPanel()
+        );
+        $event = new PatientDemographicsRenderEvent(pid: 0);
+
+        $output = $this->captureOutput(fn() => $bootstrap->renderAgentPanel($event));
+
+        self::assertSame('', $output);
+    }
+
+    private function makeTwigWithFakeAgentPanel(): Environment
+    {
+        return new Environment(new ArrayLoader([
+            'agent_panel.html.twig' => '<section id="{{ id }}">{{ title }}</section>',
+        ]));
+    }
+
+    /**
+     * @param callable(): void $fn
+     */
+    private function captureOutput(callable $fn): string
+    {
+        ob_start();
+        try {
+            $fn();
+            return (string) ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+    }
 }

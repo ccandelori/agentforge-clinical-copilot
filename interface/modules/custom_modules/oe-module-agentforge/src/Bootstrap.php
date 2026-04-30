@@ -21,12 +21,14 @@ declare(strict_types=1);
 
 namespace OpenEMR\Modules\AgentForge;
 
+use OpenEMR\Common\Twig\TwigContainer;
 use OpenEMR\Core\Kernel;
 use OpenEMR\Core\OEGlobalsBag;
 use OpenEMR\Events\Core\TwigEnvironmentEvent;
 use OpenEMR\Events\PatientDemographics\RenderEvent as PatientDemographicsRenderEvent;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
 
 class Bootstrap
@@ -35,17 +37,35 @@ class Bootstrap
     public const MODULE_NAME = 'oe-module-agentforge';
 
     private readonly string $moduleDirectoryName;
+    private readonly ?Kernel $kernel;
+    private ?Environment $twig;
 
     public function __construct(
         private readonly EventDispatcherInterface $eventDispatcher,
         ?Kernel $kernel = null,
         ?LoggerInterface $logger = null,
+        ?Environment $twig = null,
     ) {
-        // Kernel and Logger get retained as readonly properties when the
-        // handler implementations in subtasks 2.3 / 2.4 actually need them.
-        unset($kernel, $logger);
+        // Logger storage will be added when a handler actually needs it.
+        unset($logger);
 
         $this->moduleDirectoryName = basename(dirname(__DIR__));
+        $this->kernel = $kernel;
+        // Twig is lazily constructed in getTwigForRendering() so subscribe-only
+        // tests (and any code path that never renders a template) don't need
+        // an initialized OpenEMR Kernel.
+        $this->twig = $twig;
+    }
+
+    private function getTwigForRendering(): Environment
+    {
+        return $this->twig ??= $this->createTwigEnvironment();
+    }
+
+    private function createTwigEnvironment(): Environment
+    {
+        $kernel = $this->kernel ?? OEGlobalsBag::getInstance()->getKernel();
+        return (new TwigContainer($this->getTemplatePath(), $kernel))->getTwig();
     }
 
     public function subscribeToEvents(): void
@@ -73,8 +93,18 @@ class Bootstrap
 
     public function renderAgentPanel(PatientDemographicsRenderEvent $event): void
     {
-        // Implementation lands in subtask 2.4.
-        unset($event);
+        $pid = $event->getPid();
+        if ($pid === null || $pid === 0) {
+            return;
+        }
+
+        echo $this->getTwigForRendering()->render('agent_panel.html.twig', [
+            'id' => 'agentforge-panel',
+            'title' => 'Clinical Co-Pilot',
+            'auth' => false,
+            'forceAlwaysOpen' => false,
+            'initiallyCollapsed' => false,
+        ]);
     }
 
     public function getTemplatePath(): string
