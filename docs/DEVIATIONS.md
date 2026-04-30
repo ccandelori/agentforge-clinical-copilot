@@ -196,3 +196,136 @@ production. PHPStan understands the assertion for type narrowing.
 [`oe-module-agentforge/src/Bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Bootstrap.php).
 
 ---
+
+## 2026-04-30 — Used `PatientDemographics\RenderEvent` instead of `Main\Tabs\RenderEvent` for panel injection
+
+**Plan:** Task 2 spec said register the agent panel on
+`OpenEMR\Events\Main\Tabs\RenderEvent::EVENT_BODY_RENDER_POST` and check
+`$_SESSION['pid']` to gate rendering.
+
+**Deviation:** Use `OpenEMR\Events\PatientDemographics\RenderEvent::EVENT_SECTION_LIST_RENDER_AFTER`,
+which provides the patient ID directly via `$event->getPid()`.
+
+**Why:** `Main\Tabs\RenderEvent` fires from `interface/main/tabs/main.php:562`
+— the OpenEMR app shell, **not** any patient view. Other modules use it
+for global UI plumbing (`oe-module-comlink-telehealth` injects telehealth
+JS/CSS scripts there; `oe-module-faxsms` injects a floating phone widget).
+Following the spec literally would render the agent panel at the bottom
+of the global app shell, once per login, with broken styling because
+`agent_panel.html.twig` extends `patient/card/card_base.html.twig` —
+which assumes section-list context that doesn't exist in the shell.
+
+`PatientDemographics\RenderEvent::EVENT_SECTION_LIST_RENDER_AFTER`, on
+the other hand, fires from `interface/patient_file/summary/demographics.php:1529`
+— inside the patient summary section list, exactly where ARCHITECTURE.md
+§1 places the agent panel. It also gives us the canonical patient ID
+via `getPid()` so we don't need session-state inspection. Same event used
+by `oe-module-claimrev-connect`'s eligibility card and `SmartLaunchController`'s
+SMART app section — so we're matching the established OpenEMR pattern
+for "add a card to the demographics page."
+
+**What we learned:** OpenEMR has at least four render events (`Main\Tabs`,
+`PatientDemographics`, `Patient\Summary\Card`, `PatientPortal`), each for
+a different surface and lifecycle. Picking one by name without confirming
+where it actually fires (and what other modules do with it) is risky.
+For future "add a card to X" work, **identify the dispatch site first**:
+the event's name often suggests broader applicability than its actual
+fire context. `Patient\Summary\Card\RenderEvent` was also considered but
+turned out to be for *modifying* existing cards (note, reminder, lab,
+etc.) via `RenderInterface` injection — not adding new ones.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Bootstrap.php),
+dispatch site at `interface/patient_file/summary/demographics.php:1529`.
+
+---
+
+## 2026-04-30 — Used `Symfony\Component\EventDispatcherInterface` not `Symfony\Contracts\...`
+
+**Plan:** Task 2 spec imported
+`Symfony\Contracts\EventDispatcher\EventDispatcherInterface`.
+
+**Deviation:** Use `Symfony\Component\EventDispatcher\EventDispatcherInterface`.
+
+**Why:** The Contracts version exposes only `dispatch()`. We need
+`addListener()`, which is on the Component interface (a superset of
+Contracts). The existing `oe-module-claimrev-connect` makes the same
+choice for the same reason. Task 1.2 already used Component; Task 2
+spec was inconsistent.
+
+**What we learned:** When a spec dictates an interface, verify it has the
+methods you need. Symfony Console / EventDispatcher / etc. all have
+"Contracts" minimal interfaces and "Component" expanded ones — the
+Component is usually what application code wants.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Bootstrap.php),
+[`oe-module-agentforge/openemr.bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/openemr.bootstrap.php).
+
+---
+
+## 2026-04-30 — Added autoload-dev entry for module test discovery
+
+**Plan:** OpenEMR modules self-register their PSR-4 namespace at runtime
+via `openemr.bootstrap.php` calling `$classLoader->registerNamespaceIfNotExists`.
+Tests don't go through that path — the standard composer autoloader
+handles them, and module namespaces aren't in `composer.json`.
+
+**Deviation:** Added
+`OpenEMR\\Modules\\AgentForge\\` → `interface/modules/custom_modules/oe-module-agentforge/src`
+to `autoload-dev` in `composer.json`.
+
+**Why:** Subtask 2.2's TDD tests failed with `Class not found` because the
+isolated test runner has no module-aware autoloading. The choices were
+(a) add the entry, (b) `require_once` the class file in each test, or
+(c) put tests inside the module like `oe-module-comlink-telehealth` does
+(separate `phpunit.xml`, not picked up by main regression). (a) makes
+module tests discoverable by `composer phpunit-isolated`, which is
+where we want the regression gate to live.
+
+**What we learned:** New modules with tests under `tests/Tests/Isolated/Modules/<name>/`
+need a one-line `autoload-dev` entry mapping their namespace to their
+`src/` directory, plus a `composer dump-autoload` after editing.
+Documented in this entry so future modules don't re-derive the
+discovery flow.
+
+**Artifacts:** [`composer.json`](../composer.json),
+[`tests/Tests/Isolated/Modules/AgentForge/BootstrapTest.php`](../tests/Tests/Isolated/Modules/AgentForge/BootstrapTest.php).
+
+---
+
+## 2026-04-30 — Lazy Twig environment in Bootstrap
+
+**Plan:** Task 1.2 spec eagerly constructed Twig in the constructor:
+`$this->twig = (new TwigContainer($path, $kernel))->getTwig();`. Task 40's
+deviation #6 stripped the storage entirely.
+
+**Deviation:** Constructor stores `?Environment $twig = null` (optional,
+test-injectable) and a fallback kernel. Twig is constructed lazily on
+first render via `getTwigForRendering()`.
+
+**Why:** Subtask 2.4's TDD wanted to inject a fake Twig (ArrayLoader with
+a stub template) so tests verify behavior without the full OpenEMR
+template chain. Eager Twig in the constructor would force every test —
+including the ones that only exercise event subscription — to provide a
+working `Kernel`, which the isolated test environment can't initialize
+("OpenEMR Kernel not initialized" runtime error).
+
+Lazy gives us:
+- Constructor succeeds in any environment (no Kernel needed for non-render paths).
+- `renderAgentPanel` consumes a Twig that's either injected (tests) or
+  built from `OEGlobalsBag::getInstance()->getKernel()` (production).
+- Subscribe-only tests don't need fake Twig at all.
+
+**What we learned:** "No half-finished implementations" (CLAUDE.md) and
+"don't make tests provide irrelevant fixtures" both push toward lazy
+construction of dependencies that are only used by some methods. The
+property loses `readonly` (it's set on first use), but `?Environment`
++ `??=` keeps the mutation contained and idempotent. Worth replicating
+for the future LLM client / Redis client / Langfuse setup in the
+sidecar — same problem shape.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Bootstrap.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Bootstrap.php).
+
+---
