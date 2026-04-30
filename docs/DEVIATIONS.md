@@ -548,3 +548,97 @@ is a normal evolution, not a deviation worth agonizing over.
 [`oe-module-agentforge/src/Controllers/AgentProxyController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/AgentProxyController.php).
 
 ---
+
+## 2026-04-30 — `RequestContext` carries `username` and `breakglass_reason` too
+
+**Plan:** Task 8 spec defined `RequestContext` with five fields:
+`user_id`, `patient_id`, `role`, `breakglass_flag`,
+`sensitivity_clearances`.
+
+**Deviation:** Added two more fields to the frozen dataclass:
+`username: str` and `breakglass_reason: str | None`.
+
+**Why:** Both are present on the JWT (the PHP minter from Task 6.5
+emits them) and have clear downstream consumers:
+
+- `username` is the key for sensitivity-policy lookup. The gateway
+  resolves it via JWT claim, but tools and the verifier need it too
+  for record-attribution decisions. Recomputing or re-parsing the
+  JWT downstream is wasteful and risks drift.
+- `breakglass_reason` is required for audit-log routing per
+  ARCHITECTURE.md §2: "the reason text appears in exactly one place
+  — OpenEMR's `log.comments`". The sidecar emits the audit event
+  upstream of OpenEMR's logger; it needs the reason at hand.
+
+Dropping these fields meant later subsystems would either re-decode
+the JWT (rebuilding the gateway's work) or pass them as side
+parameters, breaking the "RequestContext is the only auth surface"
+discipline.
+
+**What we learned:** When the trust-boundary contract is the single
+chokepoint, it should carry every claim downstream code might need.
+Cheaper to over-include in the value object than to add fields later
+once consumers have been written.
+
+**Artifacts:**
+[`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
+
+---
+
+## 2026-04-30 — Auth gateway validates `iss` claim explicitly
+
+**Plan:** Task 8 spec snippet decoded the JWT with
+`jwt.decode(token, secret, algorithms=['HS256'])` and only checked
+`patient_id` afterwards.
+
+**Deviation:** Pass `issuer="openemr-agentforge"` to `jwt.decode` so
+PyJWT raises `InvalidIssuerError` for tokens with the wrong (or
+missing) `iss` claim. Map that to a 401 response.
+
+**Why:** Task 6 mints tokens with `iss=openemr-agentforge`. Without
+issuer enforcement at the gateway, any well-formed HS256 token signed
+with the same secret would pass — including tokens minted for a
+different purpose by some unrelated component that shares the secret.
+HS256 + a shared secret means trust is per-secret, not per-issuer; the
+explicit issuer check restores the intended one-to-one binding between
+the OpenEMR module and this sidecar.
+
+**What we learned:** PyJWT's verification options are opt-in. The
+default `decode()` checks signature + exp; everything else (issuer,
+audience, nbf) requires explicit kwargs. Worth treating
+`jwt.decode(token, secret, algorithms=['HS256'])` as suspicious in
+code review; production callers should also pass `issuer=` and
+ideally `audience=`.
+
+**Artifacts:**
+[`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
+
+---
+
+## 2026-04-30 — Redis client typed via `Protocol` for test ergonomics
+
+**Plan:** Task 8 spec used `redis.asyncio.Redis` directly as the
+client type.
+
+**Deviation:** Defined a private `_RedisProto` Protocol covering only
+`get` and `smembers` — the two methods AuthGateway actually uses —
+and typed the constructor parameter as `_RedisProto | None`.
+
+**Why:** mypy --strict treats `redis.asyncio.Redis` as a concrete
+class. Tests that pass `unittest.mock.AsyncMock(spec=Redis)` (or a
+plain `AsyncMock`) fail type-checking even though they work at
+runtime. The Protocol gives us structural typing — anything with
+the right `get` and `smembers` shape qualifies — and limits the
+gateway's coupling to the Redis library to two methods.
+
+**What we learned:** When a constructor needs a small slice of a
+big third-party library's API, define a Protocol covering exactly
+that slice. The benefits compound: (a) tests pass mypy without
+reaching for `# type: ignore`, (b) the gateway can be reused
+against fakes / fixtures / alternative backends, (c) the surface
+area is documented in the type signature.
+
+**Artifacts:**
+[`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
+
+---
