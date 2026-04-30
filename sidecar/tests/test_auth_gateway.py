@@ -9,16 +9,23 @@ loads them from Redis).
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 from unittest.mock import AsyncMock
 
 import jwt
 import pytest
 import redis.exceptions
-from fastapi import HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
-from agentforge.gateway.auth_gateway import AuthGateway, RequestContext
+from agentforge.gateway.auth_gateway import (
+    AuthGateway,
+    RequestContext,
+    get_auth_gateway,
+    get_request_context,
+)
 
 JWT_SECRET = "test-secret-32-bytes-or-more-padding"
 ISSUER = "openemr-agentforge"
@@ -96,9 +103,25 @@ async def test_validate_request_returns_request_context_for_valid_token(
     assert isinstance(ctx, RequestContext)
     assert ctx.user_id == 42
     assert ctx.patient_id == 123
+    assert ctx.username == "jpatel"
     assert ctx.role == "Physicians"
     assert ctx.breakglass_flag is False
+    assert ctx.breakglass_reason is None
     assert ctx.sensitivity_clearances == frozenset()
+
+
+async def test_validate_request_propagates_breakglass_reason_when_flag_is_set(
+    gateway: AuthGateway,
+) -> None:
+    token = make_token(
+        breakglass_flag=True,
+        breakglass_reason="After-hours admit; PCP unreachable.",
+    )
+
+    ctx = await gateway.validate_request(f"Bearer {token}")
+
+    assert ctx.breakglass_flag is True
+    assert ctx.breakglass_reason == "After-hours admit; PCP unreachable."
 
 
 async def test_validate_request_role_can_be_null_for_users_with_no_gacl_group(
@@ -318,6 +341,91 @@ async def test_validate_request_caches_clearances_within_ttl() -> None:
     await gateway.validate_request(f"Bearer {make_token()}")
 
     assert redis_mock.smembers.call_count == 1
+
+
+# ---------- RequestContext immutability + FastAPI dependency (subtask 8.3) ----------
+
+
+def test_request_context_is_frozen_dataclass() -> None:
+    # Documents the invariant: tools cannot mutate the auth context they
+    # receive. Removing frozen=True breaks this test.
+    ctx = RequestContext(
+        user_id=1,
+        patient_id=1,
+        username="x",
+        role=None,
+        breakglass_flag=False,
+        breakglass_reason=None,
+    )
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        ctx.user_id = 2  # type: ignore[misc]
+
+
+async def test_get_request_context_dependency_resolves_authorization_header() -> None:
+    # End-to-end wiring: a FastAPI app with the gateway in app.state
+    # exposes get_request_context as a Depends(); the dependency reads
+    # the Authorization header and returns a populated context.
+    app = FastAPI()
+    redis_mock = make_redis_mock(role_clearances={"Physicians": {b"mh"}})
+    app.state.auth_gateway = AuthGateway(jwt_secret=JWT_SECRET, redis_client=redis_mock)
+
+    @app.post("/echo")
+    async def echo(
+        ctx: Annotated[RequestContext, Depends(get_request_context)],
+    ) -> dict[str, Any]:
+        return {
+            "user_id": ctx.user_id,
+            "patient_id": ctx.patient_id,
+            "username": ctx.username,
+            "clearances": sorted(ctx.sensitivity_clearances),
+        }
+
+    _ = echo  # silence ruff unused-function
+
+    client = TestClient(app)
+    token = make_token()
+    response = client.post("/echo", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": 42,
+        "patient_id": 123,
+        "username": "jpatel",
+        "clearances": ["mh"],
+    }
+
+
+async def test_get_request_context_dependency_returns_401_without_authorization_header() -> None:
+    app = FastAPI()
+    app.state.auth_gateway = AuthGateway(jwt_secret=JWT_SECRET)
+
+    @app.post("/echo")
+    async def echo(
+        ctx: Annotated[RequestContext, Depends(get_request_context)],
+    ) -> dict[str, int]:
+        return {"user_id": ctx.user_id}
+
+    _ = echo  # silence ruff unused-function
+
+    client = TestClient(app)
+    response = client.post("/echo")
+
+    assert response.status_code == 401
+
+
+def test_get_auth_gateway_returns_gateway_from_app_state() -> None:
+    app = FastAPI()
+    sentinel = AuthGateway(jwt_secret=JWT_SECRET)
+    app.state.auth_gateway = sentinel
+
+    # Synthesise a Request whose .app.state has the gateway.
+    from starlette.requests import Request
+
+    scope = {"type": "http", "app": app, "headers": []}
+    request = Request(scope)
+
+    assert get_auth_gateway(request) is sentinel
 
 
 async def test_validate_request_refetches_after_cache_ttl_expires() -> None:

@@ -20,11 +20,11 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol, cast
+from typing import Annotated, Protocol, cast
 
 import jwt
 import redis.exceptions
-from fastapi import HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 ISSUER = "openemr-agentforge"
 
@@ -52,12 +52,19 @@ class RequestContext:
     Tools accept this as a typed parameter so they can't construct one
     themselves — the gateway is the single trust-boundary discipline
     from ARCHITECTURE.md §2.
+
+    `username` and `breakglass_reason` extend the spec's set; they are
+    needed downstream for sensitivity-policy lookup keying and
+    audit-log routing respectively (the JWT carries them, so the
+    context shouldn't drop them).
     """
 
     user_id: int
     patient_id: int
+    username: str
     role: str | None
     breakglass_flag: bool
+    breakglass_reason: str | None
     sensitivity_clearances: frozenset[str] = field(default_factory=frozenset)
 
 
@@ -114,15 +121,28 @@ class AuthGateway:
             )
         role: str | None = role_raw
 
+        username = payload.get("username")
+        if not isinstance(username, str) or username == "":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="username claim is required and must be a non-empty string",
+            )
+
         breakglass_flag = bool(payload.get("breakglass_flag", False))
+        breakglass_reason_raw = payload.get("breakglass_reason")
+        breakglass_reason: str | None = (
+            breakglass_reason_raw if isinstance(breakglass_reason_raw, str) else None
+        )
 
         clearances = await self._load_clearances(role)
 
         return RequestContext(
             user_id=user_id,
             patient_id=patient_id,
+            username=username,
             role=role,
             breakglass_flag=breakglass_flag,
+            breakglass_reason=breakglass_reason,
             sensitivity_clearances=clearances,
         )
 
@@ -214,3 +234,35 @@ def _decode_member(member: bytes | str) -> str:
     if isinstance(member, bytes):
         return member.decode("utf-8")
     return member
+
+
+# ---------- FastAPI dependency wiring ----------
+
+
+def get_auth_gateway(request: Request) -> AuthGateway:
+    """Read the AuthGateway from `request.app.state.auth_gateway`.
+
+    The application's startup hook is responsible for constructing the
+    gateway and assigning it; this getter simply exposes it as a FastAPI
+    dependency so route handlers can `Depends(get_request_context)`
+    without knowing about app state.
+    """
+    gateway = request.app.state.auth_gateway
+    if not isinstance(gateway, AuthGateway):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="AuthGateway is not configured on app.state",
+        )
+    return gateway
+
+
+async def get_request_context(
+    gateway: Annotated[AuthGateway, Depends(get_auth_gateway)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> RequestContext:
+    """FastAPI dependency: validate the Authorization header and return
+    the immutable RequestContext. Use as
+    `Annotated[RequestContext, Depends(get_request_context)]`
+    on any agent route that requires an authenticated user/patient
+    context."""
+    return await gateway.validate_request(authorization)
