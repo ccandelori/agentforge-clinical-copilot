@@ -441,3 +441,110 @@ matter.
 [`oe-module-agentforge/src/Services/AgentJwtService.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/AgentJwtService.php).
 
 ---
+
+## 2026-04-30 — `/agentforge/turn` routed via `public/turn.php`, not a root URL
+
+**Plan:** Task 7 spec said "Route registration: POST /agentforge/turn →
+AgentProxyController::turn". OpenEMR has no clean way to register
+top-level URLs from a custom module.
+
+**Deviation:** The controller is reached via the standard module URL
+`/interface/modules/custom_modules/oe-module-agentforge/public/turn.php`,
+which boots OpenEMR's `interface/globals.php` and dispatches. Production
+deployments are expected to add an Apache / Caddy reverse-proxy rewrite
+to expose the canonical `/agentforge/turn` URL.
+
+**Why:** Three options were considered:
+
+| Approach | Verdict |
+|---|---|
+| `public/turn.php` entry point | Standard OpenEMR module pattern (matches comlink/claimrev). No infra config needed for dev. |
+| `RestApiCreateEvent` listener | Routes through OpenEMR's REST API extension — yields `/apis/...` URLs, wrong location. |
+| Custom Apache rewrite from the module | Cleanest URL in dev, but adds infra config the module shouldn't own. |
+
+The `public/turn.php` approach won on "self-contained module / no infra
+edits required for development." Reverse-proxy rewrite is a one-line
+production deployment task.
+
+**What we learned:** OpenEMR module URL design is constrained by the
+historical `interface/modules/custom_modules/<name>/public/...` convention.
+Modules with custom routes should pair a `public/<route>.php` entry
+point with deployment-time URL rewriting; both halves go in the module
+README so deployment-engineers know what to do.
+
+**Artifacts:**
+[`oe-module-agentforge/public/turn.php`](../interface/modules/custom_modules/oe-module-agentforge/public/turn.php).
+
+---
+
+## 2026-04-30 — Symfony HttpClient (not PSR-18) for sidecar proxy
+
+**Plan:** Task 7 spec used a generic "proxy to sidecar" stub without
+naming a client. ARCHITECTURE.md §1 implies streaming responses from
+the sidecar (verifier emits sentence-level chunks).
+
+**Deviation:** Use `Symfony\Contracts\HttpClient\HttpClientInterface`
+(from `symfony/http-client`, already in composer.json) rather than the
+generic PSR-18 `ClientInterface`.
+
+**Why:** Symfony HttpClient supports response streaming via its
+`stream()` method — chunks flow through to the browser without
+buffering the full body. PSR-18's `ClientInterface::sendRequest()`
+returns a complete `ResponseInterface`; the body's `StreamInterface` is
+readable incrementally, but the API isn't designed for incremental
+forwarding the way Symfony's is. Tests are simpler too: `MockHttpClient`
++ `MockResponse` model the sidecar's responses (including error /
+transport-failure cases) without building PSR-7 fixtures by hand.
+
+For testability the controller still receives `HttpClientInterface`
+via constructor injection, so any compatible implementation works. The
+actual production wiring (`HttpClient::create([...])` in `turn.php`)
+happens at the boundary, not in the controller.
+
+**What we learned:** PSR-18 is the right portability target for
+*generic* HTTP clients but not for *streaming proxies* — Symfony's
+purpose-built API is one less abstraction layer to reason about.
+Worth applying the same pattern in the sidecar's later FHIR-client
+work (sidecar talks to OpenEMR via HTTP too); the equivalent Python
+choice is `httpx` over a streaming-unaware client.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Controllers/AgentProxyController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/AgentProxyController.php),
+[`tests/Tests/Isolated/Modules/AgentForge/AgentProxyControllerTest.php`](../tests/Tests/Isolated/Modules/AgentForge/AgentProxyControllerTest.php).
+
+---
+
+## 2026-04-30 — Controller takes `BreakglassContext`, not raw flag + reason
+
+**Plan:** Task 7 spec snippet:
+```php
+$jwtService->mintToken(
+    $session->get('authUserID'),
+    $patientId,
+    $session->get('breakglass_flag', false),
+    $request->get('breakglass_reason')
+);
+```
+
+**Deviation:** The controller constructs a `BreakglassContext` value
+object first and passes that to `mintToken`. `AgentJwtService::mintToken`'s
+signature is
+`(int userId, string username, int patientId, BreakglassContext breakglass)`,
+not the spec's four-positional-arg shape.
+
+**Why:** `BreakglassContext` (Task 6.4) enforces the consistency
+invariant "flag=true requires non-empty reason" at construction time.
+Passing raw flag and reason to `mintToken` would mean every caller has
+to re-derive that rule — and a bug in any one caller bypasses the
+audit-trail guarantee. The Task 6 → Task 7 contract should respect the
+parse-don't-validate choice we made in 6.4.
+
+**What we learned:** When a previous task introduces a value object,
+the next task's controller / service contract should consume it. The
+spec was written before 6.4's value object existed; updating to match
+is a normal evolution, not a deviation worth agonizing over.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Controllers/AgentProxyController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/AgentProxyController.php).
+
+---
