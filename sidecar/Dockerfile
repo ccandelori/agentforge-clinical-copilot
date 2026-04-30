@@ -52,4 +52,4 @@ sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).s
 
 EXPOSE 8000
 
-ENTRYPOINT ["uvicorn", "agentforge.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["uvicorn", "agentforge.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

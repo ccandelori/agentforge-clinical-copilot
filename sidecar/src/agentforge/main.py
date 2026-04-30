@@ -11,7 +11,12 @@ from agentforge.config import Settings, get_settings
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """Construct the FastAPI application. Factory keeps tests independent."""
+    """Construct the FastAPI application.
+
+    Defers Settings instantiation until the factory is invoked, so importing
+    this module does not require environment configuration. Run in
+    production with: `uvicorn agentforge.main:create_app --factory`.
+    """
     settings = settings or get_settings()
 
     app = FastAPI(
@@ -26,6 +31,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "healthy"}
 
     return app
-
-
-app = create_app()

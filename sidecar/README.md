@@ -11,7 +11,7 @@ Requires [`uv`](https://github.com/astral-sh/uv) and Python 3.12.
 ```bash
 cd sidecar
 uv sync                                      # install deps + create .venv
-uv run uvicorn agentforge.main:app --reload  # run dev server
+uv run uvicorn agentforge.main:create_app --factory --reload  # run dev server
 uv run pytest                                # run tests
 uv run mypy --strict src/                    # type check
 uv run ruff check                            # lint
