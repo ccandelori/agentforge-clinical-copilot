@@ -40,13 +40,15 @@ final class UserRoleLookupIntegrationTest extends TestCase
         // We construct a standalone DBAL connection rather than reaching
         // into OpenEMR's procedural ADODB layer; the sqlconf array is the
         // canonical source for DB credentials in tests.
+        /** @var array{dbase: string, login: string, pass: string, host: string, port?: int|string} $sqlconf */
         $sqlconf = $GLOBALS['sqlconf'] ?? [];
+        $port = $sqlconf['port'] ?? 3306;
         $this->connection = DriverManager::getConnection([
             'dbname' => $sqlconf['dbase'],
             'user' => $sqlconf['login'],
             'password' => $sqlconf['pass'],
             'host' => $sqlconf['host'],
-            'port' => isset($sqlconf['port']) ? (int) $sqlconf['port'] : 3306,
+            'port' => is_int($port) ? $port : (int) $port,
             'driver' => 'pdo_mysql',
         ]);
     }
