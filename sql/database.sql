@@ -1989,7 +1989,10 @@ CREATE TABLE `form_clinical_notes` (
     `note_related_to` text,
     `last_updated` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uuid` (`uuid`)
+    UNIQUE KEY `uuid` (`uuid`),
+    -- AgentForge agent indexes (Version20260430000001 / 0002)
+    KEY `idx_clinical_notes_pid_date` (`pid`, `date`),
+    FULLTEXT KEY `ft_clinical_notes_desc` (`description`)
 ) ENGINE=InnoDB;
 
 -- --------------------------------------------------------
@@ -2447,7 +2450,9 @@ CREATE TABLE `form_vitals` (
   `last_updated` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY  (`id`),
   KEY `pid` (`pid`),
-  UNIQUE KEY `uuid` (`uuid`)
+  UNIQUE KEY `uuid` (`uuid`),
+  -- AgentForge agent index (Version20260430000001)
+  KEY `idx_form_vitals_pid_date` (`pid`, `date`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1;
 
 -- --------------------------------------------------------
@@ -8685,7 +8690,10 @@ CREATE TABLE `pnotes` (
   `update_by` bigint(20) default NULL,
   `update_date` DATETIME DEFAULT NULL,
   PRIMARY KEY  (`id`),
-  KEY `pid` (`pid`)
+  KEY `pid` (`pid`),
+  -- AgentForge agent indexes (Version20260430000001 / 0002)
+  KEY `idx_pnotes_pid_date` (`pid`, `date`),
+  FULLTEXT KEY `ft_pnotes_body` (`body`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1;
 
 -- --------------------------------------------------------
@@ -10410,7 +10418,9 @@ CREATE TABLE `procedure_order` (
   KEY `idx_specimen_type` (`specimen_type`),
   KEY `idx_scheduled_date` (`scheduled_date`),
   KEY `idx_order_intent` (`order_intent`),
-  KEY `idx_location_id` (`location_id`)
+  KEY `idx_location_id` (`location_id`),
+  -- AgentForge agent index (Version20260430000001)
+  KEY `idx_procedure_order_patient_date` (`patient_id`, `date_ordered`)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------------
@@ -10480,7 +10490,9 @@ CREATE TABLE `procedure_report` (
   `report_notes`        text           COMMENT 'notes from the lab',
   PRIMARY KEY (`procedure_report_id`),
   KEY procedure_order_id (procedure_order_id),
-  UNIQUE KEY `uuid` (`uuid`)
+  UNIQUE KEY `uuid` (`uuid`),
+  -- AgentForge agent index (Version20260430000001); see Taskmaster Task 49 — leads with PK, redundancy under review
+  KEY `idx_procedure_report_date` (`procedure_report_id`, `date_report`)
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------------
