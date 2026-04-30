@@ -1,0 +1,39 @@
+# Python bytecode + caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual environments — built fresh inside the image
+.venv/
+venv/
+
+# Tooling caches — never useful inside the image
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Secrets — never copy into images
+.env
+.env.local
+.env.*.local
+
+# Source control + IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Tests + fixtures aren't needed at runtime; keep image lean.
+tests/
+fixtures/
+
+# Documentation — README is needed by hatchling for the build, others aren't
+*.md
+!README.md
