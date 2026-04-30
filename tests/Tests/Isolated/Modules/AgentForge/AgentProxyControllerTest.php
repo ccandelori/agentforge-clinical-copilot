@@ -13,6 +13,8 @@ declare(strict_types=1);
 namespace OpenEMR\Tests\Isolated\Modules\AgentForge;
 
 use OpenEMR\Modules\AgentForge\Controllers\AgentProxyController;
+use OpenEMR\Modules\AgentForge\Services\AgentJwtService;
+use OpenEMR\Modules\AgentForge\Services\BreakglassContext;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -23,17 +25,16 @@ use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 /**
  * Behavior tests for AgentProxyController.
  *
- * Subtask 7.1 covers the controller's "no patient context" guard:
- * any request that arrives without a patient id in the session must
- * be refused with a 400 response. Subsequent subtasks (7.2 / 7.3)
- * layer in JWT minting and proxying to the sidecar.
+ * Covers the patient-context guard (subtask 7.1), session validation
+ * and JWT minting integration (subtask 7.2). Sidecar proxying lives
+ * in 7.3.
  */
 final class AgentProxyControllerTest extends TestCase
 {
     #[Test]
     public function turnReturns400WhenSessionHasNoPatientId(): void
     {
-        $controller = new AgentProxyController();
+        $controller = new AgentProxyController(self::createMock(AgentJwtService::class));
         $request = $this->makeRequestWithSession([]);
 
         $response = $controller->turn($request);
@@ -49,9 +50,7 @@ final class AgentProxyControllerTest extends TestCase
     #[Test]
     public function turnReturns400WhenSessionPidIsZero(): void
     {
-        // pid=0 is OpenEMR's sentinel for "no patient selected" in some
-        // legacy flows; it must be treated identically to a missing pid.
-        $controller = new AgentProxyController();
+        $controller = new AgentProxyController(self::createMock(AgentJwtService::class));
         $request = $this->makeRequestWithSession(['pid' => 0]);
 
         $response = $controller->turn($request);
@@ -62,9 +61,7 @@ final class AgentProxyControllerTest extends TestCase
     #[Test]
     public function turnReturns400WhenSessionPidIsNotAnInt(): void
     {
-        // Defensive: a session value that's somehow a string or array
-        // shouldn't fall through to the JWT minter (which expects int).
-        $controller = new AgentProxyController();
+        $controller = new AgentProxyController(self::createMock(AgentJwtService::class));
         $request = $this->makeRequestWithSession(['pid' => 'definitely-not-a-pid']);
 
         $response = $controller->turn($request);
@@ -72,19 +69,120 @@ final class AgentProxyControllerTest extends TestCase
         self::assertSame(400, $response->getStatusCode());
     }
 
+    #[Test]
+    public function turnReturns401WhenSessionHasNoAuthUserId(): void
+    {
+        // Patient context present but no authUserID — the user isn't
+        // properly logged in. OpenEMR's session middleware should catch
+        // this earlier; we still defend against it here.
+        $jwtService = self::createMock(AgentJwtService::class);
+        $jwtService->expects(self::never())->method('mintToken');
+
+        $controller = new AgentProxyController($jwtService);
+        $request = $this->makeRequestWithSession(['pid' => 123, 'authUser' => 'jpatel']);
+
+        $response = $controller->turn($request);
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function turnReturns401WhenSessionHasNoAuthUsername(): void
+    {
+        $jwtService = self::createMock(AgentJwtService::class);
+        $jwtService->expects(self::never())->method('mintToken');
+
+        $controller = new AgentProxyController($jwtService);
+        $request = $this->makeRequestWithSession(['pid' => 123, 'authUserID' => 5]);
+
+        $response = $controller->turn($request);
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function turnMintsJwtWithSessionUserAndBreakglassInactiveByDefault(): void
+    {
+        $jwtService = self::createMock(AgentJwtService::class);
+        $jwtService->expects(self::once())
+            ->method('mintToken')
+            ->with(
+                42,
+                'jpatel',
+                123,
+                self::callback(function (BreakglassContext $ctx): bool {
+                    return $ctx->flag === false && $ctx->reason === null;
+                })
+            )
+            ->willReturn('fake-jwt-token');
+
+        $controller = new AgentProxyController($jwtService);
+        $request = $this->makeRequestWithSession([
+            'pid' => 123,
+            'authUserID' => 42,
+            'authUser' => 'jpatel',
+        ]);
+
+        $controller->turn($request);
+    }
+
+    #[Test]
+    public function turnPropagatesBreakglassFlagAndReasonIntoMintedToken(): void
+    {
+        $jwtService = self::createMock(AgentJwtService::class);
+        $jwtService->expects(self::once())
+            ->method('mintToken')
+            ->with(
+                42,
+                'jpatel',
+                123,
+                self::callback(
+                    fn (BreakglassContext $ctx): bool =>
+                        $ctx->flag === true
+                        && $ctx->reason === 'After-hours admit; PCP unreachable.'
+                )
+            )
+            ->willReturn('fake-jwt-token');
+
+        $controller = new AgentProxyController($jwtService);
+        $request = $this->makeRequestWithSessionAndBody(
+            session: [
+                'pid' => 123,
+                'authUserID' => 42,
+                'authUser' => 'jpatel',
+                'breakglass_flag' => true,
+            ],
+            body: ['breakglass_reason' => 'After-hours admit; PCP unreachable.'],
+        );
+
+        $controller->turn($request);
+    }
+
     /**
      * @param array<string, mixed> $sessionData
      */
     private function makeRequestWithSession(array $sessionData): Request
     {
-        $session = new Session(new MockArraySessionStorage());
-        foreach ($sessionData as $key => $value) {
-            $session->set($key, $value);
+        return $this->makeRequestWithSessionAndBody($sessionData, []);
+    }
+
+    /**
+     * @param array<string, mixed> $session
+     * @param array<string, mixed> $body
+     */
+    private function makeRequestWithSessionAndBody(array $session, array $body): Request
+    {
+        $sym = new Session(new MockArraySessionStorage());
+        foreach ($session as $key => $value) {
+            $sym->set($key, $value);
         }
 
-        $request = Request::create('/agentforge/turn', 'POST');
-        $request->setSession($session);
+        $jsonBody = $body === [] ? '' : (string) json_encode($body);
+        $request = Request::create('/agentforge/turn', 'POST', [], [], [], [], $jsonBody);
+        $request->headers->set('Content-Type', 'application/json');
+        $request->setSession($sym);
 
         return $request;
     }
+
 }

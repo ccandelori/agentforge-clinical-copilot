@@ -7,8 +7,10 @@ declare(strict_types=1);
  * validates the user/patient session context, mints a short-lived JWT,
  * and proxies the request to the Python sidecar.
  *
- * Subtask 7.1 covers the "no patient context" guard. Subtasks 7.2 and
- * 7.3 fill in JWT minting and the streaming proxy to the sidecar.
+ * Subtasks 7.1 and 7.2 cover the patient-context + auth guards and the
+ * JWT minting integration. Subtask 7.3 fills in the streaming proxy to
+ * the sidecar; until then the success path returns a 501 placeholder
+ * carrying the freshly minted token.
  *
  * The route URL `/agentforge/turn` is served by `public/turn.php`,
  * which boots OpenEMR and dispatches here. Production deployments may
@@ -25,18 +27,24 @@ declare(strict_types=1);
 
 namespace OpenEMR\Modules\AgentForge\Controllers;
 
-use LogicException;
+use OpenEMR\Modules\AgentForge\Services\AgentJwtService;
+use OpenEMR\Modules\AgentForge\Services\BreakglassContext;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class AgentProxyController
 {
+    public function __construct(
+        private readonly AgentJwtService $jwtService,
+    ) {
+    }
+
     public function turn(Request $request): Response
     {
         $session = $request->getSession();
-        $patientId = $session->get('pid');
 
+        $patientId = $session->get('pid');
         if (!is_int($patientId) || $patientId <= 0) {
             return new JsonResponse(
                 [
@@ -46,13 +54,62 @@ class AgentProxyController
             );
         }
 
-        // Subtasks 7.2 and 7.3 fill in:
-        //   - read user/breakglass context from the session and request body
-        //   - mint the JWT via AgentJwtService
-        //   - forward to the sidecar over HTTP and stream the response back
-        throw new LogicException(
-            'AgentProxyController::turn full implementation lands in subtasks 7.2 and 7.3. '
-            . 'Currently only the no-patient-context guard is wired up.'
+        $userId = $session->get('authUserID');
+        $username = $session->get('authUser');
+        if (!is_int($userId) || $userId <= 0 || !is_string($username) || $username === '') {
+            return new JsonResponse(
+                ['error' => 'Authentication required.'],
+                Response::HTTP_UNAUTHORIZED
+            );
+        }
+
+        $body = $this->decodeJsonBody($request);
+        $breakglassFlag = $session->get('breakglass_flag', false) === true;
+        $breakglassReason = $body['breakglass_reason'] ?? null;
+        $breakglass = new BreakglassContext(
+            flag: $breakglassFlag,
+            reason: is_string($breakglassReason) ? $breakglassReason : null,
         );
+
+        $token = $this->jwtService->mintToken(
+            userId: $userId,
+            username: $username,
+            patientId: $patientId,
+            breakglass: $breakglass,
+        );
+
+        // Subtask 7.3 will replace this with a StreamedResponse forwarding
+        // to the sidecar over HTTP with `Authorization: Bearer <token>`.
+        return new JsonResponse(
+            [
+                '_pending_proxy' => true,
+                'token' => $token,
+            ],
+            Response::HTTP_NOT_IMPLEMENTED
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonBody(Request $request): array
+    {
+        $content = $request->getContent();
+        if ($content === '') {
+            return [];
+        }
+        $decoded = json_decode($content, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+        // Filter to string-keyed entries: json_decode permits int keys
+        // but our consumer treats the body as a JSON object.
+        $filtered = [];
+        foreach ($decoded as $key => $value) {
+            if (is_string($key)) {
+                $filtered[$key] = $value;
+            }
+        }
+        return $filtered;
     }
 }
