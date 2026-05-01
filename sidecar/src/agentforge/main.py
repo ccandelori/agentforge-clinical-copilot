@@ -31,6 +31,7 @@ from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
 from agentforge.tools.medications import MedicationsFetcher
 from agentforge.tools.problems import ProblemsFetcher
+from agentforge.tools.vitals import VitalsFetcher
 
 
 class TurnRequest(BaseModel):
@@ -58,6 +59,7 @@ def create_app(
     medications_fetcher: MedicationsFetcher | None = None,
     problems_fetcher: ProblemsFetcher | None = None,
     allergies_fetcher: AllergiesFetcher | None = None,
+    vitals_fetcher: VitalsFetcher | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -88,12 +90,16 @@ def create_app(
     allergies = allergies_fetcher or AllergiesFetcher(
         base_url=settings.openemr_base_url,
     )
+    vitals = vitals_fetcher or VitalsFetcher(
+        base_url=settings.openemr_base_url,
+    )
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
         medications_fetcher=medications,
         problems_fetcher=problems,
         allergies_fetcher=allergies,
+        vitals_fetcher=vitals,
     )
 
     app.state.auth_gateway = auth_gateway
