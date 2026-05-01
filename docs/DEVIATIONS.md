@@ -786,3 +786,46 @@ the orchestrator faithfully relayed that to the model.
 [`oe-module-agentforge/public/internal/demographics.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php).
 
 ---
+
+## 2026-05-01 — `get_active_allergies` reads `lists` table directly, not FHIR `AllergyIntolerance`
+
+**Plan:** Taskmaster Task 17's description called for the tool to call
+the FHIR `AllergyIntolerance` endpoint to source the patient's allergy
+list.
+
+**Deviation:** Implemented the tool as a direct read of the `lists`
+table (filtered to `type='allergy' AND activity=1`) via a Doctrine DBAL
+repository plus a JWT-validated PHP internal endpoint — the same
+pattern the other three MVP tools (`get_demographics`,
+`get_active_problems`, `get_active_medications`) use.
+
+**Why:** The three sibling tools that already shipped under
+ARCHITECTURE.md §4 are direct-DB readers; their internal endpoints
+(`/agentforge/internal/{demographics,problems,medications}.php`)
+share the same structure (JWT validator + repository + JSON response
+wrapper). Routing the fourth tool through OpenEMR's FHIR stack would
+have introduced a parallel access pattern (R4 resource fetcher,
+SMART scope check, JSON:API parsing) for one tool, increasing the
+verifier's surface area and making the fan-out path less uniform.
+The direct-DB path also lets the `lists.severity_al` field — which
+isn't in the FHIR mapping by default — flow through unchanged for
+clinical relevance. Schema confirmed at
+[`sql/database.sql:7676–7717`](../sql/database.sql).
+
+**What we learned:** Tool-spec language can drift behind implementation
+patterns once a project has settled on one. Better to surface the
+choice in the deviation log than to silently break uniformity, but
+when three siblings agree on a pattern, conformance to that pattern is
+the strong default. The four-tool MVP now has one access shape end-to-end,
+which the verifier's record-cache lookup (Task 28) can rely on. If a
+future tool genuinely needs FHIR semantics (e.g. condition severity
+codings, encounter linkage) it can land alongside this one without
+disturbing the existing trio.
+
+**Artifacts:**
+[`sidecar/src/agentforge/tools/allergies.py`](../sidecar/src/agentforge/tools/allergies.py),
+[`oe-module-agentforge/src/Services/AllergiesRepository.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/AllergiesRepository.php),
+[`oe-module-agentforge/src/Controllers/InternalAllergiesController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalAllergiesController.php),
+[`oe-module-agentforge/public/internal/allergies.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/allergies.php).
+
+---

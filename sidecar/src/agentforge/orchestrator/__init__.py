@@ -21,6 +21,7 @@ from typing import Final
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.llm.client import LLMClient
 from agentforge.llm.types import Message
+from agentforge.tools.allergies import ALLERGIES_TOOL_SPEC, AllergiesFetcher
 from agentforge.tools.demographics import DEMOGRAPHICS_TOOL_SPEC, DemographicsFetcher
 from agentforge.tools.medications import MEDICATIONS_TOOL_SPEC, MedicationsFetcher
 from agentforge.tools.problems import PROBLEMS_TOOL_SPEC, ProblemsFetcher
@@ -31,10 +32,11 @@ is asking about a single patient whose chart is currently open in their \
 browser. You answer questions grounded in that patient's record by calling \
 tools — never from memory or speculation.
 
-You have three tools:
+You have four tools:
   - get_demographics      : name, DOB, sex, preferred language
   - get_active_problems   : current diagnoses / problem list
   - get_active_medications: currently active medications (with begin/end dates)
+  - get_active_allergies  : known allergies (allergen, reaction, severity)
 
 Rules:
 1. When the user asks about ANY patient information, call the relevant tool \
@@ -51,9 +53,9 @@ appropriate. Don't hedge with "as an AI…".
 invent data to fill gaps. An empty problem list means "no active problems \
 recorded," not "the patient is healthy."
 6. If the user asks about something you don't have a tool for (lab \
-results, vitals trends, allergies, encounter history, imaging, etc.), \
-name the gap explicitly: "I don't have access to lab results in this \
-version of the co-pilot — they're visible in the chart's lab section."\
+results, vitals trends, encounter history, imaging, etc.), name the gap \
+explicitly: "I don't have access to lab results in this version of the \
+co-pilot — they're visible in the chart's lab section."\
 """
 
 MAX_TOOL_ITERATIONS: Final[int] = 4
@@ -66,11 +68,13 @@ class Orchestrator:
         demographics_fetcher: DemographicsFetcher,
         medications_fetcher: MedicationsFetcher,
         problems_fetcher: ProblemsFetcher,
+        allergies_fetcher: AllergiesFetcher,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
         self._medications = medications_fetcher
         self._problems = problems_fetcher
+        self._allergies = allergies_fetcher
 
     async def turn(self, ctx: RequestContext, user_message: str) -> str:
         """Run one user turn through the model + tools, return final text."""
@@ -79,6 +83,7 @@ class Orchestrator:
             DEMOGRAPHICS_TOOL_SPEC,
             PROBLEMS_TOOL_SPEC,
             MEDICATIONS_TOOL_SPEC,
+            ALLERGIES_TOOL_SPEC,
         ]
 
         for _ in range(MAX_TOOL_ITERATIONS):
@@ -130,6 +135,11 @@ class Orchestrator:
                     patient_id=ctx.patient_id, raw_token=ctx.raw_token
                 )
                 return probs.model_dump_json()
+            if tool_name == "get_active_allergies":
+                allergies = await self._allergies.fetch(
+                    patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                )
+                return allergies.model_dump_json()
         except Exception as exc:
             # Surface tool errors back to the model as structured payloads
             # rather than letting them crash the turn — the model can then
