@@ -786,3 +786,57 @@ the orchestrator faithfully relayed that to the model.
 [`oe-module-agentforge/public/internal/demographics.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php).
 
 ---
+
+## 2026-05-01 — get_vitals_trend skipped EventAuditLogger and QueryUtils
+
+**Plan:** Task 20 spec called for the internal vitals endpoint to use
+`OpenEMR\Common\Database\QueryUtils` for the database read and
+`OpenEMR\Common\Logging\EventAuditLogger::recordEvent` to write a per-call
+audit record. Both helpers exist on this codebase.
+
+**Deviation:** The implementation follows the established pattern from
+`get_active_medications` and `get_active_problems` instead:
+- Repository takes a Doctrine `Connection` and runs the query directly via
+  `fetchAllAssociative` — no `QueryUtils` indirection.
+- Controller relies on the JWT validation chain (browser → PHP `/turn` →
+  signed user-bound JWT → sidecar → echoed JWT → `AgentJwtValidator`) as
+  the audit path. No `EventAuditLogger.recordEvent` call.
+
+**Why:** Two reasons.
+
+1. The medications / problems endpoints set the precedent two tasks ago.
+   Diverging from them on tool number four would split the agent's tool
+   layer into two coding styles for no functional gain — and the next
+   tools to land (allergies, labs) would have to pick a side.
+2. The JWT itself is a tamper-evident record of who initiated the request,
+   for which patient, with what breakglass context, signed by the same
+   secret OpenEMR uses to mint it. Replaying an internal endpoint without
+   a fresh JWT is impossible (5-minute expiry; no refresh path on the
+   sidecar). Persisting a separate audit row for every tool call would
+   duplicate information already captured at the `/turn` boundary —
+   `AgentProxyController` is the right layer for "who asked the agent
+   what." A dedicated tool-call audit can be added later without
+   rewriting the repositories.
+
+A separate decision worth noting: the repository handles two
+schema-induced coercions explicitly because they're easy to get wrong.
+`bps` and `bpd` are stored as `VARCHAR(40)` (not numeric), so we
+int-coerce and treat empty strings as null. All numeric vitals are
+`DECIMAL` defaulting to `'0.00'`; we treat `0.0` as "not recorded" and
+return `null` to keep the LLM from interpreting the schema default as a
+clinically meaningful "0 systolic." Both rules are documented in the
+class docblock so future readers see them once.
+
+**What we learned:** Established-pattern continuity beats spec literalism
+when the spec is older than the pattern. Worth surfacing the same call
+when the upcoming allergies / labs / immunizations tools (Tasks 17, 18,
+21+) hit the same fork: don't reintroduce `QueryUtils` /
+`EventAuditLogger` as the convention unless the security review of the
+JWT-as-audit chain says otherwise.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/VitalsRepository.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/VitalsRepository.php),
+[`oe-module-agentforge/src/Controllers/InternalVitalsController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalVitalsController.php),
+[`oe-module-agentforge/public/internal/vitals_trend.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/vitals_trend.php).
+
+---
