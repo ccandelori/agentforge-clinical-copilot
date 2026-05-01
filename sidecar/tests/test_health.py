@@ -12,4 +12,9 @@ def test_health_endpoint_returns_healthy(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy"}
+    body = response.json()
+    assert body["status"] == "healthy"
+    # `policy_loaded` is False here because the default test client doesn't
+    # wire a Redis backend; the dedicated policy-status test covers the
+    # loaded-true path with a recording-redis fixture.
+    assert body["policy_loaded"] is False

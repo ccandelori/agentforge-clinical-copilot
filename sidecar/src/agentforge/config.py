@@ -8,6 +8,7 @@ silently. See ARCHITECTURE.md §2 (auth gateway), §7.2 (HMAC scheme).
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,6 +57,14 @@ class Settings(BaseSettings):
 
     # HMAC key for pseudonymizing user/patient IDs in Langfuse (§7.2)
     hmac_key: str
+
+    # Sensitivity policy (Tasks 9 + 10). Loaded into Redis at startup.
+    # Default points at the `sidecar/config/sensitivity_policy.yaml`
+    # bundled with the package; deployments can override per environment.
+    sensitivity_policy_path: Path = (
+        Path(__file__).resolve().parents[2] / "config" / "sensitivity_policy.yaml"
+    )
+    sensitivity_policy_required: bool = True
 
 
 @lru_cache

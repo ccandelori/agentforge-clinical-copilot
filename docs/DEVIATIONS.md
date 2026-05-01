@@ -1006,3 +1006,58 @@ Doctrine DBAL read of `procedure_order` → `procedure_report` →
 [`sidecar/src/agentforge/tools/labs.py`](../sidecar/src/agentforge/tools/labs.py).
 
 ---
+
+## 2026-05-01 — Sensitivity policy keyed `agentforge:policy:loaded`, not the role-clearance sentinel
+
+**Plan:** Task 8 had already shipped a sentinel at `agentforge:policy:version`
+that the gateway checks before loading per-role clearances. Tasks 9 + 10
+could have reused that key as the "policy loaded" indicator.
+
+**Deviation:** Introduced a separate sentinel — `agentforge:policy:loaded`
+— for the sensitivity policy (Task 9), holding the policy's version
+integer. The role-clearances sentinel at `agentforge:policy:version` is
+unchanged and still gates the per-role membership lookup.
+
+**Why:** The two policies are loaded by different mechanisms and could
+fall out of sync. Role clearances come from a still-undefined loader
+(deferred to a sibling subtask of 8); the sensitivity policy comes from
+a YAML file via the new `load_sensitivity_policy`. Sharing one sentinel
+would conflate "I have one policy loaded" with "I have both", and a
+partial Redis flush could leave the system reporting healthy while one
+table was empty. Two sentinels is the cheap honest answer.
+
+**What we learned:** Sentinels are cheap; conflating them is not. When
+two independent loads each need a fail-closed indicator, give each its
+own key. Future audit-log + verifier-prompt loads will follow the same
+pattern.
+
+**Artifacts:**
+[`sidecar/src/agentforge/gateway/policy_loader.py`](../sidecar/src/agentforge/gateway/policy_loader.py),
+[`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
+
+---
+
+## 2026-05-01 — Declared `pyyaml` as an explicit sidecar dependency
+
+**Plan:** Task 9 anticipated PyYAML being available as a transitive
+dependency (langfuse pulls it).
+
+**Deviation:** Added `pyyaml>=6.0` to `[project.dependencies]` in
+`sidecar/pyproject.toml`. Also extended `[[tool.mypy.overrides]]` for
+the bare `yaml` import (no first-party type stubs).
+
+**Why:** PyYAML *is* available transitively, but the policy loader is
+the first first-party caller. Relying on a transitive dep for a load-
+bearing import is a footgun: a future bump of the parent that drops
+yaml would silently break the policy loader. Declaring the dep
+explicitly puts the lock surface in line with what we actually use.
+
+**What we learned:** The CLAUDE.md rule against new deps applies to
+genuinely new packages, not to surfacing existing transitives — the
+honest move when first-party code starts importing a module is to put
+it in `pyproject.toml` regardless of how it got onto the venv.
+
+**Artifacts:**
+[`sidecar/pyproject.toml`](../sidecar/pyproject.toml).
+
+---
