@@ -29,6 +29,7 @@ from agentforge.llm.client import LLMClient
 from agentforge.llm.types import Message, ToolCall
 from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
+from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import (
     ALLERGIES_TOOL_SPEC,
@@ -65,6 +66,14 @@ from agentforge.verifier import (
 # stable label here keeps trace dashboards readable across provider
 # swaps without hard-coding the SDK constant.
 _TRACE_MODEL: Final[str] = "claude-sonnet-4-5"
+
+# Returned to the user when a session has hit HARD_CAP. The reply is
+# clinical-neutral and instructs the user how to recover (start a new
+# encounter session) without leaking the session_id or any prior PHI.
+_SESSION_REFUSAL_TEXT: Final[str] = (
+    "This conversation has reached its session length limit. "
+    "Please start a new chat session for further questions about this patient."
+)
 
 SYSTEM_PROMPT: Final[str] = """\
 You are AgentForge, a clinical co-pilot embedded inside OpenEMR. A clinician \
@@ -125,6 +134,7 @@ class Orchestrator:
         langfuse: LangfuseClient | None = None,
         hmac_key: bytes | None = None,
         redis_storage: AgentRedisClient | None = None,
+        memory: ConversationMemory | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -140,10 +150,45 @@ class Orchestrator:
         self._langfuse = langfuse
         self._hmac_key = hmac_key
         self._redis_storage = redis_storage
+        self._memory = memory
 
-    async def turn(self, ctx: RequestContext, user_message: str) -> str:
-        """Run one user turn through the model + tools, return final text."""
-        messages: list[Message] = [Message(role="user", content=user_message)]
+    async def turn(
+        self,
+        ctx: RequestContext,
+        user_message: str,
+        *,
+        session_id: str | None = None,
+    ) -> str:
+        """Run one user turn through the model + tools, return final text.
+
+        ``session_id`` is consulted only when a :class:`ConversationMemory`
+        is configured. When given, prior turns are loaded as message
+        history and the user/assistant pair is persisted after the
+        model finishes. The hard cap from memory.py becomes a refusal
+        before the model is invoked at all.
+        """
+        # Reject up front when the session has already hit its hard cap;
+        # we never call the model on a refused turn.
+        if self._memory is not None and session_id is not None:
+            existing = await self._memory.get_memory(session_id)
+            if len(existing) // 2 >= HARD_CAP:
+                return _SESSION_REFUSAL_TEXT
+
+        messages: list[Message] = []
+        if self._memory is not None and session_id is not None:
+            for entry in await self._memory.get_memory(session_id):
+                role_raw = entry.get("role")
+                content_raw = entry.get("content")
+                role = role_raw if isinstance(role_raw, str) else "user"
+                content = content_raw if isinstance(content_raw, str) else ""
+                # Persisted memory only contains user/assistant turns —
+                # tool_use/tool_result frames are intentionally not
+                # rehydrated; the model re-fetches as needed for the
+                # new question.
+                if role in ("user", "assistant"):
+                    messages.append(Message(role=role, content=content))  # type: ignore[arg-type]
+
+        messages.append(Message(role="user", content=user_message))
         tools = [
             DEMOGRAPHICS_TOOL_SPEC,
             PROBLEMS_TOOL_SPEC,
@@ -186,10 +231,15 @@ class Orchestrator:
                 if not response.text:
                     return "(no response)"
                 if not self._verifier_enabled:
-                    return response.text
-                return await self._verify_response(
-                    response.text, tool_results, trace
+                    final_text = response.text
+                else:
+                    final_text = await self._verify_response(
+                        response.text, tool_results, trace
+                    )
+                await self._maybe_persist_turn(
+                    session_id, user_message, final_text
                 )
+                return final_text
 
             for call in response.tool_calls:
                 content_json, result = await self._dispatch(ctx, call, trace)
@@ -427,6 +477,27 @@ class Orchestrator:
             claims_emitted=claims_emitted,
             claims_rejected=claims_rejected,
             by_category=by_category,
+        )
+
+    async def _maybe_persist_turn(
+        self,
+        session_id: str | None,
+        user_message: str,
+        agent_response: str,
+    ) -> None:
+        """Append this turn to the session memory if both are configured.
+
+        suggest_reset / refuse_turn are intentionally swallowed at the
+        orchestrator level for MVP — refuse_turn is already prevented
+        by the pre-call hard-cap check in :meth:`turn`, and the soft
+        cap hint is a UX surface that hasn't shipped yet.
+        """
+        if self._memory is None or session_id is None:
+            return
+        await self._memory.add_turn(
+            session_id=session_id,
+            user_message=user_message,
+            agent_response=agent_response,
         )
 
     def _hash_args(self, args: dict[str, Any]) -> str | None:

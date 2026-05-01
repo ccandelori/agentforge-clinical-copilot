@@ -38,6 +38,7 @@ from agentforge.observability import (
     NullLangfuseClient,
 )
 from agentforge.orchestrator import Orchestrator
+from agentforge.orchestrator.memory import ConversationMemory
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
@@ -68,6 +69,11 @@ class _AppRedisProto(Protocol):
 
 class TurnRequest(BaseModel):
     message: str
+    # Multi-turn memory key (Task 31). The frontend mints this once at
+    # conversation start (see :func:`generate_session_id`) and sends it
+    # back on every subsequent turn to opt into persisted history.
+    # ``None`` disables memory for this turn — the agent is single-shot.
+    session_id: str | None = None
 
 
 class TurnResponse(BaseModel):
@@ -200,6 +206,7 @@ def create_app(
         langfuse=langfuse,
         hmac_key=settings.hmac_key.encode("utf-8"),
         redis_storage=storage,
+        memory=ConversationMemory(redis_storage=storage),
     )
 
     app.state.auth_gateway = auth_gateway
@@ -222,7 +229,9 @@ def create_app(
         ctx: Annotated[RequestContext, Depends(get_request_context)],
         orchestrator: Annotated[Orchestrator, Depends(get_orchestrator)],
     ) -> TurnResponse:
-        reply = await orchestrator.turn(ctx, body.message)
+        reply = await orchestrator.turn(
+            ctx, body.message, session_id=body.session_id
+        )
         return TurnResponse(reply=reply)
 
     return app
