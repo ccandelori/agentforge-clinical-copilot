@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# Deploy AgentForge (PHP module + Python sidecar) to the production
+# droplet. Idempotent — safe to re-run after every code change.
+#
+# Usage:
+#   ./scripts/deploy-droplet.sh           # both module + sidecar
+#   ./scripts/deploy-droplet.sh module    # just the OpenEMR PHP module
+#   ./scripts/deploy-droplet.sh sidecar   # just the Python sidecar (rebuild + restart)
+#   ./scripts/deploy-droplet.sh check     # health check only, no deploy
+#   ./scripts/deploy-droplet.sh logs      # tail the sidecar log
+#
+# Configuration (override via env if your droplet moves):
+#   DROPLET_HOST=root@143.244.157.90      # SSH target
+#   OPENEMR_CONTAINER=development-easy-openemr-1
+#   OPENEMR_NETWORK=development-easy_default
+#   SIDECAR_NAME=agentforge-sidecar
+#
+# Prerequisites (one-time, see docs/DEPLOYMENT.md "First-time deploy"):
+#   - SSH key access to DROPLET_HOST
+#   - Module .env exists at /opt/agentforge/module/.env on droplet
+#   - Sidecar .env exists at /opt/agentforge/sidecar/.env on droplet
+#   - Module installed + enabled in OpenEMR Admin UI
+
+set -euo pipefail
+
+# ---------- Config ----------
+
+DROPLET_HOST="${DROPLET_HOST:-root@143.244.157.90}"
+OPENEMR_CONTAINER="${OPENEMR_CONTAINER:-development-easy-openemr-1}"
+OPENEMR_NETWORK="${OPENEMR_NETWORK:-development-easy_default}"
+SIDECAR_NAME="${SIDECAR_NAME:-agentforge-sidecar}"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODULE_LOCAL="$REPO_ROOT/interface/modules/custom_modules/oe-module-agentforge"
+SIDECAR_LOCAL="$REPO_ROOT/sidecar"
+
+MODULE_REMOTE="/opt/agentforge/module"
+SIDECAR_REMOTE="/opt/agentforge/sidecar"
+MODULE_IN_CONTAINER="/var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-agentforge"
+
+# ---------- Helpers ----------
+
+color() { printf '\033[1;%sm%s\033[0m\n' "$1" "$2"; }
+step() { color 36 "==> $*"; }
+ok() { color 32 "    $*"; }
+warn() { color 33 "    $*" >&2; }
+die() { color 31 "✗ $*" >&2; exit 1; }
+
+ssh_run() {
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$DROPLET_HOST" "$@"
+}
+
+preflight() {
+    [[ -d "$MODULE_LOCAL" ]] || die "Module dir not found at $MODULE_LOCAL — wrong repo?"
+    [[ -d "$SIDECAR_LOCAL" ]] || die "Sidecar dir not found at $SIDECAR_LOCAL — wrong repo?"
+    ssh_run 'echo ok' >/dev/null 2>&1 || die "SSH to $DROPLET_HOST failed (key auth?)."
+    ssh_run "test -f $MODULE_REMOTE/.env" \
+        || warn "$MODULE_REMOTE/.env missing — module deploy will leave the container without a JWT secret."
+    ssh_run "test -f $SIDECAR_REMOTE/.env" \
+        || warn "$SIDECAR_REMOTE/.env missing — sidecar will fail to start without it."
+}
+
+# ---------- Steps ----------
+
+deploy_module() {
+    step "rsyncing module → $DROPLET_HOST:$MODULE_REMOTE/"
+    rsync -az --delete \
+        --exclude='.git' --exclude='vendor' --exclude='*.tmp' --exclude='.env' \
+        "$MODULE_LOCAL/" "$DROPLET_HOST:$MODULE_REMOTE/"
+    ok "module synced"
+
+    step "injecting module into $OPENEMR_CONTAINER"
+    ssh_run "docker cp $MODULE_REMOTE/. $OPENEMR_CONTAINER:$MODULE_IN_CONTAINER/"
+    if ssh_run "test -f $MODULE_REMOTE/.env"; then
+        ssh_run "docker cp $MODULE_REMOTE/.env $OPENEMR_CONTAINER:$MODULE_IN_CONTAINER/.env"
+        ok "module + .env injected"
+    else
+        warn "no .env to copy — agent will 503 until you create $MODULE_REMOTE/.env"
+    fi
+}
+
+deploy_sidecar() {
+    step "rsyncing sidecar → $DROPLET_HOST:$SIDECAR_REMOTE/"
+    rsync -az --delete \
+        --exclude='.venv' --exclude='__pycache__' \
+        --exclude='.pytest_cache' --exclude='.mypy_cache' --exclude='.ruff_cache' \
+        --exclude='var' --exclude='.env' \
+        "$SIDECAR_LOCAL/" "$DROPLET_HOST:$SIDECAR_REMOTE/"
+    ok "sidecar synced"
+
+    step "building sidecar image"
+    ssh_run "cd $SIDECAR_REMOTE && docker build -t ${SIDECAR_NAME}:latest . 2>&1 | tail -3"
+    ok "image built"
+
+    step "restarting sidecar container"
+    ssh_run "docker rm -f $SIDECAR_NAME 2>/dev/null || true"
+    ssh_run "docker run -d --name $SIDECAR_NAME --restart unless-stopped \
+        --network $OPENEMR_NETWORK \
+        --env-file $SIDECAR_REMOTE/.env \
+        ${SIDECAR_NAME}:latest"
+    ok "container started"
+}
+
+check_health() {
+    step "checking sidecar container status"
+    local status
+    status=$(ssh_run "docker ps --filter name=$SIDECAR_NAME --format '{{.Status}}'")
+    if [[ -z "$status" ]]; then
+        die "sidecar container is not running"
+    fi
+    ok "$status"
+
+    step "checking sidecar reachable from openemr"
+    local body
+    body=$(ssh_run "docker exec $OPENEMR_CONTAINER sh -c 'wget -qO- --timeout=5 http://${SIDECAR_NAME}:8000/health'") \
+        || die "openemr container cannot reach sidecar"
+    ok "sidecar /health responded: $body"
+
+    step "checking module is in openemr container"
+    if ssh_run "docker exec $OPENEMR_CONTAINER test -f $MODULE_IN_CONTAINER/openemr.bootstrap.php"; then
+        ok "module files present"
+    else
+        die "module files missing in container — re-run with 'module' subcommand"
+    fi
+
+    step "recent /turn requests"
+    ssh_run "docker logs --tail 50 $SIDECAR_NAME 2>&1 | grep '/turn' | tail -5" \
+        || ok "no /turn requests yet"
+}
+
+tail_logs() {
+    step "tailing sidecar log (ctrl-c to stop)"
+    ssh_run "docker logs --tail 30 -f $SIDECAR_NAME"
+}
+
+# ---------- Dispatch ----------
+
+cmd="${1:-all}"
+case "$cmd" in
+    all)
+        preflight
+        deploy_module
+        deploy_sidecar
+        check_health
+        ;;
+    module)
+        preflight
+        deploy_module
+        ;;
+    sidecar)
+        preflight
+        deploy_sidecar
+        check_health
+        ;;
+    check)
+        check_health
+        ;;
+    logs)
+        tail_logs
+        ;;
+    -h|--help|help)
+        sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+        ;;
+    *)
+        die "unknown subcommand '$cmd' — try: all | module | sidecar | check | logs | help"
+        ;;
+esac
+
+color 32 "✓ done"

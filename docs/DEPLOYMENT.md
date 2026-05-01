@@ -93,51 +93,38 @@ files, restart the sidecar container.
 
 ## How to deploy a new version of the code
 
-From your local checkout (one-time setup is documented in this file's
-"First-time deploy" section below):
+Use the helper script. It does the rsync + `docker cp` + image rebuild +
+container restart + health check, and is safe to re-run after every change:
 
 ```bash
-# 1. Push code to droplet
-rsync -avz --delete --exclude='.git' --exclude='vendor' --exclude='*.tmp' \
-    interface/modules/custom_modules/oe-module-agentforge/ \
-    root@143.244.157.90:/opt/agentforge/module/
-
-rsync -avz --delete --exclude='.venv' --exclude='__pycache__' \
-    --exclude='.pytest_cache' --exclude='.mypy_cache' --exclude='.ruff_cache' \
-    --exclude='var' --exclude='.env' \
-    sidecar/ \
-    root@143.244.157.90:/opt/agentforge/sidecar/
-
-# 2. Re-inject the module into the running openemr container
-ssh root@143.244.157.90 \
-    'docker cp /opt/agentforge/module/. development-easy-openemr-1:/var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-agentforge/ && \
-     docker cp /opt/agentforge/module/.env development-easy-openemr-1:/var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-agentforge/.env'
-
-# 3. Rebuild + restart the sidecar (only if sidecar code changed)
-ssh root@143.244.157.90 \
-    'cd /opt/agentforge/sidecar && docker build -t agentforge-sidecar:latest . && \
-     docker rm -f agentforge-sidecar && \
-     docker run -d --name agentforge-sidecar --restart unless-stopped \
-         --network development-easy_default \
-         --env-file /opt/agentforge/sidecar/.env \
-         agentforge-sidecar:latest'
+# from the repo root:
+./scripts/deploy-droplet.sh           # both module + sidecar (default)
+./scripts/deploy-droplet.sh module    # only PHP module changed
+./scripts/deploy-droplet.sh sidecar   # only Python sidecar changed
+./scripts/deploy-droplet.sh check     # health-check, no deploy
+./scripts/deploy-droplet.sh logs      # tail the live sidecar log
+./scripts/deploy-droplet.sh help      # show all subcommands
 ```
 
-PHP module changes only need step 1 + 2 (no sidecar rebuild). Python sidecar
-changes only need steps 1 + 3.
+The script is parameterized via env vars (`DROPLET_HOST`, `OPENEMR_CONTAINER`,
+`OPENEMR_NETWORK`, `SIDECAR_NAME`) so a new droplet only needs:
+
+```bash
+DROPLET_HOST=root@1.2.3.4 ./scripts/deploy-droplet.sh
+```
+
+It will warn but not fail if either `.env` is missing on the droplet, since
+those are part of the one-time setup below.
 
 ## How to check it's healthy
 
 ```bash
-ssh root@143.244.157.90 '
-  echo "=== sidecar status ===";
-  docker ps --filter name=agentforge-sidecar --format "{{.Status}}";
-  echo "=== sidecar reachable from openemr ===";
-  docker exec development-easy-openemr-1 sh -c "wget -qO- http://agentforge-sidecar:8000/health";
-  echo "=== last 5 turns ===";
-  docker logs --tail 30 agentforge-sidecar 2>&1 | grep "POST /turn" | tail -5;
-'
+./scripts/deploy-droplet.sh check
 ```
+
+(Or, if you'd rather see the raw shape: SSH in and run the equivalent commands
+the script's `check_health` function emits — they're documented inline in
+`scripts/deploy-droplet.sh`.)
 
 Open `https://143.244.157.90:9300/`, log in (admin / pass), open Susan
 Underwood's chart (pid=2), expand the **Clinical Co-Pilot** panel, and ask
@@ -162,25 +149,51 @@ Underwood's chart (pid=2), expand the **Clinical Co-Pilot** panel, and ask
 - **First `/turn` after a fresh sidecar start may 503.** Cold-start of the
   Anthropic SDK's HTTP client pool. Retry once; subsequent requests are fine.
 
-## First-time deploy steps (already done; for reference)
+## First-time deploy (one-time setup before the script works)
 
-These are the steps that got us from "fresh droplet with OpenEMR running" to
-"AgentForge fully wired up." Re-run if rebuilding from scratch.
+The deploy script assumes the droplet is provisioned with OpenEMR already
+running, and that the two `.env` files exist at their canonical paths. To get
+there from a fresh droplet:
 
-1. **Stage code:** `rsync` of the module dir → `/opt/agentforge/module/`
-   and the sidecar dir → `/opt/agentforge/sidecar/`.
-2. **Inject module into openemr container:**
-   `docker cp /opt/agentforge/module/. development-easy-openemr-1:/var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-agentforge/`.
-3. **Generate secrets:** `openssl rand -base64 32` twice (one for JWT, one for HMAC).
-4. **Drop module `.env`** at `/opt/agentforge/module/.env` and `docker cp`
-   it into the container at the module path.
-5. **Drop sidecar `.env`** at `/opt/agentforge/sidecar/.env` (use `read -rsp`
-   for the API key so it doesn't enter shell history).
-6. **Build sidecar image:**
-   `cd /opt/agentforge/sidecar && docker build -t agentforge-sidecar:latest .`
-7. **Start sidecar container** on the openemr docker network (see deploy
-   commands above).
-8. **Enable module in OpenEMR UI:** Admin → Modules → Manage Modules → find
-   "AgentForge Clinical Co-Pilot" → Install → Enable.
-9. **Smoke test:** open a patient chart, expand the Clinical Co-Pilot panel,
-   send a question.
+1. **OpenEMR up.** Stand up OpenEMR via the upstream `development-easy`
+   compose stack — out of scope of this repo; follow OpenEMR's docs.
+2. **Make staging dirs:**
+   ```bash
+   ssh root@143.244.157.90 'mkdir -p /opt/agentforge/module /opt/agentforge/sidecar'
+   ```
+3. **Generate secrets:**
+   ```bash
+   echo "JWT_SECRET=$(openssl rand -base64 32)"
+   echo "HMAC_KEY=$(openssl rand -base64 32)"
+   ```
+   Save both — you'll paste them in step 4 + 5.
+4. **Drop module `.env`** on the droplet:
+   ```bash
+   ssh root@143.244.157.90 'cat > /opt/agentforge/module/.env' <<EOF
+   AGENTFORGE_JWT_SECRET=<the JWT_SECRET from step 3>
+   AGENTFORGE_SIDECAR_URL=http://agentforge-sidecar:8000
+   EOF
+   ```
+5. **Drop sidecar `.env`** on the droplet (use `read -rsp` for the API key
+   so it doesn't enter shell history):
+   ```bash
+   read -rsp 'Anthropic API key: ' KEY
+   ssh root@143.244.157.90 "cat > /opt/agentforge/sidecar/.env" <<EOF
+   JWT_SECRET=<same value as AGENTFORGE_JWT_SECRET above — must match byte-for-byte>
+   HMAC_KEY=<the HMAC_KEY from step 3>
+   ANTHROPIC_API_KEY=$KEY
+   OPENEMR_BASE_URL=http://openemr:80
+   EOF
+   ssh root@143.244.157.90 'chmod 600 /opt/agentforge/sidecar/.env'
+   unset KEY
+   ```
+6. **Run the deploy script** to push code + build sidecar + start containers:
+   ```bash
+   ./scripts/deploy-droplet.sh
+   ```
+7. **Enable module in OpenEMR UI:** open the OpenEMR site → Admin → Modules
+   → Manage Modules → find "AgentForge Clinical Co-Pilot" → Install → Enable.
+   (One-time per droplet; the modules table persists across deploys.)
+8. **Smoke test:** open a patient chart, expand the Clinical Co-Pilot panel,
+   send a question. First `/turn` after a fresh sidecar start may 503
+   (cold-start). Retry once.
