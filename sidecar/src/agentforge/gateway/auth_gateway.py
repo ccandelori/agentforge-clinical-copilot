@@ -66,6 +66,10 @@ class RequestContext:
     breakglass_flag: bool
     breakglass_reason: str | None
     sensitivity_clearances: frozenset[str] = field(default_factory=frozenset)
+    # Original bearer token, captured by the gateway. The orchestrator
+    # forwards it to PHP internal endpoints (e.g. demographics) so they
+    # can validate using the same JWT secret without re-minting.
+    raw_token: str = ""
 
 
 class AuthGateway:
@@ -144,6 +148,7 @@ class AuthGateway:
             breakglass_flag=breakglass_flag,
             breakglass_reason=breakglass_reason,
             sensitivity_clearances=clearances,
+            raw_token=token,
         )
 
     async def _load_clearances(self, role: str | None) -> frozenset[str]:

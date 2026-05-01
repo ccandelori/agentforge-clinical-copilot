@@ -25,6 +25,7 @@ use Doctrine\DBAL\DriverManager;
 use OpenEMR\BC\ServiceContainer;
 use OpenEMR\Core\OEGlobalsBag;
 use OpenEMR\Modules\AgentForge\Controllers\AgentProxyController;
+use OpenEMR\Modules\AgentForge\EnvLoader;
 use OpenEMR\Modules\AgentForge\Services\AgentJwtService;
 use OpenEMR\Modules\AgentForge\Services\UserRoleLookup;
 use Symfony\Component\HttpClient\HttpClient;
@@ -33,6 +34,7 @@ use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\PhpBridgeSessionStorage;
 
 require_once dirname(__FILE__, 5) . '/globals.php';
+EnvLoader::load();
 
 // Bridge OpenEMR's native PHP session into Symfony's Session abstraction
 // so the controller can use Request::getSession() consistently with tests.
