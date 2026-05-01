@@ -35,6 +35,20 @@ $ignoreAuth = true;
 require_once dirname(__FILE__, 6) . '/globals.php';
 EnvLoader::load();
 
+// Apache + mod_php strips the Authorization header from $_SERVER by default
+// (it's only forwarded when Apache is told to via mod_setenvif / CGIPassAuth /
+// htaccess). The header IS available via apache_request_headers(), so we
+// copy it back into $_SERVER before Symfony's Request reads from globals.
+if (
+    !isset($_SERVER['HTTP_AUTHORIZATION'])
+    && function_exists('apache_request_headers')
+) {
+    $apacheHeaders = apache_request_headers();
+    if (isset($apacheHeaders['Authorization'])) {
+        $_SERVER['HTTP_AUTHORIZATION'] = $apacheHeaders['Authorization'];
+    }
+}
+
 $secret = getenv('AGENTFORGE_JWT_SECRET');
 if ($secret === false || $secret === '') {
     $errorResponse = new JsonResponse(

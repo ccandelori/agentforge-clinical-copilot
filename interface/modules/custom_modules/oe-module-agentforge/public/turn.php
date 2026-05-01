@@ -31,15 +31,25 @@ use OpenEMR\Modules\AgentForge\Services\UserRoleLookup;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
-use Symfony\Component\HttpFoundation\Session\Storage\PhpBridgeSessionStorage;
+use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 
 require_once dirname(__FILE__, 5) . '/globals.php';
 EnvLoader::load();
 
-// Bridge OpenEMR's native PHP session into Symfony's Session abstraction
-// so the controller can use Request::getSession() consistently with tests.
-$session = new Session(new PhpBridgeSessionStorage());
+// OpenEMR namespaces its session data under $_SESSION['OpenEMR'] (its
+// session bag is a sub-array of the native PHP session). Neither
+// PhpBridgeSessionStorage nor MockArraySessionStorage reads
+// $_SESSION['OpenEMR'][...] for free, so we copy the keys we care about
+// across into a Mock-backed Session that the controller can read uniformly
+// with the test fixtures.
+$openemrSession = is_array($_SESSION['OpenEMR'] ?? null) ? $_SESSION['OpenEMR'] : [];
+$session = new Session(new MockArraySessionStorage());
 $session->start();
+foreach (['pid', 'authUserID', 'authUser', 'breakglass_flag', 'breakglass_reason'] as $key) {
+    if (isset($openemrSession[$key])) {
+        $session->set($key, $openemrSession[$key]);
+    }
+}
 
 $request = Request::createFromGlobals();
 $request->setSession($session);

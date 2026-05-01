@@ -22,6 +22,8 @@ declare(strict_types=1);
 namespace OpenEMR\Modules\AgentForge;
 
 use Dotenv\Dotenv;
+use Dotenv\Repository\Adapter\PutenvAdapter;
+use Dotenv\Repository\RepositoryBuilder;
 
 final class EnvLoader
 {
@@ -32,8 +34,12 @@ final class EnvLoader
         if (!file_exists($envPath)) {
             return;
         }
-        // `createImmutable` writes to $_ENV / $_SERVER only. We want
-        // getenv() to see the values too, so use createMutable.
-        Dotenv::createMutable($moduleRoot)->safeLoad();
+        // The default mutable repository writes to $_ENV / $_SERVER but
+        // not into getenv(). Our entry-point scripts read AGENTFORGE_*
+        // via getenv(), so explicitly add the Putenv adapter.
+        $repository = RepositoryBuilder::createWithDefaultAdapters()
+            ->addAdapter(PutenvAdapter::class)
+            ->make();
+        Dotenv::create($repository, $moduleRoot)->safeLoad();
     }
 }

@@ -642,3 +642,147 @@ area is documented in the type signature.
 [`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
 
 ---
+
+## 2026-04-30 — MVP wiring: collapsed Tasks 3, 4, 11, 13, 14, 26, 33 into one branch
+
+**Plan:** Each of the seven tasks above had its own subtasks, dedicated test
+suites, and a dependency-graph promotion ritual.
+
+**Deviation:** Compressed all seven tasks into a single branch
+(`task-mvp-functional-agent`) with one bundled commit and a far lighter
+test footprint — one happy-path test per piece, no exhaustive coverage.
+Several large adjacent items were also deferred entirely:
+sensitivity-policy redaction (Task 9–10), per-tool fetchers beyond
+get_demographics (Tasks 15–25), the verifier loop (Task 28), Redis-backed
+session memory + Langfuse tracing (Tasks 30–32), Docker compose + reverse
+proxy (Tasks 35–36), and the eval framework (Tasks 37–39).
+
+**Why:** Submission deadline tonight; the goal was a *working* user-visible
+agent ("type a question, get a grounded answer about a real patient"), not
+a production-shaped surface. The architecture stays compatible — each
+deferred item can be added later without rewriting the seven we shipped.
+
+**What we learned:**
+1. Three independent streams (frontend, LLM client, tool DTOs) parallelized
+   cleanly via subagents because the file boundaries were strict and the
+   shared state (`pyproject.toml`, `composer.json` autoload) was already
+   set up. The integration step still had to be sequential — but that was
+   the cheap part once the foundations existed.
+2. "1-tool MVP" is a defensible scope cut. The orchestrator loop and the
+   FastAPI /turn route are the real architectural surface; adding tools 2-N
+   later is mechanical (one PHP internal endpoint + one async fetcher each).
+3. The DEMOGRAPHICS_TOOL_SPEC has zero LLM-visible inputs — patient_id is
+   bound from RequestContext server-side. Worth keeping as a pattern for
+   the remaining tools: the LLM decides *whether* to call, not *who about*.
+
+**Artifacts:** commit `feat(agentforge): wire MVP end-to-end agent loop`.
+
+---
+
+## 2026-04-30 — Module-local `.env` instead of container env vars
+
+**Plan:** ARCHITECTURE.md assumes `AGENTFORGE_JWT_SECRET` lives in the
+deployment's environment (docker-compose env block, kubernetes secret,
+etc.) and is available to PHP via `getenv()` at request time.
+
+**Deviation:** Built a small `EnvLoader` (vlucas/phpdotenv) that reads
+`interface/modules/custom_modules/oe-module-agentforge/.env` on every
+request and stuffs the values into `getenv()` via the Putenv adapter. The
+PHP entry points call `EnvLoader::load()` right after `globals.php`.
+
+**Why:** OpenEMR's `development-easy` Apache + mod_php container does not
+propagate environment variables to web requests by default — `docker
+compose exec` env doesn't reach the request lifecycle, and modifying the
+compose file requires a container restart that risks losing other in-place
+state (the `sqlconf.php $config` reset, npm assets, etc.). A module-local
+`.env` lets the developer drop secrets in without touching the container.
+Production deployments can still set the same vars at the
+container/process level — `safeLoad()` doesn't override existing env.
+
+**What we learned:**
+1. phpdotenv 5.x's `createMutable()` is misleadingly named: by default it
+   writes to `$_ENV` and `$_SERVER` only. The `PutenvAdapter` has to be
+   added explicitly via `RepositoryBuilder` if you want `getenv()` to see
+   the values. Cost us one debug iteration.
+2. `.env` files are a perfectly fine boundary for a single-host dev
+   container; the architecture document's assumption that env vars come
+   from the deployment was correct in spirit but unworkable for the
+   easy-mode container we're shipping against tonight.
+
+**Artifacts:**
+[`oe-module-agentforge/src/EnvLoader.php`](../interface/modules/custom_modules/oe-module-agentforge/src/EnvLoader.php),
+[`oe-module-agentforge/.env.example`](../interface/modules/custom_modules/oe-module-agentforge/.env.example).
+
+---
+
+## 2026-04-30 — Read OpenEMR session through `$_SESSION['OpenEMR']`, not top-level
+
+**Plan:** AgentProxyController + turn.php were built against the
+PHPUnit-fixture model where session keys (`pid`, `authUserID`, `authUser`)
+sit at the top level of the Symfony Session — i.e. the unit tests pass
+`$session->set('pid', 123)` and the controller reads `$session->get('pid')`.
+
+**Deviation:** OpenEMR namespaces *all* its session data under
+`$_SESSION['OpenEMR']` (a session bag layer that predates Symfony's
+abstraction in this codebase). The bridge from native PHP session to the
+Symfony Session in `turn.php` now reads `$_SESSION['OpenEMR'][$key]` and
+copies the relevant keys into a `MockArraySessionStorage`-backed Session
+that the controller consumes uniformly with the test fixtures.
+
+**Why:** `PhpBridgeSessionStorage` does not flatten the OpenEMR bag, so
+`$session->get('pid')` returned null even though the session had a pid.
+Discovered live during the smoke test — first manifested as "Error 400:
+No patient context" with the chart explicitly open.
+
+**What we learned:**
+1. Trust-boundary code that bridges from a legacy session shape to a
+   modern abstraction needs an explicit shape verification step (not just
+   "session exists"). The unit-test fixture being top-level keys was a
+   distorted model of reality — a more honest fixture would have been a
+   nested `$_SESSION['OpenEMR'][...]` shape we then translate.
+2. `error_log()` + tail of the apache log is faster than any other PHP
+   debugger when the issue is "what does the runtime actually have right
+   now in this hosted context." Took 2 round-trips to get to the answer.
+
+**Artifacts:**
+[`oe-module-agentforge/public/turn.php`](../interface/modules/custom_modules/oe-module-agentforge/public/turn.php).
+
+---
+
+## 2026-04-30 — Rehydrate Authorization header from `apache_request_headers()`
+
+**Plan:** Internal endpoint reads `Authorization` via Symfony's
+`Request::createFromGlobals()->headers->get('Authorization')`, which pulls
+from `$_SERVER['HTTP_AUTHORIZATION']` like every other PHP web app.
+
+**Deviation:** Apache + mod_php (the dev-easy container's setup) strips
+the `Authorization` header from `$_SERVER` by default — it's only
+forwarded when explicitly told via `mod_setenvif` / `CGIPassAuth` /
+`.htaccess`. The header IS available via `apache_request_headers()`. We
+copy it back into `$_SERVER['HTTP_AUTHORIZATION']` before Symfony reads
+the globals.
+
+**Why:** Discovered live during the smoke test — first manifested as the
+agent answering "I'm unable to retrieve the patient's information,
+including their medication list, due to an authentication error (401
+Unauthorized)" because the demographics tool's call into PHP got 401 and
+the orchestrator faithfully relayed that to the model.
+
+**What we learned:**
+1. There is no portable PHP API for "give me the Authorization header" —
+   you have to know whether you're under mod_php, php-fpm + nginx, php-fpm
+   + apache, etc., each of which has different defaults. The
+   `apache_request_headers()` fallback (combined with the `$_SERVER`
+   primary) covers the dev-easy container; production may need a real
+   `.htaccess` directive instead.
+2. The agent's behavior of relaying tool-layer 401s to the user as a
+   user-facing message is *correct* — and arguably more useful than the
+   raw stack trace would have been — but it makes "tool layer broken"
+   indistinguishable from "I don't know" at the UI. A future verifier
+   step should classify tool-error responses and surface them differently
+   (e.g. "system error, not a knowledge gap").
+
+**Artifacts:**
+[`oe-module-agentforge/public/internal/demographics.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php).
+
+---
