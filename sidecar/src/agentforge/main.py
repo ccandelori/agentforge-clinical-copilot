@@ -29,6 +29,11 @@ from agentforge.gateway.auth_gateway import (
 )
 from agentforge.llm.claude import ClaudeClient
 from agentforge.llm.client import LLMClient
+from agentforge.observability import (
+    AgentLangfuse,
+    LangfuseClient,
+    NullLangfuseClient,
+)
 from agentforge.orchestrator import Orchestrator
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import AllergiesFetcher
@@ -57,6 +62,28 @@ def get_orchestrator(request: Request) -> Orchestrator:
     return orchestrator
 
 
+def _build_langfuse(settings: Settings) -> LangfuseClient:
+    """Pick the Langfuse implementation based on configuration.
+
+    Returns :class:`AgentLangfuse` only when host + both keys are set.
+    Anything missing falls back to :class:`NullLangfuseClient` so local
+    dev and tests never need a running Langfuse instance.
+    """
+    hmac_key_bytes = settings.hmac_key.encode("utf-8")
+    if (
+        settings.langfuse_host
+        and settings.langfuse_public_key
+        and settings.langfuse_secret_key
+    ):
+        return AgentLangfuse(
+            host=settings.langfuse_host,
+            public_key=settings.langfuse_public_key,
+            secret_key=settings.langfuse_secret_key,
+            hmac_key=hmac_key_bytes,
+        )
+    return NullLangfuseClient(hmac_key=hmac_key_bytes)
+
+
 def create_app(
     settings: Settings | None = None,
     llm_client: LLMClient | None = None,
@@ -67,6 +94,7 @@ def create_app(
     labs_fetcher: LabsFetcher | None = None,
     vitals_fetcher: VitalsFetcher | None = None,
     redis_storage: AgentRedisClient | None = None,
+    langfuse_client: LangfuseClient | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -79,10 +107,14 @@ def create_app(
     storage = redis_storage or AgentRedisClient(redis_url=settings.redis_url)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
+            # Flush pending Langfuse traces and tear down the OTel exporter
+            # thread so a graceful shutdown doesn't leak in-flight spans;
+            # then release the Redis connection pool.
+            await _app.state.langfuse.aclose()
             await storage.aclose()
 
     app = FastAPI(
@@ -123,9 +155,12 @@ def create_app(
         vitals_fetcher=vitals,
     )
 
+    langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
+
     app.state.auth_gateway = auth_gateway
     app.state.orchestrator = orchestrator
     app.state.redis_storage = storage
+    app.state.langfuse = langfuse
 
     @app.get("/health")
     async def health() -> dict[str, str]:
