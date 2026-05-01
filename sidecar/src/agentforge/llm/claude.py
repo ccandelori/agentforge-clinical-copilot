@@ -78,6 +78,25 @@ class ClaudeClient:
         )
         return self._from_anthropic_response(response)
 
+    async def health_check(self) -> None:
+        """Cheapest possible round-trip that exercises auth + reachability.
+
+        Anthropic doesn't expose a free liveness endpoint, so we issue a
+        ``messages.create`` capped at one output token. At ~3 input + 1
+        output tokens per probe and a 30s default poll cadence, the cost
+        is on the order of a few cents per environment per month — small
+        enough to prefer over a TCP-only probe that wouldn't catch
+        auth/quota regressions.
+
+        Raises whatever the SDK raises; ``LLMHealthMonitor`` translates
+        that into a status flip.
+        """
+        await self._client.messages.create(
+            model=self._model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+        )
+
     @staticmethod
     def _to_anthropic_message(message: Message) -> MessageParam:
         """Translate one of our flat `Message` objects into the SDK shape."""

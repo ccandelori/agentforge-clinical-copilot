@@ -156,3 +156,38 @@ async def test_tool_result_message_translates_to_user_tool_result_block() -> Non
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_health_check_issues_minimal_completion() -> None:
+    """ClaudeClient.health_check pings the API with a min-cost request.
+
+    The point is liveness-with-auth: a tiny `messages.create` call is
+    the cheapest way to confirm the API is reachable and the API key
+    still works. Cost is bounded by ``max_tokens=1`` plus a one-token
+    user message — see the comment in ClaudeClient for the rationale.
+    """
+    text_block = TextBlock.model_construct(type="text", text="ok", citations=None)
+    fake_sdk = _fake_anthropic(_make_response(content=[text_block]))
+    client = ClaudeClient(api_key="unused", http_client=fake_sdk)
+
+    await client.health_check()
+
+    create = cast(AsyncMock, fake_sdk.messages.create)
+    create.assert_awaited_once()
+    sent = create.await_args.kwargs  # type: ignore[union-attr]
+    assert sent["max_tokens"] == 1
+    # The probe must NOT carry a tool catalogue — health checks should
+    # never resemble real turns to the auth/rate-limit infrastructure.
+    assert sent.get("tools") in (None, [])
+
+
+@pytest.mark.asyncio
+async def test_health_check_propagates_sdk_errors() -> None:
+    """A failing API call must raise — the monitor counts it as a failure."""
+    fake_sdk = MagicMock()
+    fake_sdk.messages.create = AsyncMock(side_effect=RuntimeError("503"))
+    client = ClaudeClient(api_key="unused", http_client=cast(AsyncAnthropic, fake_sdk))
+
+    with pytest.raises(RuntimeError):
+        await client.health_check()
