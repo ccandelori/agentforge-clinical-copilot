@@ -24,7 +24,33 @@ Expected variables (provided by the controller in Task 2):
 {% extends "patient/card/card_base.html.twig" %}
 
 {% block content %}
-    <div class="agentforge-panel" data-module="oe-module-agentforge">
+    <div class="agentforge-panel d-flex flex-column" data-module="oe-module-agentforge"
+         data-turn-url="/interface/modules/custom_modules/oe-module-agentforge/public/turn.php">
         {# Chat surface is rendered by public/js/ on mount. #}
+        <div class="agentforge-messages border rounded p-2 mb-2 bg-light"
+             data-role="messages"
+             style="height: 320px; overflow-y: auto;">
+            <div class="text-muted small" data-role="empty-state">
+                {{ "Ask the Co-Pilot a question about this patient."|text }}
+            </div>
+        </div>
+        <div class="agentforge-status small text-muted mb-1" data-role="status" hidden>
+            {{ "Thinking…"|text }}
+        </div>
+        <form class="agentforge-form" data-role="form" autocomplete="off">
+            <div class="input-group">
+                <input type="text"
+                       class="form-control"
+                       data-role="input"
+                       placeholder="{{ "Type a message…"|attr }}"
+                       aria-label="{{ "Message to Clinical Co-Pilot"|attr }}">
+                <div class="input-group-append">
+                    <button type="submit" class="btn btn-primary" data-role="send">
+                        {{ "Send"|text }}
+                    </button>
+                </div>
+            </div>
+        </form>
     </div>
+    <script src="/interface/modules/custom_modules/oe-module-agentforge/public/js/agent_panel.js"></script>
 {% endblock %}

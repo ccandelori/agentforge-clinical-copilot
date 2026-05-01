@@ -27,3 +27,6 @@ htmlcov/
 # IDE
 .idea/
 .vscode/
+
+# Sidecar control script runtime state (PID file + log)
+var/

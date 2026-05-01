@@ -1,21 +1,67 @@
 """FastAPI application entry point for the AgentForge sidecar.
 
-Exposes only the /health endpoint at this stage; the agent turn handler,
-auth gateway, orchestrator wiring, and tool routes are added in
-subsequent tasks. See ARCHITECTURE.md §1 for the system topology.
+MVP wiring:
+  * /health  — liveness probe
+  * /turn    — one agent turn: validate JWT, run orchestrator, return reply
+
+The auth gateway, LLM client, demographics fetcher, and orchestrator are
+constructed in `create_app()` and stashed on `app.state` so the route
+handlers can pull them via FastAPI's dependency system. Production
+hardening (Redis-backed sessions, Langfuse tracing, the verifier) is
+deferred to later tasks. See ARCHITECTURE.md §1.
 """
 
-from fastapi import FastAPI
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from pydantic import BaseModel
 
 from agentforge.config import Settings, get_settings
+from agentforge.gateway.auth_gateway import (
+    AuthGateway,
+    RequestContext,
+    get_request_context,
+)
+from agentforge.llm.claude import ClaudeClient
+from agentforge.llm.client import LLMClient
+from agentforge.orchestrator import Orchestrator
+from agentforge.tools.demographics import DemographicsFetcher
+from agentforge.tools.medications import MedicationsFetcher
+from agentforge.tools.problems import ProblemsFetcher
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+class TurnRequest(BaseModel):
+    message: str
+
+
+class TurnResponse(BaseModel):
+    reply: str
+
+
+def get_orchestrator(request: Request) -> Orchestrator:
+    orchestrator = request.app.state.orchestrator
+    if not isinstance(orchestrator, Orchestrator):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Orchestrator is not configured on app.state",
+        )
+    return orchestrator
+
+
+def create_app(
+    settings: Settings | None = None,
+    llm_client: LLMClient | None = None,
+    demographics_fetcher: DemographicsFetcher | None = None,
+    medications_fetcher: MedicationsFetcher | None = None,
+    problems_fetcher: ProblemsFetcher | None = None,
+) -> FastAPI:
     """Construct the FastAPI application.
 
-    Defers Settings instantiation until the factory is invoked, so importing
-    this module does not require environment configuration. Run in
-    production with: `uvicorn agentforge.main:create_app --factory`.
+    Dependencies are injectable so tests can swap in fakes without
+    touching the network or environment. `uvicorn agentforge.main:create_app
+    --factory` is the production entry point.
     """
     settings = settings or get_settings()
 
@@ -26,8 +72,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
     )
 
+    auth_gateway = AuthGateway(jwt_secret=settings.jwt_secret)
+    llm = llm_client or ClaudeClient(api_key=settings.anthropic_api_key)
+    demographics = demographics_fetcher or DemographicsFetcher(
+        base_url=settings.openemr_base_url,
+    )
+    medications = medications_fetcher or MedicationsFetcher(
+        base_url=settings.openemr_base_url,
+    )
+    problems = problems_fetcher or ProblemsFetcher(
+        base_url=settings.openemr_base_url,
+    )
+    orchestrator = Orchestrator(
+        llm=llm,
+        demographics_fetcher=demographics,
+        medications_fetcher=medications,
+        problems_fetcher=problems,
+    )
+
+    app.state.auth_gateway = auth_gateway
+    app.state.orchestrator = orchestrator
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "healthy"}
+
+    @app.post("/turn", response_model=TurnResponse)
+    async def turn(
+        body: TurnRequest,
+        ctx: Annotated[RequestContext, Depends(get_request_context)],
+        orchestrator: Annotated[Orchestrator, Depends(get_orchestrator)],
+    ) -> TurnResponse:
+        reply = await orchestrator.turn(ctx, body.message)
+        return TurnResponse(reply=reply)
 
     return app
