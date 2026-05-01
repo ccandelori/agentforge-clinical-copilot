@@ -786,3 +786,71 @@ the orchestrator faithfully relayed that to the model.
 [`oe-module-agentforge/public/internal/demographics.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php).
 
 ---
+
+## 2026-05-01 — Streaming verifier `DomainConstraintChecker` is sync, not async
+
+**Plan:** Task 29 sketches `verify_medication_claim()` etc. as `async def`.
+Task 28's StreamingVerifier was therefore expected to await the
+domain-checker call.
+
+**Deviation:** The `DomainConstraintChecker` Protocol shipped in Task 28
+is sync (`def check(...) -> tuple[bool, str | None]`). The
+`NullDomainConstraintChecker` and the streaming verifier's call site
+are sync to match.
+
+**Why:** None of the five planned constraints (medication-name match,
+lab-value tolerance, note-authorization echo, diagnosis traceability,
+no-counterfactuals) need I/O. They check claim text against a record
+dict already in memory — a regex match and a few `.get()` calls. Making
+the protocol async would force every implementation to be `async def`
+even when the body never `await`s, and it would push an extra event-loop
+hop into every claim's verification (which already runs once per
+sentence). The trust boundary stays simpler when the slow path doesn't
+exist.
+
+**What we learned:**
+1. When the spec says `async def` but the body has no `await`, the
+   "async" is a costume, not a mechanism. Better to keep the type
+   honest and widen later if a real async constraint emerges (e.g.,
+   one that needs to consult a separate tool result not in the
+   per-turn cache — currently nothing in the v1 catalog does).
+2. Task 29 will need to drop the `async` keyword off the constraint
+   methods. That's a straight find-and-replace, not a refactor.
+
+**Artifacts:**
+[`sidecar/src/agentforge/verifier/protocols.py`](../sidecar/src/agentforge/verifier/protocols.py).
+
+---
+
+## 2026-05-01 — Streaming verifier rejects label-form citations for MVP
+
+**Plan:** ARCHITECTURE.md S6 lists two citation forms:
+`[encounter #38241, 2026-04-12]` (ID-anchored) and
+`[Rx: lisinopril 20mg, started 2024-08-15]` (label-anchored).
+
+**Deviation:** Only the ID-anchored form is recognised by Task 28's
+`CITATION_PATTERN`. Label-form tokens parse to `None` and any sentence
+whose only citation is label-form is rejected as `no_citation`.
+
+**Why:** The cache lookup is ID-anchored — every record returned by a
+tool this turn is keyed by `(record_type, record_id)`. A label-form
+citation has no ID to look up; validating it would require a different
+mechanism (string-matching the label against the cached records). That
+mechanism IS the medication-name domain constraint from Task 29 (`Constraint
+1: med name in active prescriptions`). Building a parallel label-resolution
+path in Task 28 would duplicate it.
+
+**What we learned:**
+1. The model's freedom to choose a citation format expands the verifier's
+   surface area linearly. Locking the citation grammar to one form during
+   MVP is the cheap way to keep the trust boundary small.
+2. The system prompt should be updated alongside Task 29 to instruct the
+   model to prefer ID-anchored citations until label resolution lands.
+   Until then, the model emitting a label-form citation looks identical
+   to a hallucination from the verifier's perspective — and that's the
+   right behavior (better a false-rejection than a fabricated pass).
+
+**Artifacts:**
+[`sidecar/src/agentforge/verifier/citation.py`](../sidecar/src/agentforge/verifier/citation.py).
+
+---
