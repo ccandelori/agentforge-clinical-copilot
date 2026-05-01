@@ -1,0 +1,70 @@
+# AgentForge sensitivity policy — record-level visibility rules.
+#
+# Loaded at sidecar startup into Redis. The auth gateway consults
+# these rules during `check_record_visibility(ctx, metadata)` — a
+# metadata-only authorization decision (ARCHITECTURE.md §2). Record
+# bodies are NEVER inspected.
+#
+# Bump `version` whenever this file changes. The loader stamps the
+# version into `agentforge:policy:loaded` so the gateway can detect
+# a missing or stale policy without re-parsing the YAML.
+#
+# Each record class:
+#   required_clearances: roles/clearances the user must hold (ALL of
+#       them) for the record to surface. Clearance names match the
+#       SET MEMBERS Redis stores under `agentforge:policy:role:<role>`
+#       (populated separately by the role-clearances loader, task 8.2).
+#   encounter_categories: list of `form_encounter.pc_catid` values
+#       this rule applies to. Empty = matcher inactive.
+#   note_title_prefixes: literal prefix matches against `pnotes.title`
+#       or `form_clinical_notes.note_title`. Prefix only — substring
+#       matches in the middle of a title do not fire.
+#   note_types: list of `form_clinical_notes.note_type` values.
+#   attending_only: true if the rule fires for records flagged
+#       `notes_meta.attending_only=1`. The metadata must include
+#       `attending_user_id` for the rule to evaluate; missing
+#       attending id = fail-closed.
+#
+# A rule fires when ANY of its matchers matches the record metadata.
+# A user must hold the rule's clearances OR (for attending_only) be
+# the record's attending of record. Multiple rules can fire on one
+# record; the first deny short-circuits.
+
+version: 1
+
+record_classes:
+
+  # Behavioral health encounters — `form_encounter.pc_catid` values
+  # configured for psychiatry, psychology, etc. The 11/12 example
+  # values mirror ARCHITECTURE.md's illustrative table; real
+  # deployments should populate from `openemr_postcalendar_categories`
+  # under clinical leadership review.
+  behavioral_health:
+    required_clearances:
+      - mental_health_authorized
+    encounter_categories:
+      - 11
+      - 12
+
+  # 42 CFR Part 2 substance-use records. Two structural classifiers:
+  # explicit `note_type='substance_abuse'` (preferred when the chart
+  # uses the dropdown), and `pnotes.title` prefix (fallback for free-
+  # form titles). Both are metadata-only — the note body is never read.
+  substance_abuse_cfr42:
+    required_clearances:
+      - cfr42_authorized
+    note_title_prefixes:
+      - "SUD:"
+      - "Substance Abuse:"
+    note_types:
+      - substance_abuse
+
+  # Attending-only flag. The deployment must add a `notes_meta` table
+  # extension populated with the attending user_id; ARCHITECTURE.md §2
+  # explicitly notes this is a deployment-added column, not detected
+  # from note body. Users with `attending_override` clearance can see
+  # the record regardless (e.g. supervisors).
+  attending_only:
+    required_clearances:
+      - attending_override
+    attending_only: true
