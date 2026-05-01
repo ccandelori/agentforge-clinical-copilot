@@ -5,13 +5,13 @@ Verifier nodes. This MVP collapses all of that into one tight loop:
 
   user_message -> Claude -> (tool_use? -> dispatch -> tool_result -> Claude)+ -> text
 
-Five tools are registered: get_demographics, get_active_problems,
-get_active_medications, get_active_allergies, and get_vitals_trend. We rely
-on Claude's stop_reason to know when to stop tool-calling; we cap the
-iteration count so a misbehaving model can't burn the deadline. When the
-verifier (Task 28) is wired into /turn and the rest of the tools land
-(Tasks 18, 21, 22, 24), the loop here gets replaced by a real LangGraph
-state machine.
+Six tools are registered: get_demographics, get_active_problems,
+get_active_medications, get_active_allergies, get_recent_labs, and
+get_vitals_trend. We rely on Claude's stop_reason to know when to stop
+tool-calling; we cap the iteration count so a misbehaving model can't burn
+the deadline. When the verifier (Task 28) is wired into /turn and the
+remaining tools land (Tasks 21, 22, 24), the loop here gets replaced by a
+real LangGraph state machine.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from agentforge.llm.client import LLMClient
 from agentforge.llm.types import Message, ToolCall
 from agentforge.tools.allergies import ALLERGIES_TOOL_SPEC, AllergiesFetcher
 from agentforge.tools.demographics import DEMOGRAPHICS_TOOL_SPEC, DemographicsFetcher
+from agentforge.tools.labs import LABS_TOOL_SPEC, LabsFetcher
 from agentforge.tools.medications import MEDICATIONS_TOOL_SPEC, MedicationsFetcher
 from agentforge.tools.problems import PROBLEMS_TOOL_SPEC, ProblemsFetcher
 from agentforge.tools.vitals import VITALS_TOOL_SPEC, VitalsFetcher
@@ -34,11 +35,12 @@ is asking about a single patient whose chart is currently open in their \
 browser. You answer questions grounded in that patient's record by calling \
 tools — never from memory or speculation.
 
-You have five tools:
+You have six tools:
   - get_demographics      : name, DOB, sex, preferred language
   - get_active_problems   : current diagnoses / problem list
   - get_active_medications: currently active medications (with begin/end dates)
   - get_active_allergies  : known allergies (allergen, reaction, severity)
+  - get_recent_labs       : recent lab analytes (name, value, units, range, abnormal flag, date)
   - get_vitals_trend      : recent vital signs (BP, pulse, temp, SpO2, weight, BMI)
 
 Rules:
@@ -55,10 +57,10 @@ appropriate. Don't hedge with "as an AI…".
 5. If a tool returns an error or empty result, say so plainly. Do not \
 invent data to fill gaps. An empty problem list means "no active problems \
 recorded," not "the patient is healthy."
-6. If the user asks about something you don't have a tool for (lab \
-results, encounter history, imaging, etc.), name the gap \
-explicitly: "I don't have access to lab results in this version of the \
-co-pilot — they're visible in the chart's lab section."\
+6. If the user asks about something you don't have a tool for (encounter \
+history, imaging, immunizations, etc.), name the gap explicitly: "I \
+don't have access to encounter history in this version of the co-pilot \
+— it's visible in the chart's encounters section."\
 """
 
 MAX_TOOL_ITERATIONS: Final[int] = 4
@@ -72,6 +74,7 @@ class Orchestrator:
         medications_fetcher: MedicationsFetcher,
         problems_fetcher: ProblemsFetcher,
         allergies_fetcher: AllergiesFetcher,
+        labs_fetcher: LabsFetcher,
         vitals_fetcher: VitalsFetcher,
     ) -> None:
         self._llm = llm
@@ -79,6 +82,7 @@ class Orchestrator:
         self._medications = medications_fetcher
         self._problems = problems_fetcher
         self._allergies = allergies_fetcher
+        self._labs = labs_fetcher
         self._vitals = vitals_fetcher
 
     async def turn(self, ctx: RequestContext, user_message: str) -> str:
@@ -89,6 +93,7 @@ class Orchestrator:
             PROBLEMS_TOOL_SPEC,
             MEDICATIONS_TOOL_SPEC,
             ALLERGIES_TOOL_SPEC,
+            LABS_TOOL_SPEC,
             VITALS_TOOL_SPEC,
         ]
 
@@ -147,9 +152,18 @@ class Orchestrator:
                     patient_id=ctx.patient_id, raw_token=ctx.raw_token
                 )
                 return allergies.model_dump_json()
-            if tool_name == "get_vitals_trend":
+            if tool_name == "get_recent_labs":
                 # since_days is optional; only forward when the model
                 # actually picked one so the PHP default applies otherwise.
+                raw_since = call.input.get("since_days")
+                since_days = raw_since if isinstance(raw_since, int) else None
+                labs = await self._labs.fetch(
+                    patient_id=ctx.patient_id,
+                    raw_token=ctx.raw_token,
+                    since_days=since_days,
+                )
+                return labs.model_dump_json()
+            if tool_name == "get_vitals_trend":
                 raw_since = call.input.get("since_days")
                 since_days = raw_since if isinstance(raw_since, int) else None
                 vitals = await self._vitals.fetch(

@@ -29,6 +29,7 @@ from agentforge.llm.client import LLMClient
 from agentforge.orchestrator import Orchestrator
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
+from agentforge.tools.labs import LabsFetcher
 from agentforge.tools.medications import MedicationsFetcher
 from agentforge.tools.problems import ProblemsFetcher
 from agentforge.tools.vitals import VitalsFetcher
@@ -59,6 +60,7 @@ def create_app(
     medications_fetcher: MedicationsFetcher | None = None,
     problems_fetcher: ProblemsFetcher | None = None,
     allergies_fetcher: AllergiesFetcher | None = None,
+    labs_fetcher: LabsFetcher | None = None,
     vitals_fetcher: VitalsFetcher | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
@@ -90,6 +92,9 @@ def create_app(
     allergies = allergies_fetcher or AllergiesFetcher(
         base_url=settings.openemr_base_url,
     )
+    labs = labs_fetcher or LabsFetcher(
+        base_url=settings.openemr_base_url,
+    )
     vitals = vitals_fetcher or VitalsFetcher(
         base_url=settings.openemr_base_url,
     )
@@ -99,6 +104,7 @@ def create_app(
         medications_fetcher=medications,
         problems_fetcher=problems,
         allergies_fetcher=allergies,
+        labs_fetcher=labs,
         vitals_fetcher=vitals,
     )
 
