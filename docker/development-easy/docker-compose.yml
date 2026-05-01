@@ -182,6 +182,50 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+  # Langfuse — engineering-trace observability for the AgentForge sidecar.
+  # Self-hosted (managed Langfuse would see PHI in tool I/O; see
+  # ARCHITECTURE.md §7.3). For production this runs on a dedicated host
+  # with externally-managed Postgres; this compose stanza is the dev
+  # bundle only. Bound to 127.0.0.1 so the dashboard isn't reachable
+  # from the LAN.
+  langfuse-postgres:
+    restart: unless-stopped
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+    - langfusepgvolume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+  langfuse:
+    restart: unless-stopped
+    image: langfuse/langfuse:2
+    ports:
+    - "127.0.0.1:${WT_LANGFUSE_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:${WT_LANGFUSE_PORT:-3000}
+      NEXTAUTH_SECRET: dev-langfuse-nextauth-secret-change-me
+      SALT: dev-langfuse-salt-change-me
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: agentforge-dev
+      LANGFUSE_INIT_ORG_NAME: AgentForge Dev
+      LANGFUSE_INIT_PROJECT_ID: agentforge-sidecar
+      LANGFUSE_INIT_PROJECT_NAME: AgentForge Sidecar
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/public/health"]
+      start_period: 60s
+      interval: 30s
+      timeout: 5s
+      retries: 5
 volumes:
   databasevolume: {}
   assetvolume: {}
@@ -194,3 +238,4 @@ volumes:
   logvolume: {}
   couchdbvolume: {}
   mailpitvolume: {}
+  langfusepgvolume: {}

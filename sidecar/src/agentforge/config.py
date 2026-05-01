@@ -49,12 +49,19 @@ class Settings(BaseSettings):
     openemr_fhir_endpoint: str = "/apis/fhir/r4"
     openemr_internal_endpoint: str = "/agentforge/internal"
 
-    # Langfuse observability (HMAC-pseudonymous; never PHI; see §7.3)
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
-    langfuse_host: str = "http://localhost:3000"
+    # Langfuse observability (HMAC-pseudonymous; never PHI; see §7.3).
+    # All three must be set for traces to be sent; if any is missing the
+    # sidecar wires NullLangfuseClient instead so dev/test runs don't
+    # need a Langfuse instance. The secret key is held only in memory
+    # and is never logged or echoed in error messages.
+    langfuse_host: str | None = None
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
 
-    # HMAC key for pseudonymizing user/patient IDs in Langfuse (§7.2)
+    # HMAC key for pseudonymizing user/patient IDs and hashing tool
+    # args/results in Langfuse traces (§7.2). Required at startup —
+    # without it pseudonyms are not reversible across rotations and
+    # callers can't compute payload hashes at the boundary.
     hmac_key: str
 
 
