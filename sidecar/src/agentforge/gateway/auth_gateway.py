@@ -26,6 +26,9 @@ import jwt
 import redis.exceptions
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from agentforge.gateway.policy import RecordClassRule, SensitivityPolicy
+from agentforge.gateway.policy_reader import fetch_sensitivity_rules
+
 ISSUER = "openemr-agentforge"
 
 POLICY_SENTINEL_KEY = "agentforge:policy:version"
@@ -43,6 +46,8 @@ class _RedisProto(Protocol):
     async def get(self, key: str) -> bytes | None: ...
 
     async def smembers(self, key: str) -> set[bytes]: ...
+
+    async def keys(self, pattern: str) -> list[bytes] | list[str]: ...
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,24 @@ class RequestContext:
     # forwards it to PHP internal endpoints (e.g. demographics) so they
     # can validate using the same JWT secret without re-minting.
     raw_token: str = ""
+
+
+@dataclass(frozen=True)
+class RecordMetadata:
+    """Minimal structural classifiers a tool already has at hand from
+    its query. Sufficient input for `check_record_visibility` —
+    deliberately *not* the record body. ARCHITECTURE.md §2 forbids
+    body inspection in sensitivity decisions.
+
+    All fields default so a tool with no sensitivity-relevant metadata
+    can call `RecordMetadata()` and get a default-allow result.
+    """
+
+    encounter_category: int | None = None
+    note_title: str | None = None
+    note_type: str | None = None
+    attending_only: bool = False
+    attending_user_id: int | None = None
 
 
 class AuthGateway:
@@ -150,6 +173,93 @@ class AuthGateway:
             sensitivity_clearances=clearances,
             raw_token=token,
         )
+
+    async def check_record_visibility(
+        self,
+        ctx: RequestContext,
+        metadata: RecordMetadata,
+    ) -> bool:
+        """Decide whether `ctx`'s user can see a record with the given
+        metadata. Metadata only — the record body is never read.
+
+        Walks the rules in a fixed order
+        (`behavioral_health` → `substance_abuse_cfr42` → `attending_only`)
+        and short-circuits on the first deny. Default-allow when no rule
+        fires; fail-closed when the policy isn't loaded or the metadata
+        a fired rule needs is absent.
+
+        Breakglass intent (`ctx.breakglass_reason`) is *not* a silent
+        bypass: the visibility decision is unchanged. The audit-log
+        layer (Task 34, future) is the consumer of breakglass intent;
+        encoding a bypass here would let "I had a reason" gradually
+        become "I always have a reason".
+        """
+        if self.redis is None:
+            return False
+
+        policy = await fetch_sensitivity_rules(self.redis)
+        if policy is None:
+            return False
+
+        for class_name in self._rule_evaluation_order(policy):
+            rule = policy.record_classes.get(class_name)
+            if rule is None:
+                continue
+            if not self._rule_matches_metadata(rule, metadata):
+                continue
+            if not self._user_satisfies_rule(ctx, rule, metadata):
+                return False
+        return True
+
+    @staticmethod
+    def _rule_evaluation_order(policy: SensitivityPolicy) -> tuple[str, ...]:
+        # Fixed walk order: keep `attending_only` last so the cheaper
+        # category/title rules can short-circuit before we look at
+        # supervisor overrides. Unknown rule names sort to the end so
+        # adding a new class via YAML doesn't reorder the existing
+        # checks.
+        canonical = ("behavioral_health", "substance_abuse_cfr42", "attending_only")
+        extras = tuple(sorted(set(policy.record_classes) - set(canonical)))
+        return canonical + extras
+
+    @staticmethod
+    def _rule_matches_metadata(
+        rule: RecordClassRule,
+        metadata: RecordMetadata,
+    ) -> bool:
+        if (
+            metadata.encounter_category is not None
+            and metadata.encounter_category in rule.encounter_categories
+        ):
+            return True
+        if metadata.note_title is not None and any(
+            metadata.note_title.startswith(prefix) for prefix in rule.note_title_prefixes
+        ):
+            return True
+        if metadata.note_type is not None and metadata.note_type in rule.note_types:
+            return True
+        return rule.attending_only and metadata.attending_only
+
+    @staticmethod
+    def _user_satisfies_rule(
+        ctx: RequestContext,
+        rule: RecordClassRule,
+        metadata: RecordMetadata,
+    ) -> bool:
+        # Attending-only is a record-scoped predicate, not a clearance:
+        # the attending of record passes by identity. Other users need
+        # the configured override clearance.
+        if rule.attending_only and metadata.attending_only:
+            if metadata.attending_user_id is None:
+                # Fail-closed: rule fired but the metadata didn't say
+                # whose attending the record is. We can't safely
+                # surface it.
+                return False
+            if metadata.attending_user_id == ctx.user_id:
+                return True
+            return all(c in ctx.sensitivity_clearances for c in rule.required_clearances)
+
+        return all(c in ctx.sensitivity_clearances for c in rule.required_clearances)
 
     async def _load_clearances(self, role: str | None) -> frozenset[str]:
         if role is None:

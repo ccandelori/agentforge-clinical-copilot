@@ -1061,3 +1061,65 @@ it in `pyproject.toml` regardless of how it got onto the venv.
 [`sidecar/pyproject.toml`](../sidecar/pyproject.toml).
 
 ---
+
+## 2026-05-01 — `check_record_visibility` fail-closes on missing metadata for a fired rule
+
+**Plan:** Task 10 spec called out fail-closed for a missing `attending_user_id`
+when `attending_only=True`, but didn't expand the rule to other matchers.
+
+**Deviation:** Documented + implemented the same fail-closed posture for
+any future rule whose match needs metadata not in the `RecordMetadata`
+shape. The current MVP only has the attending case, but the
+`_user_satisfies_rule` helper is structured so adding a new matcher
+that needs an absent field is a one-line return-False.
+
+**Why:** A "missing-metadata = allow" default is the audit failure mode
+ARCHITECTURE.md §2 specifically warned against ("a sensitivity model
+that has to read the secret to know it's secret is no model at all"
+— and a model that defaults open when fields are absent is structurally
+similar). The default-allow-on-no-rule-fires is *only* safe because no
+rule fires; once a rule fires, the user must actively satisfy it.
+
+**What we learned:** Two distinct cases that look similar:
+1. No rule matches the metadata → allow (the record isn't classified
+   as sensitive by any structural rule).
+2. A rule matches but its required metadata is absent → deny (the
+   classifier fired but we can't evaluate against the principal).
+
+The visibility check encodes this distinction; future rule additions
+that introduce new metadata fields should follow the same pattern.
+
+**Artifacts:**
+[`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
+
+---
+
+## 2026-05-01 — Breakglass does not silently bypass record visibility (MVP)
+
+**Plan:** ARCHITECTURE.md §2 says break-the-glass "propagates to three
+distinct log destinations" but is ambiguous on whether it changes the
+visibility decision itself.
+
+**Deviation:** For MVP, breakglass does NOT flip a record-visibility
+deny to an allow. The decision logic ignores `ctx.breakglass_reason`
+entirely. Audit-log routing (Task 34, future) will still see the
+breakglass intent on `RequestContext` and emit it to OpenEMR's
+`log.comments`.
+
+**Why:** A silent bypass embedded in the visibility check would let the
+shape "I had a reason, so I saw the record" leak through the agent's
+output without any sentinel. Whether breakglass should ever be a
+*technical* override (vs. an audit-only signal) is a clinical-policy
+decision that belongs to a downstream review, not to MVP wiring.
+Keeping the decision conservative now preserves the option to add a
+narrow breakglass-aware override later under controlled circumstances.
+
+**What we learned:** "We logged it" and "it was allowed" are different
+guarantees. The agent's tool layer should keep them separate even when
+the JWT carries both — the audit path consumes the intent, the
+visibility path consumes only the structural metadata.
+
+**Artifacts:**
+[`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
+
+---
