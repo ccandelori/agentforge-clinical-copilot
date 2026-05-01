@@ -28,6 +28,7 @@ from agentforge.llm.claude import ClaudeClient
 from agentforge.llm.client import LLMClient
 from agentforge.orchestrator import Orchestrator
 from agentforge.tools.demographics import DemographicsFetcher
+from agentforge.tools.labs import LabsFetcher
 from agentforge.tools.medications import MedicationsFetcher
 from agentforge.tools.problems import ProblemsFetcher
 
@@ -56,6 +57,7 @@ def create_app(
     demographics_fetcher: DemographicsFetcher | None = None,
     medications_fetcher: MedicationsFetcher | None = None,
     problems_fetcher: ProblemsFetcher | None = None,
+    labs_fetcher: LabsFetcher | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -83,11 +85,15 @@ def create_app(
     problems = problems_fetcher or ProblemsFetcher(
         base_url=settings.openemr_base_url,
     )
+    labs = labs_fetcher or LabsFetcher(
+        base_url=settings.openemr_base_url,
+    )
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
         medications_fetcher=medications,
         problems_fetcher=problems,
+        labs_fetcher=labs,
     )
 
     app.state.auth_gateway = auth_gateway

@@ -786,3 +786,58 @@ the orchestrator faithfully relayed that to the model.
 [`oe-module-agentforge/public/internal/demographics.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php).
 
 ---
+
+## 2026-05-01 — get_recent_labs reads MariaDB directly, not FHIR Observation
+
+**Plan:** Task 18 spec said the lab tool should query the FHIR
+`Observation?category=laboratory` endpoint, with the sidecar treating the
+results like any other FHIR resource (consistent with the FHIR-first
+direction the OpenEMR mainline is taking).
+
+**Deviation:** Skipped FHIR. Implemented `get_recent_labs` as a direct
+Doctrine DBAL read of `procedure_order` → `procedure_report` →
+`procedure_result`, matching the existing `get_active_medications` and
+`get_active_problems` tools.
+
+**Why:**
+1. Pattern consistency. The other three tools all bypass FHIR; doing
+   this one differently means two parallel "how does an MVP tool talk to
+   data" idioms in the codebase before the third tool even ships.
+2. Auth surface. The FHIR layer expects an OAuth2 access token; the
+   sidecar carries a short-lived `AGENTFORGE_JWT_SECRET`-signed JWT
+   that's already wired into the existing `/agentforge/internal/*`
+   endpoints. Going FHIR-first means standing up an OAuth2 client
+   credential flow inside the sidecar — for one tool — purely so we can
+   then validate it in PHP, while the JWT path already validates and
+   already enforces patient-scope. Net cost: real new code surface for
+   no agent-side benefit.
+3. Schema cost. FHIR Observation flattens `procedure_order/report/result`
+   into a single resource type; the agent doesn't need or use the FHIR
+   facets we'd be paying to translate (Identifier, Subject, Encounter
+   refs, ValueQuantity vs ValueCodeableConcept polymorphism). The 10
+   fields it actually uses come straight from `procedure_result` columns.
+4. Index leverage. Task 40 already added the composite index
+   `idx_procedure_order_patient_date`. Hitting `procedure_order` directly
+   uses that index; the FHIR layer's joins go through ORM glue that
+   doesn't.
+
+**What we learned:**
+- Bypassing FHIR is a load-bearing MVP convention in this fork, not a
+  one-off shortcut. When the verifier (Task 28) ships and we add
+  redaction, the boundary will need to know which fields are sensitive
+  per tool, regardless of FHIR vs SQL — so postponing FHIR doesn't
+  postpone the redaction work either.
+- The 200-row analyte cap matters more than the 90-day window. A single
+  CMP + CBC easily emits 30+ analytes per report; a chronically ill
+  patient inside a 90-day window can saturate context fast. The cap is
+  a deliberate floor, not a placeholder.
+- The `since_days` parameter is the first tool input the LLM controls;
+  the controller clamps to `1..365` server-side as defense-in-depth
+  against the model emitting `since_days: 99999`.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/LabsRepository.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/LabsRepository.php),
+[`oe-module-agentforge/src/Controllers/InternalLabsController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalLabsController.php),
+[`sidecar/src/agentforge/tools/labs.py`](../sidecar/src/agentforge/tools/labs.py).
+
+---
