@@ -17,5 +17,6 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """
     monkeypatch.setenv("JWT_SECRET", "test-jwt-secret")
     monkeypatch.setenv("HMAC_KEY", "test-hmac-key-32-bytes-aaaaaaaaaaaaa")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     get_settings.cache_clear()
     return TestClient(create_app())

@@ -4,15 +4,18 @@ MVP wiring:
   * /health  — liveness probe
   * /turn    — one agent turn: validate JWT, run orchestrator, return reply
 
-The auth gateway, LLM client, demographics fetcher, and orchestrator are
-constructed in `create_app()` and stashed on `app.state` so the route
-handlers can pull them via FastAPI's dependency system. Production
-hardening (Redis-backed sessions, Langfuse tracing, the verifier) is
-deferred to later tasks. See ARCHITECTURE.md §1.
+The auth gateway, LLM client, fetchers, orchestrator, and Redis storage
+client are constructed in `create_app()` and stashed on `app.state` so
+the route handlers can pull them via FastAPI's dependency system. The
+Redis client is allocated here but not yet wired into the orchestrator;
+session-memory integration ships as a follow-up task. Langfuse tracing
+and the verifier are still deferred. See ARCHITECTURE.md §1.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -27,6 +30,7 @@ from agentforge.gateway.auth_gateway import (
 from agentforge.llm.claude import ClaudeClient
 from agentforge.llm.client import LLMClient
 from agentforge.orchestrator import Orchestrator
+from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
 from agentforge.tools.labs import LabsFetcher
@@ -62,6 +66,7 @@ def create_app(
     allergies_fetcher: AllergiesFetcher | None = None,
     labs_fetcher: LabsFetcher | None = None,
     vitals_fetcher: VitalsFetcher | None = None,
+    redis_storage: AgentRedisClient | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -71,11 +76,21 @@ def create_app(
     """
     settings = settings or get_settings()
 
+    storage = redis_storage or AgentRedisClient(redis_url=settings.redis_url)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await storage.aclose()
+
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
         docs_url="/docs" if settings.debug else None,
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     auth_gateway = AuthGateway(jwt_secret=settings.jwt_secret)
@@ -110,6 +125,7 @@ def create_app(
 
     app.state.auth_gateway = auth_gateway
     app.state.orchestrator = orchestrator
+    app.state.redis_storage = storage
 
     @app.get("/health")
     async def health() -> dict[str, str]:

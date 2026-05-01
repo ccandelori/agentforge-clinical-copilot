@@ -182,6 +182,23 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+  # AgentForge sidecar stores: session memory (75 min TTL) + tool result
+  # cache (60 s TTL). See ARCHITECTURE.md §7.1. Bound to 127.0.0.1 so
+  # the dev container is never reachable off-host.
+  redis:
+    restart: unless-stopped
+    image: redis:7-alpine
+    ports:
+    - "127.0.0.1:${WT_REDIS_PORT:-6379}:6379"
+    volumes:
+    - ./redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 10s
+      interval: 30s
+      timeout: 5s
+      retries: 3
 volumes:
   databasevolume: {}
   assetvolume: {}

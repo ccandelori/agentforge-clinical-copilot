@@ -33,9 +33,11 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_algorithm: str = "HS256"
 
-    # Redis — tool result cache + session memory (PHI store; see §7.1)
-    redis_url: str = "redis://localhost:6379/0"
-    session_ttl_seconds: int = 4500  # 75 min encounter window per ARCHITECTURE.md §3
+    # Redis — tool result cache + session memory (PHI store; see §7.1).
+    # Required at startup so a missing config fails fast rather than
+    # silently bypassing the encounter session store.
+    redis_url: str
+    session_ttl_seconds: int = 75 * 60  # 75 min encounter window per ARCHITECTURE.md §3
     tool_cache_ttl_seconds: int = 60  # per ARCHITECTURE.md §3
 
     # LLM providers
