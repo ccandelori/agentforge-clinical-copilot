@@ -8,12 +8,22 @@ ARCHITECTURE.md §5.
 
 from agentforge.llm.claude import DEFAULT_MODEL, ClaudeClient
 from agentforge.llm.client import LLMClient
+from agentforge.llm.health import (
+    HealthCheckableLLM,
+    HealthCheckResult,
+    LLMHealthMonitor,
+    LLMProviderStatus,
+)
 from agentforge.llm.types import LLMResponse, Message, ToolCall, ToolSpec
 
 __all__ = [
     "DEFAULT_MODEL",
     "ClaudeClient",
+    "HealthCheckResult",
+    "HealthCheckableLLM",
     "LLMClient",
+    "LLMHealthMonitor",
+    "LLMProviderStatus",
     "LLMResponse",
     "Message",
     "ToolCall",
