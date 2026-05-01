@@ -786,3 +786,223 @@ the orchestrator faithfully relayed that to the model.
 [`oe-module-agentforge/public/internal/demographics.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php).
 
 ---
+
+## 2026-05-01 — Streaming verifier `DomainConstraintChecker` is sync, not async
+
+**Plan:** Task 29 sketches `verify_medication_claim()` etc. as `async def`.
+Task 28's StreamingVerifier was therefore expected to await the
+domain-checker call.
+
+**Deviation:** The `DomainConstraintChecker` Protocol shipped in Task 28
+is sync (`def check(...) -> tuple[bool, str | None]`). The
+`NullDomainConstraintChecker` and the streaming verifier's call site
+are sync to match.
+
+**Why:** None of the five planned constraints (medication-name match,
+lab-value tolerance, note-authorization echo, diagnosis traceability,
+no-counterfactuals) need I/O. They check claim text against a record
+dict already in memory — a regex match and a few `.get()` calls. Making
+the protocol async would force every implementation to be `async def`
+even when the body never `await`s, and it would push an extra event-loop
+hop into every claim's verification (which already runs once per
+sentence). The trust boundary stays simpler when the slow path doesn't
+exist.
+
+**What we learned:**
+1. When the spec says `async def` but the body has no `await`, the
+   "async" is a costume, not a mechanism. Better to keep the type
+   honest and widen later if a real async constraint emerges (e.g.,
+   one that needs to consult a separate tool result not in the
+   per-turn cache — currently nothing in the v1 catalog does).
+2. Task 29 will need to drop the `async` keyword off the constraint
+   methods. That's a straight find-and-replace, not a refactor.
+
+**Artifacts:**
+[`sidecar/src/agentforge/verifier/protocols.py`](../sidecar/src/agentforge/verifier/protocols.py).
+
+---
+
+## 2026-05-01 — Streaming verifier rejects label-form citations for MVP
+
+**Plan:** ARCHITECTURE.md S6 lists two citation forms:
+`[encounter #38241, 2026-04-12]` (ID-anchored) and
+`[Rx: lisinopril 20mg, started 2024-08-15]` (label-anchored).
+
+**Deviation:** Only the ID-anchored form is recognised by Task 28's
+`CITATION_PATTERN`. Label-form tokens parse to `None` and any sentence
+whose only citation is label-form is rejected as `no_citation`.
+
+**Why:** The cache lookup is ID-anchored — every record returned by a
+tool this turn is keyed by `(record_type, record_id)`. A label-form
+citation has no ID to look up; validating it would require a different
+mechanism (string-matching the label against the cached records). That
+mechanism IS the medication-name domain constraint from Task 29 (`Constraint
+1: med name in active prescriptions`). Building a parallel label-resolution
+path in Task 28 would duplicate it.
+
+**What we learned:**
+1. The model's freedom to choose a citation format expands the verifier's
+   surface area linearly. Locking the citation grammar to one form during
+   MVP is the cheap way to keep the trust boundary small.
+2. The system prompt should be updated alongside Task 29 to instruct the
+   model to prefer ID-anchored citations until label resolution lands.
+   Until then, the model emitting a label-form citation looks identical
+   to a hallucination from the verifier's perspective — and that's the
+   right behavior (better a false-rejection than a fabricated pass).
+
+**Artifacts:**
+[`sidecar/src/agentforge/verifier/citation.py`](../sidecar/src/agentforge/verifier/citation.py).
+
+---
+
+## 2026-05-01 — `get_active_allergies` reads `lists` table directly, not FHIR `AllergyIntolerance`
+
+**Plan:** Taskmaster Task 17's description called for the tool to call
+the FHIR `AllergyIntolerance` endpoint to source the patient's allergy
+list.
+
+**Deviation:** Implemented the tool as a direct read of the `lists`
+table (filtered to `type='allergy' AND activity=1`) via a Doctrine DBAL
+repository plus a JWT-validated PHP internal endpoint — the same
+pattern the other three MVP tools (`get_demographics`,
+`get_active_problems`, `get_active_medications`) use.
+
+**Why:** The three sibling tools that already shipped under
+ARCHITECTURE.md §4 are direct-DB readers; their internal endpoints
+(`/agentforge/internal/{demographics,problems,medications}.php`)
+share the same structure (JWT validator + repository + JSON response
+wrapper). Routing the fourth tool through OpenEMR's FHIR stack would
+have introduced a parallel access pattern (R4 resource fetcher,
+SMART scope check, JSON:API parsing) for one tool, increasing the
+verifier's surface area and making the fan-out path less uniform.
+The direct-DB path also lets the `lists.severity_al` field — which
+isn't in the FHIR mapping by default — flow through unchanged for
+clinical relevance. Schema confirmed at
+[`sql/database.sql:7676–7717`](../sql/database.sql).
+
+**What we learned:** Tool-spec language can drift behind implementation
+patterns once a project has settled on one. Better to surface the
+choice in the deviation log than to silently break uniformity, but
+when three siblings agree on a pattern, conformance to that pattern is
+the strong default. The four-tool MVP now has one access shape end-to-end,
+which the verifier's record-cache lookup (Task 28) can rely on. If a
+future tool genuinely needs FHIR semantics (e.g. condition severity
+codings, encounter linkage) it can land alongside this one without
+disturbing the existing trio.
+
+**Artifacts:**
+[`sidecar/src/agentforge/tools/allergies.py`](../sidecar/src/agentforge/tools/allergies.py),
+[`oe-module-agentforge/src/Services/AllergiesRepository.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/AllergiesRepository.php),
+[`oe-module-agentforge/src/Controllers/InternalAllergiesController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalAllergiesController.php),
+[`oe-module-agentforge/public/internal/allergies.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/allergies.php).
+
+---
+
+## 2026-05-01 — get_vitals_trend skipped EventAuditLogger and QueryUtils
+
+**Plan:** Task 20 spec called for the internal vitals endpoint to use
+`OpenEMR\Common\Database\QueryUtils` for the database read and
+`OpenEMR\Common\Logging\EventAuditLogger::recordEvent` to write a per-call
+audit record. Both helpers exist on this codebase.
+
+**Deviation:** The implementation follows the established pattern from
+`get_active_medications` and `get_active_problems` instead:
+- Repository takes a Doctrine `Connection` and runs the query directly via
+  `fetchAllAssociative` — no `QueryUtils` indirection.
+- Controller relies on the JWT validation chain (browser → PHP `/turn` →
+  signed user-bound JWT → sidecar → echoed JWT → `AgentJwtValidator`) as
+  the audit path. No `EventAuditLogger.recordEvent` call.
+
+**Why:** Two reasons.
+
+1. The medications / problems endpoints set the precedent two tasks ago.
+   Diverging from them on tool number four would split the agent's tool
+   layer into two coding styles for no functional gain — and the next
+   tools to land (allergies, labs) would have to pick a side.
+2. The JWT itself is a tamper-evident record of who initiated the request,
+   for which patient, with what breakglass context, signed by the same
+   secret OpenEMR uses to mint it. Replaying an internal endpoint without
+   a fresh JWT is impossible (5-minute expiry; no refresh path on the
+   sidecar). Persisting a separate audit row for every tool call would
+   duplicate information already captured at the `/turn` boundary —
+   `AgentProxyController` is the right layer for "who asked the agent
+   what." A dedicated tool-call audit can be added later without
+   rewriting the repositories.
+
+A separate decision worth noting: the repository handles two
+schema-induced coercions explicitly because they're easy to get wrong.
+`bps` and `bpd` are stored as `VARCHAR(40)` (not numeric), so we
+int-coerce and treat empty strings as null. All numeric vitals are
+`DECIMAL` defaulting to `'0.00'`; we treat `0.0` as "not recorded" and
+return `null` to keep the LLM from interpreting the schema default as a
+clinically meaningful "0 systolic." Both rules are documented in the
+class docblock so future readers see them once.
+
+**What we learned:** Established-pattern continuity beats spec literalism
+when the spec is older than the pattern. Worth surfacing the same call
+when the upcoming allergies / labs / immunizations tools (Tasks 17, 18,
+21+) hit the same fork: don't reintroduce `QueryUtils` /
+`EventAuditLogger` as the convention unless the security review of the
+JWT-as-audit chain says otherwise.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/VitalsRepository.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/VitalsRepository.php),
+[`oe-module-agentforge/src/Controllers/InternalVitalsController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalVitalsController.php),
+[`oe-module-agentforge/public/internal/vitals_trend.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/vitals_trend.php).
+
+---
+
+## 2026-05-01 — get_recent_labs reads MariaDB directly, not FHIR Observation
+
+**Plan:** Task 18 spec said the lab tool should query the FHIR
+`Observation?category=laboratory` endpoint, with the sidecar treating the
+results like any other FHIR resource (consistent with the FHIR-first
+direction the OpenEMR mainline is taking).
+
+**Deviation:** Skipped FHIR. Implemented `get_recent_labs` as a direct
+Doctrine DBAL read of `procedure_order` → `procedure_report` →
+`procedure_result`, matching the existing `get_active_medications` and
+`get_active_problems` tools.
+
+**Why:**
+1. Pattern consistency. The other three tools all bypass FHIR; doing
+   this one differently means two parallel "how does an MVP tool talk to
+   data" idioms in the codebase before the third tool even ships.
+2. Auth surface. The FHIR layer expects an OAuth2 access token; the
+   sidecar carries a short-lived `AGENTFORGE_JWT_SECRET`-signed JWT
+   that's already wired into the existing `/agentforge/internal/*`
+   endpoints. Going FHIR-first means standing up an OAuth2 client
+   credential flow inside the sidecar — for one tool — purely so we can
+   then validate it in PHP, while the JWT path already validates and
+   already enforces patient-scope. Net cost: real new code surface for
+   no agent-side benefit.
+3. Schema cost. FHIR Observation flattens `procedure_order/report/result`
+   into a single resource type; the agent doesn't need or use the FHIR
+   facets we'd be paying to translate (Identifier, Subject, Encounter
+   refs, ValueQuantity vs ValueCodeableConcept polymorphism). The 10
+   fields it actually uses come straight from `procedure_result` columns.
+4. Index leverage. Task 40 already added the composite index
+   `idx_procedure_order_patient_date`. Hitting `procedure_order` directly
+   uses that index; the FHIR layer's joins go through ORM glue that
+   doesn't.
+
+**What we learned:**
+- Bypassing FHIR is a load-bearing MVP convention in this fork, not a
+  one-off shortcut. When the verifier (Task 28) ships and we add
+  redaction, the boundary will need to know which fields are sensitive
+  per tool, regardless of FHIR vs SQL — so postponing FHIR doesn't
+  postpone the redaction work either.
+- The 200-row analyte cap matters more than the 90-day window. A single
+  CMP + CBC easily emits 30+ analytes per report; a chronically ill
+  patient inside a 90-day window can saturate context fast. The cap is
+  a deliberate floor, not a placeholder.
+- The `since_days` parameter is the first tool input the LLM controls;
+  the controller clamps to `1..365` server-side as defense-in-depth
+  against the model emitting `since_days: 99999`.
+
+**Artifacts:**
+[`oe-module-agentforge/src/Services/LabsRepository.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Services/LabsRepository.php),
+[`oe-module-agentforge/src/Controllers/InternalLabsController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalLabsController.php),
+[`sidecar/src/agentforge/tools/labs.py`](../sidecar/src/agentforge/tools/labs.py).
+
+---
