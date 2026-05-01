@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     )
     sensitivity_policy_required: bool = True
 
+    # Streaming verifier on the user-visible reply (Task 28). Off by
+    # default to preserve the legacy MVP behavior; production deployments
+    # set VERIFIER_ENABLED=true so every assistant sentence is gated
+    # against the per-turn citation cache before the user sees it.
+    verifier_enabled: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

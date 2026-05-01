@@ -45,6 +45,7 @@ from agentforge.tools.labs import LabsFetcher
 from agentforge.tools.medications import MedicationsFetcher
 from agentforge.tools.problems import ProblemsFetcher
 from agentforge.tools.vitals import VitalsFetcher
+from agentforge.verifier import DomainConstraints
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,8 @@ def create_app(
     vitals = vitals_fetcher or VitalsFetcher(
         base_url=settings.openemr_base_url,
     )
+    langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
+
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
@@ -192,9 +195,12 @@ def create_app(
         allergies_fetcher=allergies,
         labs_fetcher=labs,
         vitals_fetcher=vitals,
+        domain_constraints=DomainConstraints(),
+        verifier_enabled=settings.verifier_enabled,
+        langfuse=langfuse,
+        hmac_key=settings.hmac_key.encode("utf-8"),
+        redis_storage=storage,
     )
-
-    langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
 
     app.state.auth_gateway = auth_gateway
     app.state.orchestrator = orchestrator
