@@ -19,6 +19,7 @@ from agentforge.verifier.citation import (
     find_citations,
     parse_citation,
 )
+from agentforge.verifier.constraints import DomainConstraints
 from agentforge.verifier.protocols import (
     DomainConstraintChecker,
     NullDomainConstraintChecker,
@@ -36,6 +37,7 @@ __all__ = [
     "CitationIndex",
     "CitationKey",
     "DomainConstraintChecker",
+    "DomainConstraints",
     "NullDomainConstraintChecker",
     "StreamingVerifier",
     "VerifiedChunk",
