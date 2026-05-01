@@ -28,6 +28,8 @@ from agentforge.llm.claude import ClaudeClient
 from agentforge.llm.client import LLMClient
 from agentforge.orchestrator import Orchestrator
 from agentforge.tools.demographics import DemographicsFetcher
+from agentforge.tools.medications import MedicationsFetcher
+from agentforge.tools.problems import ProblemsFetcher
 
 
 class TurnRequest(BaseModel):
@@ -52,6 +54,8 @@ def create_app(
     settings: Settings | None = None,
     llm_client: LLMClient | None = None,
     demographics_fetcher: DemographicsFetcher | None = None,
+    medications_fetcher: MedicationsFetcher | None = None,
+    problems_fetcher: ProblemsFetcher | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -70,10 +74,21 @@ def create_app(
 
     auth_gateway = AuthGateway(jwt_secret=settings.jwt_secret)
     llm = llm_client or ClaudeClient(api_key=settings.anthropic_api_key)
-    fetcher = demographics_fetcher or DemographicsFetcher(
+    demographics = demographics_fetcher or DemographicsFetcher(
         base_url=settings.openemr_base_url,
     )
-    orchestrator = Orchestrator(llm=llm, demographics_fetcher=fetcher)
+    medications = medications_fetcher or MedicationsFetcher(
+        base_url=settings.openemr_base_url,
+    )
+    problems = problems_fetcher or ProblemsFetcher(
+        base_url=settings.openemr_base_url,
+    )
+    orchestrator = Orchestrator(
+        llm=llm,
+        demographics_fetcher=demographics,
+        medications_fetcher=medications,
+        problems_fetcher=problems,
+    )
 
     app.state.auth_gateway = auth_gateway
     app.state.orchestrator = orchestrator
