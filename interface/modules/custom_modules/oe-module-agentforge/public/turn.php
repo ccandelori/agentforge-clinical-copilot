@@ -82,8 +82,19 @@ if ($sidecarBaseUrl === false || $sidecarBaseUrl === '') {
 $controller = new AgentProxyController(
     jwtService: $jwtService,
     httpClient: HttpClient::create([
-        'timeout' => 8.0,        // total agent deadline is 7s; leave a small margin
-        'max_duration' => 30.0,  // hard ceiling so a wedged sidecar can't hang us
+        // Idle timeout. The sidecar buffers the synthesis response and
+        // only emits when the LLM finishes — so on bulky charts (e.g.
+        // pid=8 Eula Crist's 55-problem list) the LLM can take 10-20s
+        // to first byte, exceeding a tight 8s idle. Bump to 30s; the
+        // SynthesisInputTruncator (Task 45) will eventually cap input
+        // volume so synthesis can't run that long, at which point this
+        // can come back down.
+        'timeout' => 30.0,
+        // Hard ceiling so a wedged sidecar still can't hang the user
+        // forever. 90s ~= 3x the new idle timeout — matches what
+        // Anthropic's longest synthesis-on-bulk-context observably
+        // takes today.
+        'max_duration' => 90.0,
     ]),
     sidecarBaseUrl: $sidecarBaseUrl,
 );
