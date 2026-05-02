@@ -80,4 +80,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = ["--strict-markers", "--strict-config"]
+# `slow` marks tests that hit the real Anthropic API end-to-end
+# (~10-25s each). The integration suite's auth/error/patient-context
+# tests are fast (<1s/test, no LLM); only the UC-flow tests in
+# tests/integration/test_use_cases.py spend tokens. Run them
+# explicitly with: uv run pytest -m slow
+addopts = ["--strict-markers", "--strict-config", "-m", "not slow"]
+markers = [
+    "slow: integration tests that call the real LLM (deselected by default)",
+]
