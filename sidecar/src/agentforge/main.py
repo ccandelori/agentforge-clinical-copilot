@@ -23,6 +23,7 @@ from typing import Annotated, Protocol
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
+from agentforge.breakglass import BreakglassAuditTool
 from agentforge.config import Settings, get_settings
 from agentforge.gateway.auth_gateway import (
     AuthGateway,
@@ -125,6 +126,7 @@ def create_app(
     vitals_fetcher: VitalsFetcher | None = None,
     notes_fetcher: NotesFetcher | None = None,
     search_notes_fetcher: SearchNotesFetcher | None = None,
+    breakglass_audit: BreakglassAuditTool | None = None,
     redis_storage: AgentRedisClient | None = None,
     langfuse_client: LangfuseClient | None = None,
     redis_client: _AppRedisProto | None = None,
@@ -203,6 +205,9 @@ def create_app(
         base_url=settings.openemr_base_url,
         gateway=auth_gateway,
     )
+    breakglass = breakglass_audit or BreakglassAuditTool(
+        base_url=settings.openemr_base_url,
+    )
     langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
 
     orchestrator = Orchestrator(
@@ -215,6 +220,7 @@ def create_app(
         vitals_fetcher=vitals,
         notes_fetcher=notes,
         search_notes_fetcher=search_notes,
+        breakglass_audit=breakglass,
         domain_constraints=DomainConstraints(),
         verifier_enabled=settings.verifier_enabled,
         langfuse=langfuse,

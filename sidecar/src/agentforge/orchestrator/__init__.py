@@ -26,6 +26,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from typing import Any, Final
 
+from agentforge.breakglass import BreakglassAuditTool
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.llm.client import LLMClient
 from agentforge.llm.types import Message, ToolCall
@@ -155,6 +156,7 @@ class Orchestrator:
         timeout_policy: TimeoutPolicy | None = None,
         retry_policy: RetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        breakglass_audit: BreakglassAuditTool | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -176,6 +178,7 @@ class Orchestrator:
         self._timeout_policy = timeout_policy or TimeoutPolicy()
         self._retry_policy = retry_policy or RetryPolicy()
         self._sleep = sleep
+        self._breakglass_audit = breakglass_audit
 
     async def turn(
         self,
@@ -198,6 +201,14 @@ class Orchestrator:
             existing = await self._memory.get_memory(session_id)
             if len(existing) // 2 >= HARD_CAP:
                 return _SESSION_REFUSAL_TEXT
+
+        # Breakglass audit fires once per session (the tool dedups
+        # internally). Best-effort: outcome is logged inside the tool;
+        # we don't gate the turn on its result.
+        if self._breakglass_audit is not None:
+            await self._breakglass_audit.log_breakglass_access(
+                ctx, session_id=session_id
+            )
 
         messages: list[Message] = []
         if self._memory is not None and session_id is not None:
