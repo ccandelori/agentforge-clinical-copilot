@@ -453,6 +453,88 @@ real bugs. We accept Synthea's population-level coherence
 (documented in MITRE's modules) at face value rather than
 re-validating it via SQL.
 
-## TODO (downstream subtasks)
+## Eval-fixture realignment — 2026-05-02 (subtask 50.6)
 
-- 50.6 — Realign eval fixtures + finalize this doc
+The eval suite at `sidecar/tests/eval/` is intentionally decoupled
+from the live DB:
+
+- `MockToolLayer` returns hand-authored fixture data (
+  `sidecar/tests/fixtures/agent_eval.json`), not live queries.
+- Regression-lock canonical responses pin agent-style strings against
+  those fictional patients (pid=100 Susan Underwood = complex chronic,
+  pid=200 Alex Newman = sparse).
+- The phenotype labels mirror the live demo patients (Eula = complex
+  chronic, Alena = sparse), but the patient identities deliberately
+  differ.
+
+Renaming the fixture's pids / names to match the live DB would not
+improve test fidelity — it would just risk churning the regression-
+lock canonical strings without changing what's actually tested. So
+the realignment for subtask 50.6 is **a documentation update only**:
+
+- `agent_eval.json`'s `_about` field now states the decoupling
+  explicitly, names the live demo patients (pid=8 / pid=4), and
+  points to this section.
+- This doc captures the rationale.
+
+Sidecar test suite stayed at **417/417 passing** after the change.
+
+## Re-running the full pipeline
+
+To re-seed a fresh dev DB end-to-end:
+
+```bash
+# 1. Wipe any prior seeded patients (keep canonical pid 1-3)
+docker exec -i development-easy-mysql-1 \
+  mariadb -uopenemr -popenemr openemr <<'SQL'
+DELETE FROM form_encounter   WHERE pid > 3;
+DELETE FROM lists            WHERE pid > 3;
+DELETE FROM form_vitals      WHERE pid > 3;
+DELETE FROM immunizations    WHERE patient_id > 3;
+DELETE FROM procedure_result WHERE procedure_report_id IN (
+  SELECT procedure_report_id FROM procedure_report WHERE procedure_order_id IN (
+    SELECT procedure_order_id FROM procedure_order WHERE patient_id > 3));
+DELETE FROM procedure_report WHERE procedure_order_id IN (
+  SELECT procedure_order_id FROM procedure_order WHERE patient_id > 3);
+DELETE FROM procedure_order  WHERE patient_id > 3;
+DELETE FROM pnotes           WHERE pid > 3;
+DELETE FROM form_clinical_notes WHERE pid > 3;
+DELETE FROM forms            WHERE pid > 3;
+DELETE FROM patient_data     WHERE pid > 3;
+SQL
+
+# 2. Generate Synthea cohort (CCDA + FHIR)
+cd ~/Desktop/Gauntlet/synthea
+./run_synthea -p 20 \
+  --exporter.ccda.export=true \
+  --exporter.fhir.export=true \
+  --exporter.baseDirectory=./output_20patients
+
+# 3. Batch-import CCDAs
+cd /Users/sheep/Desktop/Gauntlet/openemr
+docker exec development-easy-openemr-1 mkdir -p /tmp/synthea-batch
+docker cp ~/Desktop/Gauntlet/synthea/output_20patients/ccda/. \
+  development-easy-openemr-1:/tmp/synthea-batch/
+docker exec development-easy-openemr-1 sh -c '
+  cd /var/www/localhost/htdocs/openemr
+  for f in /tmp/synthea-batch/*.xml; do
+    php bin/console openemr:ccda-newpatient-import \
+      --document="$f" --site=default >/dev/null 2>&1
+  done
+'
+
+# 4. Load notes from FHIR DocumentReferences
+uv run scripts/seed/load_synthea_notes.py \
+  --fhir-dir ~/Desktop/Gauntlet/synthea/output_20patients/fhir
+
+# 5. Apply the demo overlay (hand-crafted notes + vitals trend)
+docker exec -i development-easy-mysql-1 \
+  mariadb -uopenemr -popenemr openemr \
+  < scripts/seed/agentforge_demo_overlay.sql
+
+# 6. Validate
+./scripts/seed/validate_seed.sh
+```
+
+Expected wall-time: ~6 minutes (Synthea generation ~5s, CCDA imports
+~3 min, FHIR notes loader ~3s, overlay ~1s, validation ~1s).

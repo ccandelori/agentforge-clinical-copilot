@@ -1,5 +1,5 @@
 {
-  "_about": "Agent-eval fixtures. Two synthetic patient phenotypes for the regression locks: a complex chronic patient (100) and a sparse new patient (200). Hand-authored so we don't depend on a populated demo DB to capture against; the schemas mirror each tool's typed Pydantic payload exactly.",
+  "_about": "Agent-eval fixtures. Two synthetic patient phenotypes for the regression locks: a complex chronic patient (100) and a sparse new patient (200). Hand-authored — intentionally decoupled from the live demo DB. The phenotypes mirror those of the live demo patients (pid=8 Eula Crist = complex chronic, pid=4 Alena Marquardt = sparse) but the eval suite tests phenotype-level agent behavior, not patient-specific behavior. Don't try to make these match the DB; the decoupling is the point. Schemas mirror each tool's typed Pydantic payload exactly. See docs/test-data.md, subtask 50.6, for the decoupling rationale.",
   "patients": {
     "100": {
       "_label": "Susan Complex (chronic, multimorbid)",
