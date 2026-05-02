@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 /**
  * InternalVitalsController — sidecar-facing read-only endpoint that
  * serves the patient's recent vital sign measurements for the agent's
@@ -24,9 +22,11 @@ declare(strict_types=1);
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
+declare(strict_types=1);
+
 namespace OpenEMR\Modules\AgentForge\Controllers;
 
-use Lcobucci\JWT\Validation\RequiredConstraintsViolated;
+use Lcobucci\JWT\Exception as JwtException;
 use OpenEMR\Modules\AgentForge\Services\AgentJwtValidator;
 use OpenEMR\Modules\AgentForge\Services\VitalsRepository;
 use RuntimeException;
@@ -57,7 +57,12 @@ class InternalVitalsController
 
         try {
             $claims = $this->validator->validateBearer($authHeader);
-        } catch (RequiredConstraintsViolated | RuntimeException $e) {
+        } catch (JwtException | RuntimeException $e) {
+            // Lcobucci's JWT exceptions all implement Lcobucci\JWT\Exception
+            // (a marker interface). Catching the umbrella covers
+            // InvalidTokenStructure (not-a-JWT), constraint violations,
+            // and signature mismatches; RuntimeException covers our own
+            // expired-token / claim-shape failures from AgentJwtValidator.
             return new JsonResponse(
                 ['error' => 'Invalid or expired token'],
                 Response::HTTP_UNAUTHORIZED
