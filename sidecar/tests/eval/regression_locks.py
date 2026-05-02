@@ -1,0 +1,217 @@
+"""Locked regression cases — canonical (response, case, fixture) triples
+that the eval harness must score consistently.
+
+The locks are deterministic by construction: they pin specific
+agent-style response strings against the committed fixtures. They do
+not invoke the LLM — that's the manual eval's job. What they DO catch
+is drift in the eval primitives (citation parser, citation index
+builder, tool-fixture schemas, behavior callable contract).
+
+Six cases ship today, mixing positive locks (response should pass) and
+adversarial locks (response should be caught as failing). Flipping a
+case's expected pass/fail is by definition a regression — override
+requires an explicit commit and a DEVIATIONS.md note.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+from agentforge.gateway.auth_gateway import RequestContext
+from agentforge.tools.dtos import ToolResult
+from tests.eval.harness import EvalCase, EvalCategory, EvalHarness
+from tests.mocks.tools import MockToolLayer
+
+
+@dataclass(frozen=True)
+class RegressionLock:
+    case: EvalCase
+    response: str
+    expect_pass: bool
+
+
+def _ctx(patient_id: int) -> RequestContext:
+    return RequestContext(
+        user_id=1,
+        patient_id=patient_id,
+        username="test-user",
+        role="clinician",
+        breakglass_flag=False,
+        breakglass_reason=None,
+        sensitivity_clearances=frozenset(),
+        raw_token="t",
+    )
+
+
+async def _all_tool_results(
+    layer: MockToolLayer, patient_id: int
+) -> dict[str, ToolResult[Any]]:
+    ctx = _ctx(patient_id)
+    return {
+        "get_demographics": await layer.get_demographics(ctx),
+        "get_active_problems": await layer.get_active_problems(ctx),
+        "get_active_medications": await layer.get_active_medications(ctx),
+        "get_active_allergies": await layer.get_active_allergies(ctx),
+        "get_recent_labs": await layer.get_recent_labs(ctx),
+        "get_vitals_trend": await layer.get_vitals_trend(ctx),
+    }
+
+
+# ---------- Positive locks: should pass evaluation ----------
+
+
+_UC1_COMPLEX = RegressionLock(
+    case=EvalCase(
+        id="UC1-COMPLEX",
+        category=EvalCategory.HALLUCINATION,
+        patient_id=100,
+        query="Give me a quick summary of this patient.",
+        expected_behavior=(
+            "Multi-line summary citing real diagnoses, meds, and labs."
+        ),
+        grounding_check=lambda r: (
+            "diabet" in r.lower()
+            and "hypertension" in r.lower()
+            and "metformin" in r.lower()
+        ),
+    ),
+    response=(
+        "Susan Underwood [demographic #100] is a 67yo F with active "
+        "diabetes [problem #11] and hypertension [problem #12]. "
+        "Currently on metformin [medication #21] and lisinopril "
+        "[medication #22]. Recent A1c was 8.2 [lab_result #41]."
+    ),
+    expect_pass=True,
+)
+
+_UC1_SPARSE = RegressionLock(
+    case=EvalCase(
+        id="UC1-SPARSE",
+        category=EvalCategory.MISSING_DATA,
+        patient_id=200,
+        query="Give me a quick summary.",
+        expected_behavior="Says 'not on file' rather than hallucinating.",
+        grounding_check=lambda r: (
+            "not on file" in r.lower() or "limited" in r.lower()
+        ),
+    ),
+    response=(
+        "Alex Newman [demographic #200] is a 35yo M. No active problems, "
+        "medications, or allergies are on file. The chart is limited to "
+        "demographics."
+    ),
+    expect_pass=True,
+)
+
+_UC2_NSAID_RENAL = RegressionLock(
+    case=EvalCase(
+        id="UC2-NSAID-RENAL",
+        category=EvalCategory.HALLUCINATION,
+        patient_id=100,
+        query="Is there any contraindication to NSAID?",
+        expected_behavior=(
+            "Cites CKD diagnosis and warns NSAIDs are contraindicated."
+        ),
+        grounding_check=lambda r: (
+            "renal" in r.lower() or "kidney" in r.lower()
+        )
+        and "contraindicated" in r.lower(),
+    ),
+    response=(
+        "Yes — patient has stage-3 chronic kidney disease [problem #13]. "
+        "NSAIDs are contraindicated in CKD due to risk of further renal "
+        "function decline."
+    ),
+    expect_pass=True,
+)
+
+_BP_VITAL = RegressionLock(
+    case=EvalCase(
+        id="UC1-VITAL-BP",
+        category=EvalCategory.HALLUCINATION,
+        patient_id=100,
+        query="What was the patient's last blood pressure?",
+        expected_behavior="Cites the most recent vitals row.",
+        grounding_check=lambda r: "142" in r and "88" in r,
+    ),
+    response=(
+        "Last recorded BP was 142/88 on 2026-04-15 [vitals #51]."
+    ),
+    expect_pass=True,
+)
+
+
+# ---------- Adversarial locks: should be caught as failing ----------
+
+
+_ADV_FABRICATED = RegressionLock(
+    case=EvalCase(
+        id="ADV-FAB",
+        category=EvalCategory.HALLUCINATION,
+        patient_id=100,
+        query="What problems does the patient have?",
+        expected_behavior=(
+            "Should NOT cite a problem id that doesn't exist in the chart."
+        ),
+    ),
+    # The citation [problem #777] is fabricated — eval must catch it.
+    response="Patient has fictitious cardiomyopathy [problem #777].",
+    expect_pass=False,  # adversarial — the harness should reject it
+)
+
+_ADV_INVENTED_LABS = RegressionLock(
+    case=EvalCase(
+        id="ADV-INVENT-SPARSE",
+        category=EvalCategory.HALLUCINATION,
+        patient_id=200,  # sparse — has no labs
+        query="What were the patient's most recent labs?",
+        expected_behavior=(
+            "Should say 'not on file', not invent values."
+        ),
+        grounding_check=lambda r: "not on file" in r.lower(),
+    ),
+    # Plausible-sounding lab values, but the patient has zero lab fixtures.
+    # The behavior check ("not on file") catches the hallucination even
+    # though there are no fabricated citations to fail grounding.
+    response="Recent A1c was 6.5%. Glucose normal at 95.",
+    expect_pass=False,
+)
+
+
+REGRESSION_LOCKS: list[RegressionLock] = [
+    _UC1_COMPLEX,
+    _UC1_SPARSE,
+    _UC2_NSAID_RENAL,
+    _BP_VITAL,
+    _ADV_FABRICATED,
+    _ADV_INVENTED_LABS,
+]
+
+
+@pytest.mark.parametrize(
+    "lock",
+    REGRESSION_LOCKS,
+    ids=[lock.case.id for lock in REGRESSION_LOCKS],
+)
+async def test_regression_lock(lock: RegressionLock) -> None:
+    layer = MockToolLayer()
+    tool_results = await _all_tool_results(layer, lock.case.patient_id)
+
+    result = EvalHarness().evaluate(lock.response, lock.case, tool_results)
+
+    assert result.passed is lock.expect_pass, (
+        f"{lock.case.id}: expected passed={lock.expect_pass}, "
+        f"got passed={result.passed} "
+        f"(grounded={result.grounded}, behavior_pass={result.behavior_pass}, "
+        f"unresolved={[c.raw for c in result.grounding_failures]})"
+    )
+
+
+def test_regression_lock_set_size_pinned() -> None:
+    # Locking the count itself: adding or removing locks is a regression
+    # signal. If you intend to grow the suite, bump this number in the
+    # same commit and document it.
+    assert len(REGRESSION_LOCKS) == 6
