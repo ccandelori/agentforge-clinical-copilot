@@ -1,114 +1,108 @@
-# Where we left off — 2026-05-02 (late session)
+# Where we left off — 2026-05-02 (very late session)
 
 Read me first when picking the project back up. Update or delete me when
 the state captured here goes stale.
 
-## What shipped this session (long run — 3 Taskmaster tasks + 3 live bug fixes + droplet ops)
+## What shipped this session (very long run — 8 tasks closed across 4 hours)
 
-TaskMaster: **39/49 → 42/51 (82%)** — added two new tasks (50 + 51),
-finished three parent tasks (27 + 45 + 50).
+TaskMaster: **42/51 (82%) -> 49/51 (96%)** at the time this doc was
+written (49 if both subagents in flight succeed; conservatively 47/51
+if not). Eight parent tasks closed today, three of them via parallel
+worktree subagents:
 
 ```
-Synthetic test data + seed pipeline (Task 50, 6 subtasks):
-  50.1  Synthea v4.0.0 install + spike (CCDA + FHIR R4 output)
-  50.2  OpenEMR CCDA importer probe — 8/11 tables populate cleanly,
-        notes need separate path
-  50.3  Production seed: 25 patients via openemr:ccda-newpatient-import
-        + scripts/seed/load_synthea_notes.py (FHIR DocumentReference
-        loader, 880 notes via SSH-tunneled mariadb on droplet)
-  50.4  scripts/seed/agentforge_demo_overlay.sql — hand-crafted notes
-        + vitals trend for pid=8 Eula (complex chronic) and pid=4
-        Alena (sparse). Demoes substance_abuse_cfr42 sensitivity
-        gating via SUD: title prefix.
-  50.5  scripts/seed/validate_seed_data.sql + validate_seed.sh —
-        14-check post-import audit, all green local + droplet
-  50.6  Eval-fixture decoupling docs (intentionally separate pids
-        from live DB; phenotype-level testing only)
+Task 51 — Tool catalog gaps + agent output quality + out-of-scope handling
+  (4 subtasks, all done)
+  51.1  get_immunizations tool end-to-end (10th tool)
+  51.2  get_procedures tool end-to-end (11th tool, NOT EXISTS
+        procedure_result discriminator + ROW_NUMBER dedup)
+  51.3  Output refinement — canonical section headers + citation type
+        table + demographic-weaving prompt rules. Closed the
+        notes/search_notes verifier `_KNOWN_TOOLS` carryforward gap
+        as part of the citation-types fix.
+  51.4  Out-of-scope guardrail regression-locks (positive + adversarial)
 
-Synthesis input truncator (Task 45, 3 subtasks):
-  45.1  tiktoken-backed token counting (count_tokens, count_tool_results)
-  45.2  Priority-based whole-tool drop with PRIORITY tuple +
-        eviction order (unknown tools sort lowest)
-  45.3  Within-tool oldest-first shrink via Pydantic model_copy on
-        list-shaped payloads. Empty-list cleanup edge case fixed.
-  Note: utility is COMPLETE but NOT WIRED into Orchestrator.turn() —
-  same pattern as Task 41 (timeouts).
+Task 35 — docker/agent compose stack (sidecar + agentforge-redis,
+  joins development-easy_default external network). Self-contained
+  alternative to the host-script dev workflow. Live-validated.
 
-Planner agent (Task 27, 3 subtasks):
-  27.1  UseCase StrEnum (4 cases) + PlannedToolCall + Plan model
-        with bijection invariant on tool_calls <-> parallel_batches
-  27.2  TOOL_SELECTION_BY_USE_CASE static rules + default_plan_for()
-        fallback (DEFAULT_BATCH_SIZE=4)
-  27.3  Planner class with submit_plan tool-use forced JSON output,
-        graceful fallback to default_plan_for(ADMIT_SYNTHESIS) on
-        validation failure or no-tool-call response
-  Note: also COMPLETE but NOT WIRED — Orchestrator.turn() doesn't
-  call Planner yet. DEVIATIONS.md captures the LangGraph-deferred
-  rationale.
+Task 36 — Apache reverse-proxy include (Alias for /agentforge/turn,
+  RFC-1918 access control on /internal/*). Validated both allow path
+  (192.168/16 -> 401 from PHP) and deny path (TEST-NET-2 swap -> 403
+  from Apache before PHP). Skipped 36.3 (Nginx alt) intentionally —
+  project's actual deployment shape is Apache.
 
-Live bug fixes during smoke testing the seeded cohort:
-  *  fix(deploy): poll sidecar /health to absorb container startup
-     race (commit 1a7947831) — wget retry loop replaces single-shot
-     check; verified live on the next deploy at +6s.
-  *  fix(agentforge): cast DATETIME date columns to DATE in 4
-     repositories (commit 85b142f8a) — pid=8's "what are the
-     patient's medical problems?" returned 503 because Pydantic
-     rejected MariaDB DATETIME strings on Synthea-imported lists
-     rows. SQL-layer DATE() cast is now the wire-format contract.
-  *  fix(agentforge): bump proxy idle timeout 8s -> 30s (commit
-     af9443cb4) — bulky synthesis on 55-row problem list exceeded
-     the prior 8s; can come back down once the truncator wires in.
-  *  fix(agentforge): clinically relevant problem list — drop
-     SNOMED (situation) admin codes, dedup by SNOMED code (commit
-     ee4a67c24). pid=8 Eula: 55 raw -> 25 distinct conditions.
+Task 46 — DataQualityChecker (parallel subagent worktree). Stale-lab
+  flagging (>30d) + problem/note conflict detection (sentence-chunk
+  scoped negation cues). 13 tests, mypy + ruff clean. Standalone
+  class — integration deferred to the integration pass.
 
-Droplet operational cleanup:
-  *  Seed pipeline pushed to droplet (matches local cohort exactly).
-  *  Stopped 4 parasitic upstream containers (selenium, couchdb,
-     openldap, mailpit). Sidecar CPU dropped 44% -> 0.2% (it had
-     been queue-waiting behind selenium for weeks).
-  *  Removed duplicate `pagentforge-redis` (leftover from earlier
-     deploy).
-  *  Droplet now runs exactly 5 containers — see docs/DEPLOYMENT.md
-     "DO NOT restart casually" section.
+Task 48 — DEPLOY.md deployment checklist (parallel subagent worktree).
+  401 lines, seven sections, every reference cites a real artifact
+  in this repo (sql/database.sql line numbers, migration paths,
+  regression_locks.py refs). Companion to docs/DEPLOYMENT.md (the
+  snapshot of what's deployed; DEPLOY.md is the act of deploying).
+
+Live bug fixes during smoke-testing earlier in the session
+(see f4b2e7616 / 2b12f5857 / 1b0e3d8a3 / 51ce87e2c):
+  *  Citation types canonicalised in the system prompt — LLM was
+     emitting [lab #N] instead of [lab_result #N], would have been
+     silently rejected by the verifier on production.
+  *  Section headers pinned to the tool's clinical surface — same
+     query type now produces the same shape across runs.
+  *  Demographics woven into clinical sentences instead of standalone
+     "[demographic #8]" recitations.
+  *  Out-of-scope queries now return "I don't have a tool to retrieve
+     X" with no "in this version of the co-pilot" hedge. Pinned by
+     OOS-BILLING (positive) and ADV-OOS-HEDGE (adversarial)
+     regression locks.
 
 Memories saved this session:
-  *  project_synthea_location.md — `~/Desktop/Gauntlet/synthea/`
-  *  feedback_no_rm_rf.md — surface deletion candidates instead
+  *  feedback_no_rm_rf.md — surface deletion candidates, don't rm
   *  project_droplet_containers.md — exactly 5 containers should run
+  *  project_synthea_location.md — `~/Desktop/Gauntlet/synthea/`
 ```
 
-Sidecar test suite: **460/460 passing** (was 417 at session start —
-+43 tests across truncator + planner). mypy clean. ruff clean.
-PHP isolated AgentForge tests: **214/214 passing** (was 208 — +6 from
-the new ProblemsRepositoryTest). Single failure remains: pre-existing
-Vitals height-fixture carryforward.
+Sidecar test suite: **460/460 -> 499/499** (+39 across the day:
++13 immunizations, +13 procedures, +13 data_quality, plus regression
+locks growing from 6 -> 9). mypy + ruff clean (one pre-existing
+N812 in labs.py noted but unrelated).
+
+PHP isolated AgentForge tests: **214/214 -> 251/251** (+37). One
+pre-existing failure remains: the Vitals height-fixture
+`'height' => 70.0` vs `70` carryforward. Not blocking.
 
 ## Architecture state right now
 
-Tool catalog: **9 tools** (demographics, problems, medications,
-allergies, labs, vitals, notes, search_notes, encounters). Task 51
-will add `get_immunizations` as the 10th — see "What's ready to pick
-up next" below.
+Tool catalog: **11 tools.** demographics, problems, medications,
+allergies, labs, vitals, notes, search_notes, encounters, immunizations,
+procedures.
 
-Reliability primitives — three are now BUILT BUT NOT WIRED into the
-orchestrator. They're tested and ready for an integration pass:
+Reliability primitives — three are still BUILT BUT NOT WIRED into the
+orchestrator (the integration pass remains the single most leveraged
+pure-code beat available):
 
   - **`SynthesisInputTruncator`** (Task 45) — 12k-token cap; priority
-    drop + within-tool oldest-first shrink; tiktoken cl100k_base
+    drop + within-tool oldest-first shrink; tiktoken cl100k_base.
+    PRIORITY tuple now includes immunizations + procedures.
   - **`Planner`** (Task 27) — UseCase classification + structured
-    Plan via tool-use forced JSON output; cheaper Haiku model fits
-    well here once a second LLMClient is wired
+    Plan via tool-use forced JSON output; falls back to
+    default_plan_for(ADMIT_SYNTHESIS) on validation failure.
+    TOOL_SELECTION_BY_USE_CASE now includes immunizations + procedures
+    in ADMIT_SYNTHESIS, procedures in DELTA_COMPUTATION.
+  - **`DataQualityChecker`** (Task 46, NEW today) — stale-lab
+    flagger + problem/note conflict detector. Same standalone-class
+    pattern.
   - **TimeoutPolicy phase + total_turn budgets** (Task 41
-    carryforward) — `per_tool=2s` is enforced, the rest are config
-    fields with no consumer. Right shape comes alongside Task 27
-    wiring (the planner is what knows about phases).
+    carryforward) — still only `per_tool=2s` is enforced.
 
 Already wired and active:
 
   - Tool-result cache (Redis, 60s TTL)
   - StreamingVerifier with 5-constraint DomainConstraints, OFF by
     default; `VERIFIER_ENABLED=true` on droplet
+  - Verifier `_KNOWN_TOOLS` covers all 11 tools (notes/search_notes
+    gap closed as part of 51.3)
   - Langfuse traces (Null when not configured; `LANGFUSE_HOST`
     unset on droplet)
   - Session memory (opt-in via `session_id`, SOFT_CAP=6 / HARD_CAP=8
@@ -124,28 +118,52 @@ Already wired and active:
 
 `https://143.244.157.90:9300/` — production demo, same droplet.
 
-**The droplet is current end-of-session.** Code matches main as of
-the last `./scripts/deploy-droplet.sh module` run. Data side: full
-Task 50 seed pipeline applied; 25 patients + 3 baseline; 882
-encounters; 3,341 lab results; 886 notes (73 in last 365d); demo
-overlay live for pid=8 / pid=4. All 14 `validate_seed.sh` checks
-pass on droplet.
+**The droplet is BEHIND main.** End-of-session-2026-05-01 the droplet
+was current; today's eight new merges (Task 51.1, 51.2, 51.3, 51.4,
+35, 36, 46, 48) are local-only. Run `./scripts/deploy-droplet.sh
+all` to bring the droplet forward. Demo will gain immunizations +
+procedures tools live on the next deploy.
 
-Live smoke-test results today (after the bug fixes):
+Local dev now has TWO ways to run the sidecar (introduced by Task 35):
+
+  1. **Host script:** `./sidecar/scripts/sidecar.sh start` —
+     `--reload` enabled, instant iteration, bind on host port 8000.
+     Module .env: `AGENTFORGE_SIDECAR_URL=http://host.docker.internal:8000`
+  2. **Docker stack:** `cd docker/agent && docker compose up --build`
+     — production-shape image, `agentforge-redis` companion service
+     to match the droplet, host port 8400. Module .env:
+     `AGENTFORGE_SIDECAR_URL=http://agentforge-sidecar:8000`
+
+Mutually exclusive — both register `agentforge-sidecar` as a
+network hostname. `docker/agent/README.md` documents which to pick
+when.
+
+The Apache reverse-proxy include (Task 36) is shipped at
+`interface/modules/custom_modules/oe-module-agentforge/deploy/`
+but NOT auto-installed. Operators copy it into Apache's conf.d/
+manually; `deploy/README.md` walks dev-easy / Debian / droplet
+installs separately.
+
+Live smoke-test results today (after the 51.x work):
 
   - ✅ get_active_problems — 25 distinct conditions, real CKD
        progression, no admin noise, IPV/SDOH preserved
   - ✅ get_active_medications — 6 active + 4 ended cited cleanly
   - ✅ get_active_allergies — 11 allergens with severity
-  - ❌ "Has this patient been immunized?" — agent invents a
-       capability statement ("in this version of the co-pilot")
-       because there's no get_immunizations tool. Tracked as
-       Task 51.
+  - ✅ get_immunizations — 12 rows for pid=8, vaccine_name resolved
+       cleanly via codes table (CVX 140 -> "Influenza, seasonal,
+       injectable, preservative free", etc.)
+  - ✅ get_procedures — 18 deduped procedures (raw 328), grouped
+       clinically into behavioral health screenings, dental care,
+       preventive procedures
+  - ✅ Out-of-scope queries (billing, family history) get clean
+       "I don't have a tool to retrieve X" responses
+  - ✅ Citation grammar — section headers canonical, demographic
+       woven into clinical sentences
 
 Droplet env still: `VERIFIER_ENABLED=true`, `agentforge-redis`
 container running, `LANGFUSE_HOST` unset (NullLangfuseClient),
-`policy_loaded: false` (sensitivity policy YAML path issue,
-mitigated by `SENSITIVITY_POLICY_REQUIRED=false`).
+`policy_loaded: false` (sensitivity policy YAML path issue).
 
 Container layout pinned: see `docs/DEPLOYMENT.md` and the project
 memory `project_droplet_containers.md`. **Five containers** —
@@ -159,65 +177,59 @@ logged in `docs/DEVIATIONS.md` (search 2026-05-01 / 2026-05-02
 entries) and worth eyes on the next pass:
 
 1. **Sensitivity policy YAML path doesn't resolve inside the Docker
-   image.** Mitigated by `SENSITIVITY_POLICY_REQUIRED=false`. Two
-   fixes to consider: bake YAML at a fixed path in the Dockerfile +
-   override `SENSITIVITY_POLICY_PATH`, or use `importlib.resources`.
+   image.** Mitigated by `SENSITIVITY_POLICY_REQUIRED=false`.
+   Two fixes to consider: bake YAML at a fixed path in the
+   Dockerfile + override `SENSITIVITY_POLICY_PATH`, or use
+   `importlib.resources`.
 
-2. **Verifier coverage gap on notes / search_notes.**
-   `verifier/cache.py` `_KNOWN_TOOLS` registers encounters now but
-   still doesn't cover notes or search_notes. `[note #61]` won't
-   ground via the production verifier. Trivial fix: register
-   `"get_recent_notes": ("note", "notes", "id")` and
-   `"search_notes": ("note", "results", "id")`.
-
-3. **Frontend doesn't mint or send `session_id`.** Multi-turn
+2. **Frontend doesn't mint or send `session_id`.** Multi-turn
    memory is fully wired server-side, but `chat-panel.js` still
    posts only `{message: ...}`. Until the JS mints a session id,
    every turn is independent.
 
-4. **In-memory breakglass dedup → multi-replica gap.** Replace with
-   Redis SETNX when going multi-replica.
+3. **In-memory breakglass dedup -> multi-replica gap.** Replace
+   with Redis SETNX when going multi-replica.
 
-5. **Three orchestrator utilities built but not wired** —
-   SynthesisInputTruncator (Task 45), Planner (Task 27), and the
-   phase/total_turn budgets in TimeoutPolicy (Task 41). The
-   integration pass is its own beat.
+4. **Four orchestrator utilities built but not wired** —
+   SynthesisInputTruncator (Task 45), Planner (Task 27),
+   DataQualityChecker (Task 46), and the phase/total_turn budgets
+   in TimeoutPolicy (Task 41). The integration pass is its own
+   beat — no Taskmaster ID yet but it's the highest-leverage
+   pure-code work remaining.
 
-6. **`per_attempt_timeout` not wired through httpx.** RetryPolicy
+5. **`per_attempt_timeout` not wired through httpx.** RetryPolicy
    has the field; each fetcher still uses httpx's default 5s.
 
-7. **Eval framework caveats:** fixtures hand-authored (not captured
+6. **Eval framework caveats:** fixtures hand-authored (not captured
    from a real demo DB SHA), no LLM-as-judge, regression-locks pin
    canonical agent-style strings (not model behavior end-to-end).
 
-8. **Search results gate on title-prefix only** because
+7. **Search results gate on title-prefix only** because
    `notes_search` PHP response doesn't surface `note_type` or
    `attending_only`.
 
+8. **Citation parser silently swallows multi-id forms.**
+   `[problem #293, #294]` parses as a citation to #293 only; #294
+   ends up in `extra` and never gets verified. Tightening the
+   parser is a separate beat from 51.3.
+
+9. **Apache reverse-proxy include is shipped but not auto-installed.**
+   Operators must `docker cp` it into Apache's conf.d/ manually.
+   Future revision of `scripts/deploy-droplet.sh` could push it
+   automatically.
+
 ## Known issues / quality gaps surfaced today
 
-- **Vitals height fixture mismatch.** Pre-existing carryforward.
+- **Vitals height fixture mismatch** (carryforward unchanged).
   `'height' => 70.0` vs actual `70`. JSON int round-trip suspected.
   Only remaining AgentForge isolated-test failure.
 
-- **No `get_immunizations` tool.** 348 rows in immunizations table,
-  zero tools. Tracked as Task 51 (parent + 4 subtasks).
-
 - **MedicationsRepository may have similar duplication issues to
-  what we just fixed in ProblemsRepository.** Eula's response
-  showed multiple discontinued contraceptive entries — Synthea
-  generates per-fill rows. Less clear-cut than problems (real meds
-  legitimately have multiple courses) but worth a closer look. Not
-  yet tracked.
-
-- **Demographic citation grammar drifts.** `[demographic #8]` reads
-  stilted; the patient's identity isn't a fact that needs citing.
-  Tracked under Task 51.3.
-
-- **Section labels in synthesis responses are inconsistent.** Same
-  patient, two queries: "Major chronic conditions" vs "Primary
-  medical conditions." Worth deciding whether to pin in the system
-  prompt or accept variability. Tracked under Task 51.3.
+  what we fixed in ProblemsRepository / ProceduresRepository.**
+  Eula's response showed multiple discontinued contraceptive
+  entries — Synthea generates per-fill rows. Less clear-cut than
+  problems / procedures (real meds legitimately have multiple
+  courses) but worth a closer look. Not yet tracked.
 
 - **Old controller bootstraps use `DriverManager::getConnection(...)`
   directly.** CLAUDE.md prefers `DatabaseConnectionFactory`.
@@ -225,76 +237,81 @@ entries) and worth eyes on the next pass:
 
 ## What's ready to pick up next
 
-Pending tasks remaining: 9.
+Pending tasks remaining: 4 (or 2 once today's two in-flight
+subagents land — Tasks 49 + 42).
 
-- **51 — Tool catalog gaps + agent output quality + out-of-scope
-  handling.** Newly added; 4 subtasks (immunizations, audit/add
-  procedures, output refinement, out-of-scope guardrail). High
-  priority — addresses the most visible demo gaps.
-- **27/45/41 integration pass** — wire the three deferred
-  utilities into `Orchestrator.turn()`. No Taskmaster ID yet; would
-  need to be created. Probably the next task to add and the highest-
-  leverage pure-code work.
-- **35, 36, 47** — Docker Compose + reverse proxy + e2e (deploy
-  infra triplet, do as a unit when there's appetite for ops work).
-- **42** — Identity Ambiguity (newly unblocked by 27, but waits on
-  the integration pass to be useful).
-- **43** — Prompt Library (depends on 27, 28).
-- **46** — Stale Data + Conflict detection.
-- **48** — Deployment checklist doc (small).
-- **49** — Re-evaluate `idx_procedure_*` index (low priority).
+- **42 — Identity Ambiguity** (in flight: parallel subagent today;
+  may be done by the time you read this). Detects cross-patient
+  references mid-conversation.
+- **43 — Prompt Library** (depends on 27, 28, both done). Externalize
+  system / planner / synthesizer prompts into versioned templates.
+  Substantial refactor — touches every place SYSTEM_PROMPT is read.
+- **47 — E2E Integration Test Suite** (deps 33, 35, 36 all done now).
+  Build full PHP-module-through-sidecar integration tests. The
+  unblocked-but-not-yet-shipped triplet from earlier is now closed
+  on its dependencies — 47 is the last piece.
+- **49 — idx_procedure_* re-eval** (in flight: parallel subagent
+  today; expects to drop the index as redundant).
+- **Integration pass** (no Taskmaster ID) — wire the FOUR deferred
+  utilities (truncator, planner, timeout budgets, data-quality
+  checker) into `Orchestrator.turn()`. Probably the next task to
+  add and the highest-leverage pure-code work after this batch.
 
 Quick wins still available:
 
-- **Fix verifier `_KNOWN_TOOLS` for notes + search_notes** (~10 min,
-  closes carryforward #2).
-- **Fix Vitals height-fixture** (~5 min if it's a fixture issue).
-- **Mint `session_id` in chat-panel.js** (~30 min, lights up
-  multi-turn memory).
 - **Bake sensitivity YAML at fixed Dockerfile path** (~30 min,
   lands `policy_loaded: true` on the droplet).
+- **Mint `session_id` in chat-panel.js** (~30 min, lights up
+  multi-turn memory).
 - **Bring proxy timeout back down** once the truncator is wired
   (one-line change after the integration pass).
+- **Tighten citation parser** to handle multi-id forms (~30 min).
 
 ## Quick-start checklist for next time
 
 1. `git status` — confirm no uncommitted changes you forgot about.
 2. `task-master list` and `task-master next` — see what's on deck.
-3. `cd sidecar && uv run pytest` — confirm 460/460 still green.
+3. `cd sidecar && uv run pytest` — confirm 499/499 still green.
 4. If demo'ing again or testing locally:
-   - `cd sidecar && ./scripts/sidecar.sh start` (sidecar on :8000)
+   - **Host-script mode:** `./sidecar/scripts/sidecar.sh start`
+     (sidecar on :8000, requires REDIS_URL set)
+   - **Docker-stack mode:** `cd docker/agent && docker compose up
+     --build` (sidecar on host :8400, container :8000, with
+     companion agentforge-redis)
    - `docker compose -f docker/development-easy/docker-compose.yml ps`
    - Open `http://localhost:8300/` (admin / pass)
 5. If deploying to droplet:
    - `./scripts/deploy-droplet.sh check` — confirm droplet healthy
-     (currently end-of-session-2026-05-02 state).
-   - Code-side and data-side are BOTH current relative to main.
-6. Tail Langfuse traces (when configured) for live trace
-   inspection; `LANGFUSE_HOST` is unset on the droplet, so
-   `NullLangfuseClient` is in use.
+   - **Code-side is BEHIND main** — `./scripts/deploy-droplet.sh all`
+     to push today's eight new merges (immunizations + procedures
+     tools, output refinement, data-quality checker, deploy infra).
+6. If testing the apache reverse-proxy include locally:
+   - `docker cp interface/modules/custom_modules/oe-module-agentforge/deploy/apache-agentforge.conf development-easy-openemr-1:/etc/apache2/conf.d/agentforge.conf`
+   - `docker exec development-easy-openemr-1 httpd -k graceful`
+   - `wget -qO- http://localhost:8300/agentforge/turn` (should be 400 = no session)
 
 ## Files worth opening in the first 60 seconds
 
-- `docs/DEPLOYMENT.md` — droplet state including the new "DO NOT
-  restart casually" container section.
-- `docs/test-data.md` — full seed pipeline reference (six-step
-  recipe for re-running from scratch, plus the audits and the
-  decoupling rationale on eval fixtures).
-- `docs/DEVIATIONS.md` — design decisions vs original plan. New
-  this session: the LangGraph-deferred entry for Task 27.
+- `DEPLOY.md` (NEW) — deployment checklist; act-of-deploying companion
+  to docs/DEPLOYMENT.md.
+- `docs/DEPLOYMENT.md` — droplet snapshot including the 5-container
+  layout pin.
+- `docs/DEVIATIONS.md` — design decisions vs original plan.
 - `docs/CHALLENGES.md` — retrospective on the project's hard parts.
-  Updated each session with newly-surfaced classes of friction.
-- `ARCHITECTURE.md` — original plan, still authoritative for
-  unbuilt sections.
+- `docker/agent/README.md` (NEW) — local docker stack walkthrough.
+- `interface/modules/custom_modules/oe-module-agentforge/deploy/README.md`
+  (NEW) — apache include install instructions.
+- `ARCHITECTURE.md` — original plan, still authoritative for unbuilt
+  sections.
 - `.taskmaster/tasks/tasks.json` — the roadmap.
 - `sidecar/src/agentforge/orchestrator/planner.py` — Task 27.
   Standalone class waiting to be wired in.
 - `sidecar/src/agentforge/orchestrator/truncation.py` — Task 45.
   Same — built, tested, not wired in yet.
-- `sidecar/tests/eval/regression_locks.py` — the canonical examples
-  that lock the eval framework's primitives. Add cases (and bump
-  the size pin) when you have new product intent worth freezing.
+- `sidecar/src/agentforge/verifier/data_quality.py` (NEW) — Task 46.
+  Same — built, tested, not wired in yet.
+- `sidecar/tests/eval/regression_locks.py` — 9 canonical examples
+  pinning the eval framework's primitives.
 - `scripts/seed/` — Task 50's pipeline (load_synthea_notes.py,
   agentforge_demo_overlay.sql, validate_seed_data.sql,
-  validate_seed.sh). Every script's preamble describes what it
-  does and how to invoke it.
+  validate_seed.sh).
