@@ -39,6 +39,23 @@ CITATION_PATTERN: re.Pattern[str] = re.compile(
     r"(?:,\s*(?P<extra>[^\]]+))?\]"
 )
 
+# Multi-id continuation: when the extra field is a comma-separated list
+# of ``#<id>`` tokens (and ONLY id tokens — no interleaved text), we
+# expand the parent citation into one Citation per id. Catches
+# ``[problem #293, #294]`` where the model credits two related rows
+# for one claim. Mixed extra (e.g. ``[problem #293, started 2024-01-01,
+# #294]``) does NOT match this pattern; we fall back to single-citation
+# parsing in that case to avoid false expansion.
+_MULTI_ID_EXTRA_PATTERN: re.Pattern[str] = re.compile(
+    r"^#(?P<first_id>[A-Za-z0-9_\-]+)"
+    r"(?:\s*,\s*#(?P<rest>[A-Za-z0-9_\-]+))*\s*$"
+)
+# A separate compile to extract every id when the extra matches above
+# — the named-group form above only captures the LAST repeated id.
+_ID_TOKEN_PATTERN: re.Pattern[str] = re.compile(
+    r"#(?P<id>[A-Za-z0-9_\-]+)"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Citation:
@@ -73,13 +90,52 @@ def find_citations(text: str) -> list[Citation]:
 
     Label-form citations (``[Rx: ...]``) are silently skipped — the
     grammar requires a leading identifier-then-``#id``, which they lack.
+
+    Multi-id forms (``[problem #293, #294]``) are expanded: each id
+    becomes its own :class:`Citation` with the same ``record_type``
+    and ``raw`` token, so every id has to ground individually
+    against the verifier's per-turn cache. Mixed extras (id +
+    free text) fall back to single-citation parsing — see
+    :data:`_MULTI_ID_EXTRA_PATTERN`.
     """
-    return [
-        Citation(
-            record_type=m.group("type"),
-            record_id=m.group("id"),
-            extra=m.group("extra"),
-            raw=m.group(0),
-        )
-        for m in CITATION_PATTERN.finditer(text)
-    ]
+    citations: list[Citation] = []
+    for match in CITATION_PATTERN.finditer(text):
+        record_type = match.group("type")
+        record_id = match.group("id")
+        extra = match.group("extra")
+        raw = match.group(0)
+
+        # Pure-id-list extra? Expand. Otherwise (no extra, or mixed
+        # extra with text), keep the single-citation form.
+        if extra is not None and _MULTI_ID_EXTRA_PATTERN.match(extra):
+            # First citation keeps the parent's id but with NO extra
+            # (the extra slot was just a list of additional ids — it
+            # carries no semantic info beyond the ids themselves).
+            citations.append(
+                Citation(
+                    record_type=record_type,
+                    record_id=record_id,
+                    extra=None,
+                    raw=raw,
+                )
+            )
+            for id_match in _ID_TOKEN_PATTERN.finditer(extra):
+                citations.append(
+                    Citation(
+                        record_type=record_type,
+                        record_id=id_match.group("id"),
+                        extra=None,
+                        raw=raw,
+                    )
+                )
+        else:
+            citations.append(
+                Citation(
+                    record_type=record_type,
+                    record_id=record_id,
+                    extra=extra,
+                    raw=raw,
+                )
+            )
+
+    return citations

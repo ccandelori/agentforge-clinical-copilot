@@ -92,6 +92,67 @@ class TestFindCitations:
         assert result[0].record_id == "1"
 
 
+class TestMultiIdCitations:
+    """Multi-id citation forms get expanded into one Citation per id.
+
+    The model occasionally emits compact references like
+    ``[problem #293, #294]`` to credit two related rows for one
+    factual claim. Without expansion the parser captures #293
+    and stuffs ``#294`` into the ``extra`` field where the verifier
+    cache never checks it — which means the second id could be
+    fabricated and slip through grounding. Expansion here means
+    every id in a multi-id form has to ground individually.
+    """
+
+    def test_two_ids_yield_two_citations_same_type(self) -> None:
+        result = find_citations("Two related [problem #293, #294].")
+        assert len(result) == 2
+        assert [c.record_type for c in result] == ["problem", "problem"]
+        assert [c.record_id for c in result] == ["293", "294"]
+
+    def test_three_ids_yield_three_citations(self) -> None:
+        result = find_citations("Triple [medication #21, #22, #23].")
+        assert [c.record_id for c in result] == ["21", "22", "23"]
+        assert all(c.record_type == "medication" for c in result)
+
+    def test_textual_extra_not_treated_as_id(self) -> None:
+        # `started 2024-08-15` is a date / phrase, not an id. We
+        # should still parse this as ONE citation with the date in
+        # extra — same behavior as before the multi-id support.
+        result = find_citations("[medication #7, started 2024-08-15]")
+        assert len(result) == 1
+        assert result[0].record_id == "7"
+        assert result[0].extra == "started 2024-08-15"
+
+    def test_mixed_extra_with_id_and_text_falls_back_to_one_citation(
+        self,
+    ) -> None:
+        # A mixed extra (id intermingled with non-id text) is too
+        # ambiguous to expand cleanly. Conservative path: leave the
+        # whole extra intact, emit one Citation, let the verifier
+        # decide whether to ground or reject. Documents the
+        # boundary so a future "fancier expansion" is an explicit
+        # change rather than silent drift.
+        result = find_citations("[problem #293, started 2024-01-01, #294]")
+        assert len(result) == 1
+        assert result[0].record_id == "293"
+
+    def test_expanded_citations_share_the_raw_token(self) -> None:
+        # Both Citation objects record the same raw token so
+        # downstream code that compares back to the original text
+        # (e.g. for redaction) sees a consistent source.
+        result = find_citations("[problem #293, #294]")
+        assert len(result) == 2
+        assert result[0].raw == result[1].raw == "[problem #293, #294]"
+
+    def test_expanded_secondary_id_has_no_extra(self) -> None:
+        # The first citation still holds the original parse; the
+        # secondary id(s) get their own Citation with extra=None
+        # (since the secondary form was just `#N`).
+        result = find_citations("[problem #293, #294]")
+        assert result[1].extra is None
+
+
 class TestCitationFrozen:
     def test_citation_is_immutable(self) -> None:
         c = Citation(
