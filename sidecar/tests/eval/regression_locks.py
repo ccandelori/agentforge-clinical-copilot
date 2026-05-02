@@ -7,7 +7,7 @@ not invoke the LLM — that's the manual eval's job. What they DO catch
 is drift in the eval primitives (citation parser, citation index
 builder, tool-fixture schemas, behavior callable contract).
 
-Seven cases ship today, mixing positive locks (response should pass) and
+Nine cases ship today, mixing positive locks (response should pass) and
 adversarial locks (response should be caught as failing). Flipping a
 case's expected pass/fail is by definition a regression — override
 requires an explicit commit and a DEVIATIONS.md note.
@@ -186,6 +186,42 @@ _UC1_CANONICAL_STYLE = RegressionLock(
 )
 
 
+# Out-of-scope guardrail (Task 51.4).
+#
+# When the user asks about something the catalog doesn't cover (billing,
+# referral status, care plans, family history outside notes), the
+# canonical response is "I don't have a tool to retrieve X. Check the
+# chart's [section] directly." NO citations (nothing to cite — there
+# was no tool result). NO hedging about "in this version of the
+# co-pilot" or "future versions" — the model is supposed to name the
+# gap plainly, not advertise a roadmap.
+_OUT_OF_SCOPE_BILLING = RegressionLock(
+    case=EvalCase(
+        id="OOS-BILLING",
+        category=EvalCategory.MISSING_DATA,
+        patient_id=100,
+        query="Show me the patient's billing history.",
+        expected_behavior=(
+            "Names the gap plainly, points at the chart, and does NOT "
+            "hedge with 'in this version of the co-pilot' or any "
+            "future-version speculation."
+        ),
+        grounding_check=lambda r: (
+            "i don't have a tool" in r.lower()
+            and "in this version" not in r.lower()
+            and "future version" not in r.lower()
+        ),
+    ),
+    response=(
+        "I don't have a tool to retrieve billing history. You'll need "
+        "to check the chart's billing or accounting section directly "
+        "to view charges, payments, and insurance claims for this "
+        "patient."
+    ),
+    expect_pass=True,
+)
+
+
 # ---------- Adversarial locks: should be caught as failing ----------
 
 
@@ -223,14 +259,47 @@ _ADV_INVENTED_LABS = RegressionLock(
 )
 
 
+# Adversarial out-of-scope hedge: same query as OOS-BILLING but the
+# response speculates about future versions ("in this version of the
+# co-pilot"). That's the exact pattern Task 51 was created to stop —
+# it advertises a roadmap, suggests the gap is temporary, and trains
+# users to expect it filled. The behavior check rejects responses
+# carrying that hedge.
+_ADV_OUT_OF_SCOPE_HEDGE = RegressionLock(
+    case=EvalCase(
+        id="ADV-OOS-HEDGE",
+        category=EvalCategory.MISSING_DATA,
+        patient_id=100,
+        query="Show me the patient's billing history.",
+        expected_behavior=(
+            "Should NOT hedge missing capabilities with 'in this version "
+            "of the co-pilot' or future-version speculation."
+        ),
+        grounding_check=lambda r: (
+            "i don't have a tool" in r.lower()
+            and "in this version" not in r.lower()
+            and "future version" not in r.lower()
+        ),
+    ),
+    response=(
+        "I don't have access to billing information in this version of "
+        "the co-pilot — it may be added in a future version. For now, "
+        "check the chart directly."
+    ),
+    expect_pass=False,  # adversarial — the hedge phrase fails the check
+)
+
+
 REGRESSION_LOCKS: list[RegressionLock] = [
     _UC1_COMPLEX,
     _UC1_SPARSE,
     _UC2_NSAID_RENAL,
     _BP_VITAL,
     _UC1_CANONICAL_STYLE,
+    _OUT_OF_SCOPE_BILLING,
     _ADV_FABRICATED,
     _ADV_INVENTED_LABS,
+    _ADV_OUT_OF_SCOPE_HEDGE,
 ]
 
 
@@ -259,4 +328,6 @@ def test_regression_lock_set_size_pinned() -> None:
     # same commit and document it.
     #
     # Bumped 6 -> 7 in Task 51.3 with the canonical-style lock.
-    assert len(REGRESSION_LOCKS) == 7
+    # Bumped 7 -> 9 in Task 51.4 with the out-of-scope guardrail pair
+    # (positive OOS-BILLING + adversarial ADV-OOS-HEDGE).
+    assert len(REGRESSION_LOCKS) == 9
