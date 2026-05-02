@@ -33,9 +33,11 @@ SIDECAR_NAME="${SIDECAR_NAME:-agentforge-sidecar}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE_LOCAL="$REPO_ROOT/interface/modules/custom_modules/oe-module-agentforge"
 SIDECAR_LOCAL="$REPO_ROOT/sidecar"
+PROMPTS_LOCAL="$REPO_ROOT/prompts"
 
 MODULE_REMOTE="/opt/agentforge/module"
 SIDECAR_REMOTE="/opt/agentforge/sidecar"
+PROMPTS_REMOTE="/opt/agentforge/prompts"
 MODULE_IN_CONTAINER="/var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-agentforge"
 
 # ---------- Helpers ----------
@@ -88,8 +90,17 @@ deploy_sidecar() {
         "$SIDECAR_LOCAL/" "$DROPLET_HOST:$SIDECAR_REMOTE/"
     ok "sidecar synced"
 
+    # Prompt library lives at repo root (Task 43 — versioned templates).
+    # The sidecar Dockerfile pulls it via a named build context so the
+    # rsync target sits next to the sidecar dir on the droplet.
+    step "rsyncing prompts → $DROPLET_HOST:$PROMPTS_REMOTE/"
+    rsync -az --delete "$PROMPTS_LOCAL/" "$DROPLET_HOST:$PROMPTS_REMOTE/"
+    ok "prompts synced"
+
     step "building sidecar image"
-    ssh_run "cd $SIDECAR_REMOTE && docker build -t ${SIDECAR_NAME}:latest . 2>&1 | tail -3"
+    ssh_run "cd $SIDECAR_REMOTE && docker build \
+        --build-context prompts=$PROMPTS_REMOTE \
+        -t ${SIDECAR_NAME}:latest . 2>&1 | tail -3"
     ok "image built"
 
     step "restarting sidecar container"

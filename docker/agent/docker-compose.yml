@@ -41,6 +41,12 @@ services:
     build:
       context: ../../sidecar
       dockerfile: Dockerfile
+      # Named additional context so the Dockerfile can COPY prompts/
+      # from the repo root (which sits OUTSIDE the build context).
+      # Required for the Task 43 prompt library to land in the image
+      # at /app/prompts/.
+      additional_contexts:
+        prompts: ../../prompts
     # Bound to 127.0.0.1 so the dev container is never reachable off-host.
     # OpenEMR's AgentProxyController forwards to http://agentforge-sidecar:8000
     # via the shared docker network; the published host port is purely for
