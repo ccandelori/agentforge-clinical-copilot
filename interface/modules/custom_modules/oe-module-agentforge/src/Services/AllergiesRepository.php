@@ -45,8 +45,17 @@ class AllergiesRepository
      */
     public function findActiveByPid(int $pid): array
     {
+        // DATE() strips the time component from lists.begdate /
+        // lists.enddate (both DATETIME columns). Allergies happened to
+        // import with midnight timestamps (Synthea modeling), so this
+        // never surfaced as a bug — but the sidecar's pydantic
+        // ``date | None`` field would reject any non-zero-time row.
+        // Casting at the SQL layer makes the contract explicit and
+        // matches the medications/problems repos.
         $rows = $this->connection->fetchAllAssociative(
-            "SELECT id, title, reaction, severity_al, begdate, enddate
+            "SELECT id, title, reaction, severity_al,
+                    DATE(begdate) AS begdate,
+                    DATE(enddate) AS enddate
              FROM lists
              WHERE pid = :pid AND type = 'allergy' AND activity = 1
              ORDER BY begdate DESC, id DESC",

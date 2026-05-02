@@ -33,8 +33,16 @@ class MedicationsRepository
      */
     public function findActiveByPid(int $pid): array
     {
+        // DATE() strips the time component from lists.begdate /
+        // lists.enddate (both DATETIME columns). Synthea-imported rows
+        // carry real timestamps, and the sidecar's pydantic
+        // ``date | None`` fields reject datetime strings with non-zero
+        // time. The cast is the wire-format contract — every
+        // begin_date / end_date ships as a YYYY-MM-DD string.
         $rows = $this->connection->fetchAllAssociative(
-            "SELECT id, title, begdate, enddate
+            "SELECT id, title,
+                    DATE(begdate) AS begdate,
+                    DATE(enddate) AS enddate
              FROM lists
              WHERE pid = :pid AND type = 'medication' AND activity = 1
              ORDER BY begdate DESC, id DESC",

@@ -33,8 +33,15 @@ class ProblemsRepository
      */
     public function findActiveByPid(int $pid): array
     {
+        // DATE(begdate) strips the time component. lists.begdate is
+        // a DATETIME column and Synthea-imported rows carry real
+        // timestamps; without the cast the JSON ships
+        // "2026-02-06 17:32:52" and the sidecar's pydantic
+        // ``date | None`` field rejects it as "datetime should have
+        // zero time". The cast is the wire-format contract — the
+        // sidecar trusts every begin_date to be a YYYY-MM-DD string.
         $rows = $this->connection->fetchAllAssociative(
-            "SELECT id, title, diagnosis, begdate
+            "SELECT id, title, diagnosis, DATE(begdate) AS begdate
              FROM lists
              WHERE pid = :pid AND type = 'medical_problem' AND activity = 1
              ORDER BY begdate DESC, id DESC",
