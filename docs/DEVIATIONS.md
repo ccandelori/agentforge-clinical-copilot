@@ -1436,3 +1436,50 @@ the fewest schema and code changes. The encounters-overlay (for
 sections of subtask 50.4).
 
 ---
+
+## 2026-05-02 — Planner shipped as standalone class; LangGraph + orchestrator wiring deferred
+
+**Plan:** Task 27 spec sketched the planner as
+`async def planner_node(state: AgentState, llm: LLMClient) -> dict`,
+implying it would slot into a LangGraph state graph. The spec also
+contemplates the orchestrator consuming the plan to dispatch parallel
+batches.
+
+**Deviation:** Two scoping cuts:
+
+1. **Built as a `Planner` class with `plan(user_message) -> Plan`,
+   not as a LangGraph node.** The codebase doesn't use LangGraph
+   anywhere — `langgraph` is in `pyproject.toml` deps but no module
+   imports it. Adopting LangGraph mid-task to fit the spec literally
+   would have ballooned scope (graph definition, state typing,
+   migrating the existing async-loop orchestrator). The class shape
+   matches existing patterns (Orchestrator, Verifier, BreakglassAuditTool)
+   and is straightforward to wrap in a LangGraph node later if/when
+   the broader migration happens.
+
+2. **Wiring into the orchestrator deferred.** The Planner ships with
+   full unit coverage but is not yet called from `Orchestrator.turn()`.
+   Wiring requires deciding how the plan interacts with the existing
+   tool-iteration loop (does the planner replace it? Seed it? Run
+   alongside?), which is a larger design call than the planner
+   itself. Same pattern as Task 41 (timeouts) and Task 45 (truncator)
+   — the utilities ship complete, the integration is its own beat.
+
+**Why:** Fits the codebase's existing patterns; keeps the surface
+small enough to TDD; lets the wiring decision happen on its own
+merits with the planner already in hand. Total scope of Task 27 stays
+roughly what its complexity rating (6) implies, instead of
+ballooning into a graph-architecture refactor.
+
+**What we learned:** Spec sketches that import idioms from outside
+the codebase (LangGraph, OpenAI's `response_format`) need a sanity
+check against the actual codebase before being followed literally.
+The structured-output goal (use case + tool plan) is achievable via
+Anthropic tool-use forcing — same primitive every other tool in the
+catalogue uses — without adopting a new framework.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/planner.py`](../sidecar/src/agentforge/orchestrator/planner.py),
+[`sidecar/tests/test_planner.py`](../sidecar/tests/test_planner.py).
+
+---
