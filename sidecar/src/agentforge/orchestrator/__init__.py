@@ -54,6 +54,11 @@ from agentforge.tools.problems import (
     ProblemsFetcher,
     ProblemsResult,
 )
+from agentforge.tools.search_notes import (
+    SEARCH_NOTES_TOOL_SPEC,
+    SearchNotesFetcher,
+    SearchNotesResult,
+)
 from agentforge.tools.vitals import VITALS_TOOL_SPEC, VitalsFetcher, VitalsResult
 from agentforge.verifier import (
     DomainConstraintChecker,
@@ -130,6 +135,7 @@ class Orchestrator:
         labs_fetcher: LabsFetcher,
         vitals_fetcher: VitalsFetcher,
         notes_fetcher: NotesFetcher,
+        search_notes_fetcher: SearchNotesFetcher,
         *,
         domain_constraints: DomainConstraintChecker | None = None,
         verifier_enabled: bool = False,
@@ -146,6 +152,7 @@ class Orchestrator:
         self._labs = labs_fetcher
         self._vitals = vitals_fetcher
         self._notes = notes_fetcher
+        self._search_notes = search_notes_fetcher
         self._domain_constraints = (
             domain_constraints or NullDomainConstraintChecker()
         )
@@ -200,6 +207,7 @@ class Orchestrator:
             LABS_TOOL_SPEC,
             VITALS_TOOL_SPEC,
             NOTES_TOOL_SPEC,
+            SEARCH_NOTES_TOOL_SPEC,
         ]
         # Per-turn tool-result accumulator. Keyed by tool name; later
         # iterations of the same tool overwrite — acceptable for MVP
@@ -373,6 +381,29 @@ class Orchestrator:
                 since_days = raw_since if isinstance(raw_since, int) else None
                 result = await self._notes.fetch(
                     ctx=ctx,
+                    since_days=since_days,
+                )
+            elif tool_name == "search_notes":
+                raw_query = call.input.get("query")
+                if not isinstance(raw_query, str):
+                    return (
+                        json.dumps(
+                            {
+                                "error": "tool_invalid_input",
+                                "tool": tool_name,
+                                "detail": "query is required and must be a string",
+                            }
+                        ),
+                        None,
+                    )
+                raw_limit = call.input.get("limit")
+                limit = raw_limit if isinstance(raw_limit, int) else None
+                raw_since = call.input.get("since_days")
+                since_days = raw_since if isinstance(raw_since, int) else None
+                result = await self._search_notes.fetch(
+                    ctx=ctx,
+                    query=raw_query,
+                    limit=limit,
                     since_days=since_days,
                 )
             else:
@@ -586,6 +617,7 @@ _RESULT_CLASSES: Final[dict[str, type[ToolResult[Any]]]] = {
     "get_recent_labs": LabsResult,
     "get_vitals_trend": VitalsResult,
     "get_recent_notes": NotesResult,
+    "search_notes": SearchNotesResult,
 }
 
 
