@@ -68,6 +68,7 @@ def _build(
         allergies_fetcher=AsyncMock(),
         labs_fetcher=AsyncMock(),
         vitals_fetcher=AsyncMock(),
+        notes_fetcher=AsyncMock(),
         memory=memory,
     )
 
