@@ -1227,3 +1227,72 @@ lives on the turn, not the token.
 [`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py).
 
 ---
+
+## 2026-05-01 — Eval framework ships with hand-authored fixtures and skips LLM-as-judge
+
+**Plan:** Tasks 37, 38, 39 spec a 3-layer eval setup:
+  1. MockToolLayer fixtures pinned to a specific OpenEMR demo DB SHA
+     (`demo_5_0_0_5.sql + openemr/openemr:flex image SHA`).
+  2. EvalHarness with programmatic grounding + LLM-as-judge for
+     relevance scoring.
+  3. RegressionLockTestSuite of 8 canonical Q&A run against the
+     orchestrator end-to-end.
+
+**Deviation:** Five concrete narrowings:
+
+1. Fixtures are hand-authored against the typed Pydantic schemas, not
+   captured from a populated demo DB. The two patient phenotypes
+   ("Susan Underwood — complex chronic" / "Alex Newman — sparse")
+   exercise the contracts the eval depends on, but a future
+   capture-pass against a real demo image would be more authoritative.
+
+2. The mock layer covers 8 tools, not 9 — encounters (Task 21) is
+   still pending. When 21 lands, add an `encounters` block to each
+   patient in `agent_eval.json` and a `get_encounters` method on
+   `MockToolLayer`.
+
+3. LLM-as-judge for relevance is not implemented. The harness checks
+   *grounding* (every citation resolves to a real record) and
+   *behavior* (a per-case callable assertion). Adding a third
+   relevance score would need a real LLM client in CI — costly and
+   flaky for what's a tertiary signal alongside grounding.
+
+4. RegressionLocks ship as 6 canonical (response, case, fixture)
+   triples, not 8. Four positive locks (UC1 complex / UC1 sparse /
+   UC2 NSAID-renal / vitals citation) and two adversarial locks
+   (fabricated citation; hallucinated labs for a sparse chart).
+   Two more cases worth adding when there's clear product intent —
+   the framework grows trivially.
+
+5. The regression locks do **not** invoke the orchestrator or the
+   real LLM. They pin canonical agent-style response strings to the
+   committed fixtures and verify that the harness scores them
+   correctly. What the locks catch is drift in the eval primitives
+   (citation parser, citation index builder, fixture schemas) — not
+   drift in the model itself. End-to-end model regression tests
+   need a separate manual / scheduled eval run with real LLM access
+   and are an open follow-up.
+
+**Why:** The framework's value is two-fold: (a) deterministic CI
+gating on the eval-side primitives, (b) a foundation that a manual
+eval can call into to score real model outputs. Both work without a
+real DB or real LLM. The cost of pinning fixtures to a specific
+docker SHA today (capture pass + maintenance burden) outweighs the
+value when the fixtures are themselves new — we'd be pinning to
+ourselves. The cost of LLM-as-judge in CI (API keys, $, flakiness)
+likewise outweighs its incremental signal alongside grounding +
+behavior callables.
+
+**What we learned:** The phrase "regression lock" hides a design
+choice — what you lock against. Locking the *eval primitives*
+catches schema/parser drift in CI without requiring a model. Locking
+the *model* requires real-LLM runs and is necessarily off-CI. Both
+are useful; they answer different questions.
+
+**Artifacts:**
+[`sidecar/tests/fixtures/agent_eval.json`](../sidecar/tests/fixtures/agent_eval.json),
+[`sidecar/tests/mocks/tools.py`](../sidecar/tests/mocks/tools.py),
+[`sidecar/tests/eval/harness.py`](../sidecar/tests/eval/harness.py),
+[`sidecar/tests/eval/regression_locks.py`](../sidecar/tests/eval/regression_locks.py).
+
+---
