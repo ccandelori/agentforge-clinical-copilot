@@ -1386,3 +1386,53 @@ story flat and the gating logic in one shape.
 [`interface/modules/custom_modules/oe-module-agentforge/public/internal/recent_encounters.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/recent_encounters.php).
 
 ---
+
+## 2026-05-02 — Demo overlay reaches 1 of 3 sensitivity rules; behavioral_health and attending_only deferred
+
+**Plan:** Task 50.4 spec called for hand-crafted notes covering
+sensitivity edge cases — psych note, attending-only note, plus
+SUD-style content. The intent was to exercise the full
+`sensitivity_policy.yaml` rule surface in the demo.
+
+**Deviation:** The shipped overlay
+(`scripts/seed/agentforge_demo_overlay.sql`) only reaches the
+`substance_abuse_cfr42` rule, and only via its `note_title_prefixes`
+matcher. The other two rules in the policy YAML — `behavioral_health`
+and `attending_only` — are not demoed by this overlay.
+
+**Why:**
+
+  * `behavioral_health` gates on `form_encounter.pc_catid` (encounter
+    category), not on a note attribute. It fires from the encounters
+    tool, not the notes tool. Demoing it requires creating an
+    encounter row with `pc_catid` 11 or 12, which is a different
+    category of seed work (encounter overlay, not note overlay).
+  * `attending_only` requires a `notes_meta` table extension
+    (deployment-added per ARCHITECTURE.md §2). Stock OpenEMR has no
+    such column. Adding it would mean a Doctrine migration, a
+    NotesRepository change to JOIN it, and a controller change to
+    surface the flag — well beyond the scope of a SQL fixture.
+  * `substance_abuse_cfr42`'s `note_types` matcher targets
+    `form_clinical_notes.clinical_notes_type`, but inserting into
+    `form_clinical_notes` requires a paired `forms` table linkage and
+    encounter relationship. The pnotes-only overlay path is much
+    simpler. Title-prefix coverage exercises the same rule's deny
+    path, so structural coverage isn't lost — just the alternate
+    matcher.
+
+**What we learned:** Sensitivity gating is a multi-source decision —
+title prefix + note type + encounter category + attending flag — and
+each source lives in a different table. A single SQL fixture can only
+realistically demonstrate one or two of them. Picking title-prefix on
+pnotes was the highest-leverage one for the MVP because it requires
+the fewest schema and code changes. The encounters-overlay (for
+`behavioral_health`) and `notes_meta` migration (for
+`attending_only`) are real follow-up work, not subtask 50.4 scope.
+
+**Artifacts:**
+[`scripts/seed/agentforge_demo_overlay.sql`](../scripts/seed/agentforge_demo_overlay.sql),
+[`sidecar/config/sensitivity_policy.yaml`](../sidecar/config/sensitivity_policy.yaml),
+[`docs/test-data.md`](test-data.md) (the "Sensitivity-rule coverage"
+sections of subtask 50.4).
+
+---

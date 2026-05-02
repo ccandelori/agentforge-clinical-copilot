@@ -341,12 +341,81 @@ will target.
   can't demo a clinical-notes / pnotes split, but the
   `get_recent_notes` tool returns a unified list anyway.
 
+## Demo overlay — 2026-05-02 (subtask 50.4)
+
+Hand-crafted notes + vitals on top of the Synthea seed for the two
+designated demo patients. Single SQL file at
+`scripts/seed/agentforge_demo_overlay.sql`. Idempotent on
+`user = 'agentforge-overlay'` — re-runs DELETE-then-INSERT cleanly.
+
+```bash
+docker exec -i development-easy-mysql-1 \
+  mariadb -uopenemr -popenemr openemr \
+  < scripts/seed/agentforge_demo_overlay.sql
+# pnotes overlay inserted: 6
+# form_vitals overlay inserted: 10
+```
+
+### What the overlay adds
+
+| Patient | Notes | Vitals readings |
+|---|---|---|
+| pid=8 Eula Crist | 4 (1 standard, 2 SUD-gated, 1 search-target) | 5 (12-month BP/weight trend, hypertension under treatment) |
+| pid=4 Alena Marquardt | 2 (1 standard, 1 phone-call) | 5 (12-month healthy baseline) |
+
+### Sensitivity-rule coverage demoed
+
+The overlay reaches **`substance_abuse_cfr42`** via `note_title_prefixes`:
+
+- `SUD: Outpatient counseling session` (pid=8)
+- `Substance Abuse: Initial intake` (pid=8)
+
+A user lacking `cfr42_authorized` clearance will see these notes
+appear with `permission_denied=True`, body/title/author stripped.
+
+### Sensitivity-rule coverage NOT demoed
+
+Two policy rules from `sensitivity_policy.yaml` cannot be exercised
+through pnotes:
+
+- **`behavioral_health`** gates by `form_encounter.pc_catid` (encounter
+  category). It fires on the encounters tool, not notes. Demoing it
+  requires creating an encounter with `pc_catid=11` or `12` for one of
+  our patients — out of scope of the note-focused overlay.
+- **`attending_only`** requires a `notes_meta` table extension
+  (deployment-added per ARCHITECTURE.md §2). Not in stock OpenEMR;
+  schema migration would be needed.
+
+The policy YAML's `note_types` matcher (`substance_abuse`) targets
+`form_clinical_notes.clinical_notes_type`, not pnotes. Adding such a
+row requires a paired `forms` linkage that the loader-style overlay
+deliberately avoids — `pnotes` is the simpler insert path. Title-prefix
+coverage is sufficient for the MVP demo.
+
+(See `docs/DEVIATIONS.md` for detail.)
+
+### Search-target coverage
+
+Hand-picked terms in the body text exercise the FULLTEXT MATCH path:
+
+- `"shortness of breath"`, `"echocardiogram"` — pid=8, follow-up note
+- `"admission"`, `"chest pain"`, `"follow-up"` — pid=8, hospital note
+- `"prescription"`, `"medication"` — pid=4, phone-call note
+
+A `search_notes` query for any of these should ground a citation
+against the matching note row.
+
+### Vitals trend shape
+
+| Patient | Trend |
+|---|---|
+| pid=8 Eula | BP 145/92 → 128/80 over 12 months; weight 175.5 → 166.0 lb. Hypertension responding to treatment. |
+| pid=4 Alena | BP 116/70 – 120/74 (stable); weight 144.0 – 146.5 lb (stable). Healthy baseline. |
+
+All readings carry `user = 'agentforge-overlay'` so they can be
+distinguished from the single Synthea-imported vital per patient.
+
 ## TODO (downstream subtasks)
 
-- 50.4 — Hand-crafted SQL note overlay for pid=8 and pid=4 covering
-  sensitivity edge cases (psych_intake, attending_only) plus
-  FULLTEXT-search-target terms. **Extended scope:** consider
-  adding hand-crafted vitals readings for both demo patients to
-  give `get_vitals_trend` a real trend.
 - 50.5 — `scripts/validate_seed_data.sql` post-import audit
 - 50.6 — Realign eval fixtures + finalize this doc
