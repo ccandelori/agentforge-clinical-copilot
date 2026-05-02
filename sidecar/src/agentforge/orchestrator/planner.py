@@ -22,10 +22,16 @@ avoids a mid-task LangGraph adoption. Logged in DEVIATIONS.md.
 
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from agentforge.llm.client import LLMClient
+from agentforge.llm.types import Message, ToolSpec
+
+logger = logging.getLogger(__name__)
 
 
 class UseCase(StrEnum):
@@ -161,3 +167,147 @@ def default_plan_for(use_case: UseCase) -> Plan:
         tool_calls=tool_calls,
         parallel_batches=tuple(batches),
     )
+
+
+# ---------------------------------------------------------------------------
+# 27.3 — LLM-driven planner with tool-use forced JSON output
+# ---------------------------------------------------------------------------
+
+
+PLANNER_SYSTEM_PROMPT = """\
+You are a clinical query planner for an EHR co-pilot. Given a clinician's \
+message about an active patient, classify the message into exactly one use \
+case and emit a structured tool dispatch plan.
+
+Use cases (mutually exclusive):
+- admit_synthesis: "summarize this chart", "what do I need to know", broad \
+chart review.
+- contraindication: "is there a contraindication", "can I give X", \
+"any interactions" — safety check before prescribing.
+- delta_computation: "what changed since last visit", "is this new" — \
+temporal comparison.
+- followup: short follow-up to a previous question that doesn't require \
+new chart data; reuse the prior turn's results.
+
+Tool catalogue: get_demographics, get_active_problems, \
+get_active_medications, get_active_allergies, get_recent_labs, \
+get_vitals_trend, get_recent_encounters, get_recent_notes, search_notes.
+
+Default tool selections per use case (you MAY adjust based on context):
+- admit_synthesis: demographics + problems + medications + allergies + \
+labs + vitals + encounters + notes
+- contraindication: problems + medications + allergies (the safety triad)
+- delta_computation: encounters + problems + medications + labs + notes
+- followup: usually no tools
+
+Group selected tools into parallel_batches: a list of lists. Tools within \
+a batch run concurrently; batches run sequentially. Cap each batch at 4 \
+tools. Every tool name in any batch MUST also appear in tool_calls (so \
+the orchestrator knows the args), and every tool_call MUST appear in \
+exactly one batch.
+
+You MUST call the submit_plan tool with your decision. Do not respond in \
+free text.\
+"""
+
+
+SUBMIT_PLAN_TOOL_SPEC = ToolSpec(
+    name="submit_plan",
+    description=(
+        "Submit the structured planning decision for the user's clinical "
+        "query. The orchestrator dispatches the parallel_batches in order "
+        "and feeds the results to the synthesis step."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "use_case": {
+                "type": "string",
+                "enum": [uc.value for uc in UseCase],
+                "description": "The classified use case for this query.",
+            },
+            "tool_calls": {
+                "type": "array",
+                "description": (
+                    "Flat list of tools to invoke this turn, with their "
+                    "named args. Every tool name here must appear in "
+                    "exactly one batch below."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "args": {
+                            "type": "object",
+                            "description": (
+                                "Optional named args; defaults to {}."
+                            ),
+                        },
+                    },
+                    "required": ["name"],
+                },
+            },
+            "parallel_batches": {
+                "type": "array",
+                "description": (
+                    "Sequence of dispatch batches. Tools within a batch "
+                    "run concurrently; batches run sequentially. Cap at "
+                    "4 tools per batch."
+                ),
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+        "required": ["use_case", "tool_calls", "parallel_batches"],
+    },
+)
+
+
+class Planner:
+    """LLM-driven query planner.
+
+    Calls the model once with the planner system prompt and a single
+    ``submit_plan`` tool. The model is instructed to emit its
+    classification + dispatch plan via that tool only; we read the
+    structured input directly off the tool_use block.
+
+    Failure modes — both fall back to ``default_plan_for(ADMIT_SYNTHESIS)``
+    rather than failing the turn:
+
+      * No ``submit_plan`` tool call in the response (model emitted
+        text-only).
+      * ``submit_plan`` input fails ``Plan`` validation (e.g.
+        parallel_batches references undeclared tools).
+
+    Network / SDK errors propagate — the orchestrator's retry policy is
+    the right place to handle those.
+    """
+
+    def __init__(self, llm: LLMClient) -> None:
+        self._llm = llm
+
+    async def plan(self, user_message: str) -> Plan:
+        response = await self._llm.complete(
+            system=PLANNER_SYSTEM_PROMPT,
+            messages=[Message(role="user", content=user_message)],
+            tools=[SUBMIT_PLAN_TOOL_SPEC],
+            max_tokens=1024,
+        )
+        for call in response.tool_calls:
+            if call.name != "submit_plan":
+                continue
+            try:
+                return Plan.model_validate(call.input)
+            except ValidationError as exc:
+                logger.warning(
+                    "submit_plan input failed Plan validation; falling back",
+                    extra={"validation_error": str(exc)},
+                )
+                return default_plan_for(UseCase.ADMIT_SYNTHESIS)
+
+        logger.warning(
+            "planner LLM returned no submit_plan tool call; falling back",
+        )
+        return default_plan_for(UseCase.ADMIT_SYNTHESIS)

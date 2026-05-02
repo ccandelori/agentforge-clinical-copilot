@@ -25,7 +25,6 @@ from agentforge.orchestrator.planner import (
     default_plan_for,
 )
 
-
 # ---------------------------------------------------------------------------
 # Subtask 27.1 — taxonomy + Plan data structure
 # ---------------------------------------------------------------------------
@@ -216,3 +215,171 @@ class TestDefaultPlanFor:
             expected = set(TOOL_SELECTION_BY_USE_CASE[uc])
             actual = {tc.name for tc in plan.tool_calls}
             assert actual == expected, f"mismatch for {uc.name}"
+
+
+# ---------------------------------------------------------------------------
+# Subtask 27.3 — LLM-driven planner with structured tool-use output
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitPlanToolSpec:
+    def test_spec_describes_a_well_formed_tool(self) -> None:
+        from agentforge.orchestrator.planner import SUBMIT_PLAN_TOOL_SPEC
+
+        assert SUBMIT_PLAN_TOOL_SPEC.name == "submit_plan"
+        # Schema must declare use_case as a closed enum and list the
+        # other two fields. The orchestrator and the LLM both rely on
+        # this surface.
+        schema = SUBMIT_PLAN_TOOL_SPEC.input_schema
+        assert schema["type"] == "object"
+        assert "use_case" in schema["required"]
+        assert "tool_calls" in schema["required"]
+        assert "parallel_batches" in schema["required"]
+        use_case_enum = schema["properties"]["use_case"]["enum"]
+        assert set(use_case_enum) == {uc.value for uc in UseCase}
+
+
+class TestPlanner:
+    @pytest.mark.asyncio
+    async def test_returns_parsed_plan_when_llm_emits_submit_plan_call(
+        self,
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from agentforge.llm.types import LLMResponse, ToolCall
+        from agentforge.orchestrator.planner import Planner
+
+        canned_plan_input = {
+            "use_case": "contraindication",
+            "tool_calls": [
+                {"name": "get_active_problems", "args": {}},
+                {"name": "get_active_medications", "args": {}},
+                {"name": "get_active_allergies", "args": {}},
+            ],
+            "parallel_batches": [
+                ["get_active_problems", "get_active_medications", "get_active_allergies"],
+            ],
+        }
+
+        llm = AsyncMock()
+        llm.complete.return_value = LLMResponse(
+            text="",
+            tool_calls=[
+                ToolCall(id="tu_1", name="submit_plan", input=canned_plan_input)
+            ],
+            stop_reason="tool_use",
+            input_tokens=120,
+            output_tokens=42,
+        )
+
+        planner = Planner(llm)
+        plan = await planner.plan("Can I prescribe metformin for this patient?")
+
+        assert plan.use_case == UseCase.CONTRAINDICATION
+        names = {tc.name for tc in plan.tool_calls}
+        assert names == {
+            "get_active_problems",
+            "get_active_medications",
+            "get_active_allergies",
+        }
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_admit_synthesis_when_no_tool_call(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from agentforge.llm.types import LLMResponse
+        from agentforge.orchestrator.planner import Planner
+
+        llm = AsyncMock()
+        llm.complete.return_value = LLMResponse(
+            text="(model went text-only instead of using the tool)",
+            tool_calls=[],
+            stop_reason="end_turn",
+            input_tokens=120,
+            output_tokens=20,
+        )
+
+        planner = Planner(llm)
+        plan = await planner.plan("Summarize this patient.")
+
+        # The fallback is the broadest UC so the orchestrator still
+        # gets useful context even when the planner punted.
+        assert plan.use_case == UseCase.ADMIT_SYNTHESIS
+        assert len(plan.tool_calls) == len(
+            TOOL_SELECTION_BY_USE_CASE[UseCase.ADMIT_SYNTHESIS]
+        )
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_plan_input_is_invalid(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from agentforge.llm.types import LLMResponse, ToolCall
+        from agentforge.orchestrator.planner import Planner
+
+        llm = AsyncMock()
+        # parallel_batches references a tool not in tool_calls — Plan
+        # validation will reject it. Planner should swallow the error
+        # and fall back instead of crashing the turn.
+        bad_input = {
+            "use_case": "admit_synthesis",
+            "tool_calls": [{"name": "get_demographics", "args": {}}],
+            "parallel_batches": [["get_demographics", "get_recent_notes"]],
+        }
+        llm.complete.return_value = LLMResponse(
+            text="",
+            tool_calls=[
+                ToolCall(id="tu_1", name="submit_plan", input=bad_input)
+            ],
+            stop_reason="tool_use",
+            input_tokens=120,
+            output_tokens=42,
+        )
+
+        planner = Planner(llm)
+        plan = await planner.plan("Summarize this patient.")
+        assert plan.use_case == UseCase.ADMIT_SYNTHESIS
+        # Invariant: fallback returns a fresh default plan, not the
+        # mangled input.
+        assert len(plan.tool_calls) == len(
+            TOOL_SELECTION_BY_USE_CASE[UseCase.ADMIT_SYNTHESIS]
+        )
+
+    @pytest.mark.asyncio
+    async def test_passes_user_message_through_to_llm(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from agentforge.llm.types import LLMResponse, ToolCall
+        from agentforge.orchestrator.planner import Planner
+
+        llm = AsyncMock()
+        llm.complete.return_value = LLMResponse(
+            text="",
+            tool_calls=[
+                ToolCall(
+                    id="tu_1",
+                    name="submit_plan",
+                    input={
+                        "use_case": "followup",
+                        "tool_calls": [],
+                        "parallel_batches": [],
+                    },
+                )
+            ],
+            stop_reason="tool_use",
+            input_tokens=120,
+            output_tokens=12,
+        )
+
+        planner = Planner(llm)
+        await planner.plan("Tell me more.")
+
+        # The single user message should be on the messages list with
+        # exact content.
+        kwargs = llm.complete.await_args.kwargs
+        assert any(
+            m.role == "user" and m.content == "Tell me more."
+            for m in kwargs["messages"]
+        )
+        # And the submit_plan tool spec must be passed.
+        tools = kwargs["tools"]
+        assert any(t.name == "submit_plan" for t in tools)
