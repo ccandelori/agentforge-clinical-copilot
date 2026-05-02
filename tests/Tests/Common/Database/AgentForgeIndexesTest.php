@@ -30,6 +30,13 @@ use PHPUnit\Framework\TestCase;
  * non-representative plans), so we verify presence-and-shape via
  * information_schema instead. Plan-level verification belongs to a
  * future task once representative agent queries land with fixtures.
+ *
+ * Note (Task 49): `idx_procedure_report_date(procedure_report_id, date_report)`
+ * was originally pinned here but has since been dropped (migration
+ * Version20260502193710) — it led with the table's PRIMARY KEY and was
+ * redundant with the clustered index. The negative-assertion below ensures
+ * a future contributor doesn't reintroduce it without re-justifying via
+ * EXPLAIN.
  */
 final class AgentForgeIndexesTest extends TestCase
 {
@@ -45,12 +52,6 @@ final class AgentForgeIndexesTest extends TestCase
                 'procedure_order',
                 'idx_procedure_order_patient_date',
                 'patient_id,date_ordered',
-                'BTREE',
-            ],
-            'procedure_report id+date (see Task 49)' => [
-                'procedure_report',
-                'idx_procedure_report_date',
-                'procedure_report_id,date_report',
                 'BTREE',
             ],
             'form_vitals pid+date' => [
@@ -118,6 +119,35 @@ final class AgentForgeIndexesTest extends TestCase
             $expectedType,
             $rows[0]['INDEX_TYPE'],
             sprintf('Index %s.%s has unexpected type', $table, $indexName)
+        );
+    }
+
+    /**
+     * Guard against reintroducing `idx_procedure_report_date` without a fresh
+     * EXPLAIN-backed justification. The original index led with the table's
+     * PRIMARY KEY (`procedure_report_id`), which makes it redundant with the
+     * InnoDB clustered index — the optimizer never picked it for any of the
+     * agent's lab queries. See Version20260502193710 for the analysis.
+     */
+    #[Test]
+    public function redundantProcedureReportIndexHasBeenDropped(): void
+    {
+        $rows = QueryUtils::fetchRecordsNoLog(
+            'SELECT INDEX_NAME
+             FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = ?
+               AND INDEX_NAME = ?',
+            ['procedure_report', 'idx_procedure_report_date']
+        );
+
+        $this->assertSame(
+            [],
+            $rows,
+            'idx_procedure_report_date is redundant with the PRIMARY KEY '
+            . '(leads with procedure_report_id) and was intentionally dropped '
+            . 'in migration Version20260502193710. Re-run the EXPLAIN analysis '
+            . 'documented on that migration before reintroducing it.'
         );
     }
 }

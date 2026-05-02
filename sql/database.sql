@@ -10490,9 +10490,11 @@ CREATE TABLE `procedure_report` (
   `report_notes`        text           COMMENT 'notes from the lab',
   PRIMARY KEY (`procedure_report_id`),
   KEY procedure_order_id (procedure_order_id),
-  UNIQUE KEY `uuid` (`uuid`),
-  -- AgentForge agent index (Version20260430000001); see Taskmaster Task 49 — leads with PK, redundancy under review
-  KEY `idx_procedure_report_date` (`procedure_report_id`, `date_report`)
+  UNIQUE KEY `uuid` (`uuid`)
+  -- AgentForge briefly added `idx_procedure_report_date(procedure_report_id, date_report)`
+  -- here (Version20260430000001) but it was redundant with the clustered PK and dropped
+  -- in Version20260502193710 (Taskmaster Task 49). Do not re-add without re-running the
+  -- EXPLAIN-based justification documented on that migration.
 ) ENGINE=InnoDB;
 
 -- -----------------------------------------------------------------------------------
