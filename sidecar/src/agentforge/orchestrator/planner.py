@@ -95,3 +95,69 @@ class Plan(BaseModel):
                     f"tool {tc.name!r} declared in tool_calls but not in any batch"
                 )
         return self
+
+
+# ---------------------------------------------------------------------------
+# 27.2 — tool selection rules per use case
+# ---------------------------------------------------------------------------
+
+
+# Maximum tools per parallel dispatch batch. Synthea-shape responses
+# stream back in tens of milliseconds each, so a single batch with all
+# eight catalogue tools would work — but we cap at 4 to avoid spiking
+# the dev DB or hitting rate-limits when the orchestrator gets wired
+# in. Adjust if a per-tool fetcher genuinely needs to go solo.
+DEFAULT_BATCH_SIZE: int = 4
+
+
+# Per-use-case default tool selection. Hand-authored to match the
+# clinical intent of each use case; the LLM-driven planner (27.3) uses
+# this as a hint baked into its prompt, and the orchestrator falls
+# back to ``default_plan_for(uc)`` if the LLM's structured output is
+# unparseable. FOLLOWUP intentionally maps to () — pure follow-ups
+# depend on conversation context, not on an a-priori tool set.
+TOOL_SELECTION_BY_USE_CASE: dict[UseCase, tuple[str, ...]] = {
+    UseCase.ADMIT_SYNTHESIS: (
+        "get_demographics",
+        "get_active_problems",
+        "get_active_medications",
+        "get_active_allergies",
+        "get_recent_labs",
+        "get_vitals_trend",
+        "get_recent_encounters",
+        "get_recent_notes",
+    ),
+    UseCase.CONTRAINDICATION: (
+        "get_active_problems",
+        "get_active_medications",
+        "get_active_allergies",
+    ),
+    UseCase.DELTA_COMPUTATION: (
+        "get_recent_encounters",
+        "get_active_problems",
+        "get_active_medications",
+        "get_recent_labs",
+        "get_recent_notes",
+    ),
+    UseCase.FOLLOWUP: (),
+}
+
+
+def default_plan_for(use_case: UseCase) -> Plan:
+    """Build a default ``Plan`` for ``use_case`` from the static rules.
+
+    The orchestrator uses this as the LLM-bypass fallback when the
+    planner's structured output is unparseable. Tools are grouped into
+    parallel batches of up to ``DEFAULT_BATCH_SIZE``; within a batch
+    they run concurrently, batches run sequentially.
+    """
+    tool_names = TOOL_SELECTION_BY_USE_CASE[use_case]
+    tool_calls = tuple(PlannedToolCall(name=n) for n in tool_names)
+    batches: list[tuple[str, ...]] = []
+    for i in range(0, len(tool_names), DEFAULT_BATCH_SIZE):
+        batches.append(tool_names[i : i + DEFAULT_BATCH_SIZE])
+    return Plan(
+        use_case=use_case,
+        tool_calls=tool_calls,
+        parallel_batches=tuple(batches),
+    )
