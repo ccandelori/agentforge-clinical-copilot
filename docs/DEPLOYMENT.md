@@ -149,6 +149,24 @@ Underwood's chart (pid=2), expand the **Clinical Co-Pilot** panel, and ask
 - **First `/turn` after a fresh sidecar start may 503.** Cold-start of the
   Anthropic SDK's HTTP client pool. Retry once; subsequent requests are fine.
 
+## Optional: tighten REST `api_log` body logging
+
+OpenEMR's `ApiResponseLoggerListener` logs request/response bodies into
+the `api_log` table when the `api_log_option` global is `2` (default).
+AgentForge's sidecar→PHP internal endpoints don't go through that
+listener (they use bare Symfony Requests, not `HttpRestRequest`), so
+this isn't a present-day leak — but as defense-in-depth for any
+future calls that DO route through the REST stack, ship the global
+at `1` ("minimal logging — body skipped"):
+
+```bash
+# From inside the openemr container (or any host with the codebase mounted):
+php scripts/configure_api_logging.php --check    # report current value
+php scripts/configure_api_logging.php            # set to 1; idempotent
+```
+
+Reload Apache after the change so the globals bag re-reads the row.
+
 ## First-time deploy (one-time setup before the script works)
 
 The deploy script assumes the droplet is provisioned with OpenEMR already
