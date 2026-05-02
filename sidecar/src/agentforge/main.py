@@ -46,6 +46,7 @@ from agentforge.tools.labs import LabsFetcher
 from agentforge.tools.medications import MedicationsFetcher
 from agentforge.tools.notes import NotesFetcher
 from agentforge.tools.problems import ProblemsFetcher
+from agentforge.tools.search_notes import SearchNotesFetcher
 from agentforge.tools.vitals import VitalsFetcher
 from agentforge.verifier import DomainConstraints
 
@@ -123,6 +124,7 @@ def create_app(
     labs_fetcher: LabsFetcher | None = None,
     vitals_fetcher: VitalsFetcher | None = None,
     notes_fetcher: NotesFetcher | None = None,
+    search_notes_fetcher: SearchNotesFetcher | None = None,
     redis_storage: AgentRedisClient | None = None,
     langfuse_client: LangfuseClient | None = None,
     redis_client: _AppRedisProto | None = None,
@@ -197,6 +199,10 @@ def create_app(
         base_url=settings.openemr_base_url,
         gateway=auth_gateway,
     )
+    search_notes = search_notes_fetcher or SearchNotesFetcher(
+        base_url=settings.openemr_base_url,
+        gateway=auth_gateway,
+    )
     langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
 
     orchestrator = Orchestrator(
@@ -208,6 +214,7 @@ def create_app(
         labs_fetcher=labs,
         vitals_fetcher=vitals,
         notes_fetcher=notes,
+        search_notes_fetcher=search_notes,
         domain_constraints=DomainConstraints(),
         verifier_enabled=settings.verifier_enabled,
         langfuse=langfuse,
