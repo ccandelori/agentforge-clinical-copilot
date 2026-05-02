@@ -1167,3 +1167,63 @@ larger retry counts.
 [`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py).
 
 ---
+
+## 2026-05-01 — Breakglass dedup is in-memory and lives only for the sidecar process
+
+**Plan:** Task 34's spec describes idempotency ("called once per session,
+not per tool call") but does not specify the dedup mechanism.
+
+**Deviation:** Dedup is an in-memory `set[tuple[int, int, str]]`
+keyed on `(user_id, patient_id, session_id_or_sentinel)` and lives
+for the sidecar's process lifetime. There is no Redis SETNX or
+shared bookkeeping. A sidecar restart wipes the dedup table; a
+multi-replica deployment would write one audit row per replica per
+session.
+
+**Why:** Dedup correctness is bounded by the 75-min session TTL —
+even at high turn rates, the per-process unique-session count over
+that window is small. The cost of a duplicate audit row on
+restart / multi-replica is bounded and observable; the cost of
+cross-process coordination is real plumbing (SETNX semantics, key
+TTL choice, error paths when Redis is down). For MVP one replica
+is the deployment shape, so the in-memory variant is adequate.
+
+**What we learned:** "Once per session" has two readable meanings —
+"once across the system" and "once per process per session." The
+first is what the auditor wants to read; the second is what we
+ship. The gap is bounded (one row per replica boot), and a worse
+failure mode is "we silently failed to audit" — which the in-memory
+variant avoids by never marking AUDIT_FAILED outcomes as logged
+(the next turn retries).
+
+**Artifacts:**
+[`sidecar/src/agentforge/breakglass.py`](../sidecar/src/agentforge/breakglass.py).
+
+---
+
+## 2026-05-01 — Breakglass audit fires from the orchestrator, not the auth gateway
+
+**Plan:** Task 34 subtask 34.4 says "Integrate BreakglassAuditTool into
+Auth Gateway flow."
+
+**Deviation:** The audit fires at the orchestrator's turn entry
+point, not inside `AuthGateway.validate_request`.
+
+**Why:** Dedup is keyed on `session_id`, which arrives on
+`TurnRequest` — not in the JWT. The auth gateway is a stateless JWT
+validator that doesn't see `session_id`. Wiring the audit there
+would mean either passing `session_id` into auth (which couples auth
+to body parsing) or always-audit (which would write per-tool-call
+rather than per-session, breaking the idempotency contract).
+Orchestrator-level integration keeps `AuthGateway` stateless and
+preserves session-keyed dedup.
+
+**What we learned:** "Auth audits" is a layer-of-abstraction
+trap when the dedup key isn't part of the auth artifact. The right
+question is "what does the dedup key live on?" — and `session_id`
+lives on the turn, not the token.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py).
+
+---
