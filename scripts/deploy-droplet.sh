@@ -111,10 +111,26 @@ check_health() {
     ok "$status"
 
     step "checking sidecar reachable from openemr"
-    local body
-    body=$(ssh_run "docker exec $OPENEMR_CONTAINER sh -c 'wget -qO- --timeout=5 http://${SIDECAR_NAME}:8000/health'") \
-        || die "openemr container cannot reach sidecar"
-    ok "sidecar /health responded: $body"
+    # Sidecar binds 3-5s after `docker run` returns, so a single wget
+    # at T+1s is racy. Poll until /health answers or we burn 30s.
+    local body=""
+    local elapsed=0
+    local timeout=30
+    local interval=2
+    while (( elapsed < timeout )); do
+        if body=$(ssh_run "docker exec $OPENEMR_CONTAINER sh -c 'wget -qO- --timeout=5 http://${SIDECAR_NAME}:8000/health'" 2>/dev/null); then
+            [[ -n "$body" ]] && break
+        fi
+        body=""
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+    [[ -n "$body" ]] || die "openemr container cannot reach sidecar after ${timeout}s"
+    if (( elapsed > 0 )); then
+        ok "sidecar /health responded after ${elapsed}s: $body"
+    else
+        ok "sidecar /health responded: $body"
+    fi
 
     step "checking module is in openemr container"
     if ssh_run "docker exec $OPENEMR_CONTAINER test -f $MODULE_IN_CONTAINER/openemr.bootstrap.php"; then
