@@ -147,7 +147,12 @@ final class InternalVitalsControllerTest extends TestCase
         self::assertInstanceOf(JsonResponse::class, $response);
         $body = json_decode((string) $response->getContent(), true);
         self::assertIsArray($body);
-        self::assertSame($repoVitals, $body['vitals']);
+        // assertEquals (loose) rather than assertSame: JSON encoding
+        // strips ``.0`` from whole-number floats, so a fixture value of
+        // 70.0 round-trips as PHP int 70. The wire contract is the JSON
+        // shape, not the in-PHP type — assertEquals matches that
+        // contract while still rejecting any actual value drift.
+        self::assertEquals($repoVitals, $body['vitals']);
     }
 
     #[Test]
