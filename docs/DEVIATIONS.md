@@ -1123,3 +1123,47 @@ visibility path consumes only the structural metadata.
 [`sidecar/src/agentforge/gateway/auth_gateway.py`](../sidecar/src/agentforge/gateway/auth_gateway.py).
 
 ---
+
+## 2026-05-01 — Timeout/Retry shipped as per-tool budget; phase + turn budgets deferred
+
+**Plan:** Task 41 + ARCHITECTURE.md §9 spec a four-level budget hierarchy
+(`per_tool=2s` → `tool_phase=4s` → `total_turn=7s` → `max_steps=7`) and a
+`per_attempt_timeout=0.5s` inside `RetryPolicy`.
+
+**Deviation:** Three narrower-than-spec decisions:
+
+1. The retry helper enforces only the `per_tool` budget. `tool_phase`,
+   `total_turn`, and `max_steps` are config fields on `TimeoutPolicy`
+   but no orchestrator code currently reads them.
+2. `RetryPolicy.per_attempt_timeout` is a config value but is not wired
+   through the httpx layer. Each fetcher call still uses httpx's
+   default 5-second timeout, not 0.5s.
+3. The new `timeouts.py` module sits at `sidecar/src/agentforge/timeouts.py`
+   rather than the spec's `sidecar/src/agentforge/config/timeouts.py`.
+   The existing `agentforge/config.py` is a flat file (`Settings`
+   class); promoting it to a package just to host one new policy
+   module would touch every import site for a cosmetic gain.
+
+**Why:** The retry-on-transient and graceful-degradation behaviours are
+the user-visible contract Task 41 was added to deliver — they fix the
+cold-start 503 the droplet smoke test surfaced. The phase/turn budgets
+and per-attempt HTTP timeouts are orchestrator-level coordination
+features whose useful shape depends on Task 27 (Planner restructure)
+and per-fetcher timeout wiring, which are larger refactors. Shipping
+them now would either invent infrastructure they don't yet need or
+foreclose on the Planner's design.
+
+**What we learned:** Retry policy values that fit normal transient
+errors do not absorb a cold-start. With `backoff_base=0.1`,
+`backoff_factor=2.0`, `max_attempts=3` the total inter-attempt wait
+is 0.3 s — fine for a flaky upstream, useless against a 5-second
+container boot. If cold-start absorption matters in production, the
+right fix is a pre-warm ping at deploy time (or a longer-backoff
+profile applied only on the first request after process start), not
+larger retry counts.
+
+**Artifacts:**
+[`sidecar/src/agentforge/timeouts.py`](../sidecar/src/agentforge/timeouts.py),
+[`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py).
+
+---

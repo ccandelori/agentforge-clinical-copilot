@@ -19,9 +19,11 @@ the legacy behavior the test suite was originally written against.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from typing import Any, Final
 
 from agentforge.gateway.auth_gateway import RequestContext
@@ -31,6 +33,13 @@ from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
 from agentforge.storage.redis_client import AgentRedisClient
+from agentforge.timeouts import (
+    GracefulDegradation,
+    RetryPolicy,
+    TimeoutPolicy,
+    classify_http_error,
+    retry_with_policy,
+)
 from agentforge.tools.allergies import (
     ALLERGIES_TOOL_SPEC,
     AllergiesFetcher,
@@ -143,6 +152,9 @@ class Orchestrator:
         hmac_key: bytes | None = None,
         redis_storage: AgentRedisClient | None = None,
         memory: ConversationMemory | None = None,
+        timeout_policy: TimeoutPolicy | None = None,
+        retry_policy: RetryPolicy | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -161,6 +173,9 @@ class Orchestrator:
         self._hmac_key = hmac_key
         self._redis_storage = redis_storage
         self._memory = memory
+        self._timeout_policy = timeout_policy or TimeoutPolicy()
+        self._retry_policy = retry_policy or RetryPolicy()
+        self._sleep = sleep
 
     async def turn(
         self,
@@ -213,6 +228,10 @@ class Orchestrator:
         # iterations of the same tool overwrite — acceptable for MVP
         # because the catalogue is idempotent reads.
         tool_results: dict[str, ToolResult[Any]] = {}
+        # Names of tools whose retries all timed out this turn. Surface
+        # at the end as a graceful-degradation notice so the user
+        # knows the response is incomplete.
+        timed_out_tools: list[str] = []
 
         trace = self._open_trace(ctx)
 
@@ -248,13 +267,18 @@ class Orchestrator:
                     final_text = await self._verify_response(
                         response.text, tool_results, trace
                     )
+                final_text = self._append_degradation_notice(
+                    final_text, timed_out_tools
+                )
                 await self._maybe_persist_turn(
                     session_id, user_message, final_text
                 )
                 return final_text
 
             for call in response.tool_calls:
-                content_json, result = await self._dispatch(ctx, call, trace)
+                content_json, result = await self._dispatch(
+                    ctx, call, trace, timed_out_tools
+                )
                 if result is not None:
                     tool_results[call.name] = result
                 messages.append(
@@ -300,11 +324,37 @@ class Orchestrator:
         )
         return "".join(chunks)
 
+    @staticmethod
+    def _append_degradation_notice(
+        text: str, timed_out_tools: list[str]
+    ) -> str:
+        notice = GracefulDegradation.format_degradation_notice(timed_out_tools)
+        if not notice:
+            return text
+        return f"{text}\n\n{notice}"
+
+    async def _call_with_retry(
+        self,
+        fetcher_call: Callable[[], Awaitable[ToolResult[Any]]],
+    ) -> ToolResult[Any]:
+        """Run ``fetcher_call`` under the configured retry + per-tool budget.
+
+        Centralized so each tool branch in :meth:`_dispatch` stays a
+        one-liner and the policy is consistent across every fetcher.
+        """
+        return await retry_with_policy(
+            fetcher_call,
+            policy=self._retry_policy,
+            total_budget=self._timeout_policy.per_tool,
+            sleep=self._sleep,
+        )
+
     async def _dispatch(
         self,
         ctx: RequestContext,
         call: ToolCall,
         trace: TraceHandle | None,
+        timed_out_tools: list[str],
     ) -> tuple[str, ToolResult[Any] | None]:
         """Run one tool call.
 
@@ -340,38 +390,50 @@ class Orchestrator:
         try:
             result: ToolResult[Any]
             if tool_name == "get_demographics":
-                result = await self._demographics.fetch(
-                    patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                result = await self._call_with_retry(
+                    lambda: self._demographics.fetch(
+                        patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                    )
                 )
             elif tool_name == "get_active_medications":
-                result = await self._medications.fetch(
-                    patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                result = await self._call_with_retry(
+                    lambda: self._medications.fetch(
+                        patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                    )
                 )
             elif tool_name == "get_active_problems":
-                result = await self._problems.fetch(
-                    patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                result = await self._call_with_retry(
+                    lambda: self._problems.fetch(
+                        patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                    )
                 )
             elif tool_name == "get_active_allergies":
-                result = await self._allergies.fetch(
-                    patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                result = await self._call_with_retry(
+                    lambda: self._allergies.fetch(
+                        patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                    )
                 )
             elif tool_name == "get_recent_labs":
                 # since_days is optional; only forward when the model
                 # actually picked one so the PHP default applies otherwise.
                 raw_since = call.input.get("since_days")
                 since_days = raw_since if isinstance(raw_since, int) else None
-                result = await self._labs.fetch(
-                    patient_id=ctx.patient_id,
-                    raw_token=ctx.raw_token,
-                    since_days=since_days,
+                result = await self._call_with_retry(
+                    lambda: self._labs.fetch(
+                        patient_id=ctx.patient_id,
+                        raw_token=ctx.raw_token,
+                        since_days=since_days,
+                    )
                 )
             elif tool_name == "get_vitals_trend":
                 raw_since = call.input.get("since_days")
                 since_days = raw_since if isinstance(raw_since, int) else None
-                result = await self._vitals.fetch(
-                    patient_id=ctx.patient_id,
-                    raw_token=ctx.raw_token,
-                    since_days=since_days,
+                result = await self._call_with_retry(
+                    lambda: self._vitals.fetch(
+                        patient_id=ctx.patient_id,
+                        raw_token=ctx.raw_token,
+                        since_days=since_days,
+                    )
                 )
             elif tool_name == "get_recent_notes":
                 # Notes do per-record sensitivity gating internally —
@@ -379,9 +441,11 @@ class Orchestrator:
                 # and the gateway it was constructed with.
                 raw_since = call.input.get("since_days")
                 since_days = raw_since if isinstance(raw_since, int) else None
-                result = await self._notes.fetch(
-                    ctx=ctx,
-                    since_days=since_days,
+                result = await self._call_with_retry(
+                    lambda: self._notes.fetch(
+                        ctx=ctx,
+                        since_days=since_days,
+                    )
                 )
             elif tool_name == "search_notes":
                 raw_query = call.input.get("query")
@@ -400,11 +464,16 @@ class Orchestrator:
                 limit = raw_limit if isinstance(raw_limit, int) else None
                 raw_since = call.input.get("since_days")
                 since_days = raw_since if isinstance(raw_since, int) else None
-                result = await self._search_notes.fetch(
-                    ctx=ctx,
-                    query=raw_query,
-                    limit=limit,
-                    since_days=since_days,
+                # Bind validated locals so the lambda captures them
+                # rather than the loose ``raw_*`` names.
+                query_str: str = raw_query
+                result = await self._call_with_retry(
+                    lambda: self._search_notes.fetch(
+                        ctx=ctx,
+                        query=query_str,
+                        limit=limit,
+                        since_days=since_days,
+                    )
                 )
             else:
                 self._record_tool_call(
@@ -438,6 +507,14 @@ class Orchestrator:
             # Surface tool errors back to the model as structured payloads
             # rather than letting them crash the turn — the model can then
             # tell the user honestly that the lookup failed.
+            #
+            # Persistent timeouts also land in ``timed_out_tools`` so the
+            # orchestrator can append a degradation notice to the final
+            # reply. Any retry attempts are already done at this point —
+            # we're only here on a final failure.
+            error_type = classify_http_error(exc)
+            if error_type == "timeout" and tool_name not in timed_out_tools:
+                timed_out_tools.append(tool_name)
             self._record_tool_call(
                 trace,
                 tool_name=tool_name,
