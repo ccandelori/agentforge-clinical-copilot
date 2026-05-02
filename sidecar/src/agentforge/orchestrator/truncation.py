@@ -30,7 +30,7 @@ a one-line slot at the synthesis call site.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import tiktoken
 from pydantic import BaseModel
@@ -64,7 +64,7 @@ class SynthesisInputTruncator:
     # Each tool's list-shaped payload field (the one that gets shrunk
     # oldest-first). Tools missing from this map can only be kept whole
     # or dropped — they have no shrinkable list.
-    _LIST_FIELD_BY_TOOL: dict[str, str] = {
+    _LIST_FIELD_BY_TOOL: ClassVar[dict[str, str]] = {
         "get_active_problems": "problems",
         "get_active_medications": "medications",
         "get_active_allergies": "allergies",
@@ -142,6 +142,54 @@ class SynthesisInputTruncator:
         for name in eviction_order:
             if self.count_tool_results(out) <= max_tokens:
                 break
-            out.pop(name, None)
+
+            list_field = self._LIST_FIELD_BY_TOOL.get(name)
+            if list_field is None:
+                # No shrinkable list (e.g., demographics) — drop whole.
+                out.pop(name, None)
+                continue
+
+            # 45.3 — shrink the list one oldest item at a time. Stop
+            # when we either fit under the cap or run out of items.
+            while self.count_tool_results(out) > max_tokens:
+                shrunk = self._drop_oldest_one(out[name], list_field)
+                if shrunk is None:
+                    # List already empty — drop the whole entry.
+                    out.pop(name, None)
+                    break
+                out[name] = shrunk
+
+            # Clean up: if the cap-met condition fired right when we
+            # shrank to zero items, the entry remains with an empty
+            # list — strip it so the LLM doesn't see a no-op tool
+            # message.
+            if name in out:
+                items = getattr(out[name].payload, list_field)
+                if len(items) == 0:
+                    out.pop(name, None)
 
         return out
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _drop_oldest_one(
+        self,
+        result: ToolResult[Any],
+        list_field: str,
+    ) -> ToolResult[Any] | None:
+        """Return a new ToolResult with one item removed from the END of
+        the named list field. Returns ``None`` if the list is already
+        empty (signal to caller to drop the whole entry).
+
+        Lists are kept newest-first by convention across every fetcher,
+        so removing the END = dropping the oldest. ``ToolResult`` is
+        frozen, so we copy via Pydantic's ``model_copy``.
+        """
+        payload: BaseModel = result.payload
+        items: tuple[Any, ...] = getattr(payload, list_field)
+        if not items:
+            return None
+        new_payload = payload.model_copy(update={list_field: items[:-1]})
+        return result.model_copy(update={"payload": new_payload})

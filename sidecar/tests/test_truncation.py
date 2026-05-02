@@ -12,14 +12,11 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-import pytest
-
 from agentforge.orchestrator.truncation import SynthesisInputTruncator
 from agentforge.tools.demographics import DemographicsPayload, DemographicsResult
 from agentforge.tools.dtos import ToolResult, ToolResultMetadata
 from agentforge.tools.notes import NoteItem, NotesPayload, NotesResult
 from agentforge.tools.problems import ProblemItem, ProblemsPayload, ProblemsResult
-
 
 # ---------------------------------------------------------------------------
 # Subtask 45.1 — token counting
@@ -95,21 +92,26 @@ class TestPriorityDropTruncate:
         assert set(results.keys()) == before_keys
 
     def test_drops_lowest_priority_first(self) -> None:
-        """notes is lower priority than problems — drop notes first."""
+        """notes is lower priority than problems — evict notes first.
+
+        With 45.3 in effect, "evict" can mean shrink rather than drop;
+        we tighten the cap so notes have to shrink to zero (i.e. drop)
+        to honor the assertion that demographics + problems both stay.
+        """
         truncator = SynthesisInputTruncator()
         results: dict[str, ToolResult] = {
             "get_demographics": _demographics_result(),
             "get_active_problems": _problems_result(count=2),
             "get_recent_notes": _notes_result(count=30),  # bulky
         }
-        # Cap small enough to force dropping notes (the lowest priority)
-        # but big enough to keep demographics + problems.
         keep_size = truncator.count_tokens(
             results["get_demographics"].payload.model_dump_json()
         ) + truncator.count_tokens(
             results["get_active_problems"].payload.model_dump_json()
         )
-        out = truncator.truncate(results, max_tokens=keep_size + 50)
+        # Exact fit for demographics + problems; notes must shrink to 0
+        # and be dropped.
+        out = truncator.truncate(results, max_tokens=keep_size)
         assert "get_recent_notes" not in out
         assert "get_demographics" in out
         assert "get_active_problems" in out
@@ -142,9 +144,11 @@ class TestPriorityDropTruncate:
             "get_recent_notes": notes,
             "search_notes": search_results,
         }
-        # Force at least one drop. Cap = notes size only — search must go.
+        # Cap = notes intact + room for almost-no search. With 45.3,
+        # even a single search hit costs ~50+ tokens so a 10-token
+        # margin can't fit one — search must shrink to 0 then drop.
         notes_only = truncator.count_tokens(notes.payload.model_dump_json())
-        out = truncator.truncate(results, max_tokens=notes_only + 100)
+        out = truncator.truncate(results, max_tokens=notes_only + 10)
         assert "get_recent_notes" in out
         assert "search_notes" not in out
 
@@ -191,6 +195,110 @@ class TestPriorityDropTruncate:
         out = truncator.truncate(results, max_tokens=demo_size + 50)
         assert "get_demographics" in out
         assert "mystery_tool" not in out
+
+
+# ---------------------------------------------------------------------------
+# Subtask 45.3 — within-tool oldest-first shrink
+# ---------------------------------------------------------------------------
+
+
+class TestWithinToolShrink:
+    def test_notes_shrunk_oldest_first_not_dropped(self) -> None:
+        """When notes don't fit whole but partial would, shrink instead of drop."""
+        truncator = SynthesisInputTruncator()
+        notes = _notes_result(count=20)
+        results: dict[str, ToolResult] = {
+            "get_demographics": _demographics_result(),
+            "get_recent_notes": notes,
+        }
+        # Cap that fits demographics + ~5 notes but not all 20
+        demo_size = truncator.count_tokens(
+            results["get_demographics"].payload.model_dump_json()
+        )
+        single_note_estimate = truncator.count_tokens(
+            notes.payload.notes[0].model_dump_json()
+        )
+        # Allow demographics + ~5 notes worth of tokens
+        budget = demo_size + 5 * (single_note_estimate + 5)
+        out = truncator.truncate(results, max_tokens=budget)
+        assert "get_recent_notes" in out, "should have shrunk, not dropped"
+        kept = out["get_recent_notes"].payload.notes
+        assert 0 < len(kept) < 20, f"expected partial shrink, got {len(kept)}"
+
+    def test_shrink_keeps_newest_drops_oldest(self) -> None:
+        """After shrinking, the surviving notes are the newest (lowest index)."""
+        truncator = SynthesisInputTruncator()
+        # _notes_result generates ids in DESCENDING order (newest first)
+        notes = _notes_result(count=10)
+        original_first_id = notes.payload.notes[0].id
+        results: dict[str, ToolResult] = {"get_recent_notes": notes}
+        # Force shrink — tiny budget
+        single = truncator.count_tokens(notes.payload.notes[0].model_dump_json())
+        out = truncator.truncate(results, max_tokens=2 * single)
+        kept = out["get_recent_notes"].payload.notes
+        assert len(kept) >= 1
+        # First kept item must be the original first (newest)
+        assert kept[0].id == original_first_id
+
+    def test_demographics_dropped_wholly_when_over_cap_alone(self) -> None:
+        """Demographics has no list field — can only be kept whole or dropped."""
+        truncator = SynthesisInputTruncator()
+        demo = _demographics_result()
+        results: dict[str, ToolResult] = {"get_demographics": demo}
+        out = truncator.truncate(results, max_tokens=2)
+        assert "get_demographics" not in out
+
+    def test_search_shrunk_before_recent_notes_shrunk(self) -> None:
+        """search_notes is below recent_notes in PRIORITY — shrink it first."""
+        truncator = SynthesisInputTruncator()
+        from agentforge.tools.search_notes import (
+            SearchHit,
+            SearchNotesPayload,
+        )
+
+        notes = _notes_result(count=10)
+        search = ToolResult[SearchNotesPayload](
+            metadata=_meta("search_notes"),
+            payload=SearchNotesPayload(
+                results=tuple(
+                    SearchHit(
+                        id=i,
+                        source="pnote",
+                        date=f"2026-01-{(i % 28) + 1:02d}",
+                        title=f"Hit {i}",
+                        snippet="snip " * 25,
+                    )
+                    for i in range(15)
+                ),
+            ),
+        )
+        results: dict[str, ToolResult] = {
+            "get_recent_notes": notes,
+            "search_notes": search,
+        }
+        # Cap roomy enough for full notes + a couple of search hits
+        notes_full = truncator.count_tokens(notes.payload.model_dump_json())
+        out = truncator.truncate(results, max_tokens=notes_full + 100)
+        # notes either intact or only minorly shrunk; search aggressively shrunk
+        if "search_notes" in out:
+            assert len(out["search_notes"].payload.results) <= 3
+        if "get_recent_notes" in out:
+            # at least 8 of the 10 notes should remain (only minor shrink)
+            assert len(out["get_recent_notes"].payload.notes) >= 8
+
+    def test_emptied_list_drops_the_tool_entirely(self) -> None:
+        """When a tool has been shrunk to zero items, drop the whole entry."""
+        truncator = SynthesisInputTruncator()
+        results: dict[str, ToolResult] = {
+            "get_demographics": _demographics_result(),
+            "get_recent_notes": _notes_result(count=10),
+        }
+        demo_size = truncator.count_tokens(
+            results["get_demographics"].payload.model_dump_json()
+        )
+        # Cap fits demographics only — notes can't keep even one item
+        out = truncator.truncate(results, max_tokens=demo_size + 1)
+        assert "get_recent_notes" not in out
 
 
 # ---------------------------------------------------------------------------
