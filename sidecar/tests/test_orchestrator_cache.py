@@ -92,6 +92,7 @@ def _build(
         notes_fetcher=AsyncMock(),
         search_notes_fetcher=AsyncMock(),
         encounters_fetcher=AsyncMock(),
+        immunizations_fetcher=AsyncMock(),
         redis_storage=redis_storage,
         hmac_key=hmac_key,
     )

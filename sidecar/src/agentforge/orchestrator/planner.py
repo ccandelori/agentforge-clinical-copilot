@@ -131,6 +131,7 @@ TOOL_SELECTION_BY_USE_CASE: dict[UseCase, tuple[str, ...]] = {
         "get_recent_labs",
         "get_vitals_trend",
         "get_recent_encounters",
+        "get_immunizations",
         "get_recent_notes",
     ),
     UseCase.CONTRAINDICATION: (

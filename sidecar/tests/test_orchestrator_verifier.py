@@ -116,6 +116,7 @@ def _build_orchestrator(
         notes_fetcher=AsyncMock(),
         search_notes_fetcher=AsyncMock(),
         encounters_fetcher=AsyncMock(),
+        immunizations_fetcher=AsyncMock(),
         verifier_enabled=verifier_enabled,
     )
 
