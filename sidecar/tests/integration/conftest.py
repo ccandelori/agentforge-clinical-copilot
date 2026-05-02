@@ -214,3 +214,105 @@ async def authenticated_client(
         follow_redirects=False,
     ) as client:
         yield client
+
+
+# ---------------------------------------------------------------------
+# Patient context fixtures (Task 47.2)
+#
+# These build on the auth fixtures above. To exercise /agentforge/turn
+# end-to-end the request needs both a valid OpenEMR session AND a
+# patient context — the AgentProxyController returns 400 ("no patient
+# context") if $_SESSION['pid'] isn't set. OpenEMR sets pid when the
+# user navigates to patient_file/summary/demographics.php?set_pid=N,
+# so the integration tests do the same via the authenticated client.
+# ---------------------------------------------------------------------
+
+# Default demo patients available in the seeded dataset (see
+# scripts/seed/agentforge_demo_overlay.sql). Eula (pid=8) is the
+# complex chronic-condition patient; Alena (pid=4) is the sparse
+# patient. Tests pick whichever serves their scenario; defaulting
+# the list lets the fixtures gate gracefully when the demo seed
+# isn't loaded.
+DEFAULT_DEMO_PATIENT_IDS: Final[tuple[int, ...]] = (4, 8)
+
+
+@pytest.fixture(scope="session")
+def demo_patient_ids() -> tuple[int, ...]:
+    """Patient IDs known to exist in the demo seed.
+
+    Override via ``AGENTFORGE_INT_DEMO_PIDS`` (comma-separated) when
+    testing against a deployment with a different cohort.
+    """
+    raw = os.environ.get("AGENTFORGE_INT_DEMO_PIDS")
+    if not raw:
+        return DEFAULT_DEMO_PATIENT_IDS
+    parsed: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            parsed.append(int(part))
+    return tuple(parsed) if parsed else DEFAULT_DEMO_PATIENT_IDS
+
+
+async def _set_patient_context(
+    client: httpx.AsyncClient, pid: int
+) -> httpx.Response:
+    """Set the OpenEMR session's pid by visiting the demographics page.
+
+    The standard OpenEMR mechanism: any authenticated GET to
+    /interface/patient_file/summary/demographics.php?set_pid=N updates
+    $_SESSION['pid'] server-side for the rest of the session. The
+    response body is the rendered demographics page; we don't inspect
+    it here, but the test gets it back so it can verify the patient
+    name appears (defense against silently setting the wrong pid).
+    """
+    return await client.get(
+        "/interface/patient_file/summary/demographics.php",
+        params={"set_pid": pid},
+    )
+
+
+@pytest.fixture
+async def patient_context_factory(
+    authenticated_client: httpx.AsyncClient,
+):
+    """Return an async callable that sets patient context on the session.
+
+    Usage in tests::
+
+        async def test_something(patient_context_factory):
+            await patient_context_factory(8)
+            # Subsequent /agentforge/turn calls now have pid=8 server-side.
+
+    The factory returns the underlying httpx response so callers can
+    sanity-check (e.g. assert the response status was 200 — anything
+    else means the patient probably doesn't exist in the seed).
+    """
+
+    async def _set(pid: int) -> httpx.Response:
+        response = await _set_patient_context(authenticated_client, pid)
+        if response.status_code >= 400:
+            pytest.skip(
+                f"Could not set patient context for pid={pid} "
+                f"(status {response.status_code}); is the demo seed "
+                "loaded? Run scripts/seed/validate_seed.sh to check."
+            )
+        return response
+
+    return _set
+
+
+@pytest.fixture
+async def patient_context(
+    patient_context_factory,
+    demo_patient_ids: tuple[int, ...],
+) -> int:
+    """Default-context fixture: bind to the first demo patient.
+
+    For tests that don't care which patient as long as ONE patient is
+    bound. Returns the pid that was set so the test can refer to it
+    in assertions.
+    """
+    pid = demo_patient_ids[0]
+    await patient_context_factory(pid)
+    return pid
