@@ -99,3 +99,49 @@ class SynthesisInputTruncator:
         for result in results.values():
             total += self.count_tokens(result.payload.model_dump_json())
         return total
+
+    # ------------------------------------------------------------------
+    # 45.2 — priority-based whole-tool drop
+    # ------------------------------------------------------------------
+
+    def truncate(
+        self,
+        results: dict[str, ToolResult[Any]],
+        max_tokens: int,
+    ) -> dict[str, ToolResult[Any]]:
+        """Return a (possibly reduced) copy that fits under ``max_tokens``.
+
+        Pure function — never mutates the input dict or its
+        ``ToolResult`` instances.
+
+        Strategy at this stage (45.2): drop entire tool results, lowest
+        priority first. Tools not in ``PRIORITY`` are treated as having
+        priority below every known tool (defensive default — a new
+        tool wired in before ``PRIORITY`` is updated shouldn't crowd
+        out demographics).
+
+        Subtask 45.3 will extend this to *shrink* a tool's list-shaped
+        payload before dropping the whole thing — same priority order,
+        finer-grained budget control.
+        """
+        out = dict(results)  # shallow copy; ToolResult is frozen so safe
+        if self.count_tool_results(out) <= max_tokens:
+            return out
+
+        # Highest-priority tools are at the front of PRIORITY; we drop
+        # from the lowest-priority end first. Build the eviction order
+        # so unknown tools sort BEFORE any known tool (more aggressive
+        # eviction for things we don't have explicit policy for).
+        eviction_order: list[str] = []
+        unknown_tools = [name for name in out if name not in self.PRIORITY]
+        eviction_order.extend(unknown_tools)
+        for name in reversed(self.PRIORITY):
+            if name in out:
+                eviction_order.append(name)
+
+        for name in eviction_order:
+            if self.count_tool_results(out) <= max_tokens:
+                break
+            out.pop(name, None)
+
+        return out
