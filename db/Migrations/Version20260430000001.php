@@ -23,12 +23,12 @@ use Doctrine\Migrations\AbstractMigration;
  * access pattern for one of: lab orders, lab reports, vitals trends, patient
  * notes, and clinical notes.
  *
- * TODO(taskmaster #49): idx_procedure_report_date leads with the table's
- * PRIMARY KEY (procedure_report_id), which makes it redundant with the PK's
- * clustered index in InnoDB. Added here per the original task spec to keep
- * parity; re-evaluate post-MVP whether the index is ever selected by the
- * optimizer or whether dropping it is the correct move. See Task 49 for the
- * deferred analysis.
+ * Note: idx_procedure_report_date (added below) leads with the table's
+ * PRIMARY KEY and is redundant with the InnoDB clustered index. This was
+ * verified in Taskmaster Task 49 and the index is dropped in
+ * Version20260502193710. The CREATE statement is preserved here so the
+ * migration history still reproduces the schema state at the time it ran;
+ * a fresh-install path skips the index entirely via sql/database.sql.
  */
 final class Version20260430000001 extends AbstractMigration
 {
@@ -47,7 +47,10 @@ final class Version20260430000001 extends AbstractMigration
             . 'ADD INDEX `idx_procedure_order_patient_date` (`patient_id`, `date_ordered`)'
         );
 
-        // Lab report retrieval — see Task 49 for the redundancy note.
+        // Lab report retrieval. NOTE: this index is redundant with the
+        // table's PRIMARY KEY and gets dropped in Version20260502193710.
+        // It is preserved here so that re-running migrations from scratch
+        // reproduces the historical schema state.
         $this->addSql(
             'ALTER TABLE `procedure_report` '
             . 'ADD INDEX `idx_procedure_report_date` (`procedure_report_id`, `date_report`)'
