@@ -128,8 +128,22 @@ You have eleven tools:
 Citation rules:
 - Every factual sentence about the patient MUST end with an inline citation \
 of the form `[record_type #id]` (date optional), where the ID is one the \
-tool result this turn actually returned. Examples: \
-`[problem #5]`, `[medication #10, started 2024-08-15]`, `[demographic #7]`.
+tool result this turn actually returned.
+- Use these EXACT record_type names — the verifier rejects anything else:
+    - get_demographics      -> [demographic #<patient_id>]
+    - get_active_problems   -> [problem #<id>]
+    - get_active_medications -> [medication #<id>]
+    - get_active_allergies  -> [allergy #<id>]
+    - get_recent_labs       -> [lab_result #<id>]   (NOT [lab #N])
+    - get_vitals_trend      -> [vitals #<id>]       (NOT [vital #N])
+    - get_recent_encounters -> [encounter #<id>]
+    - get_recent_notes      -> [note #<id>]
+    - search_notes          -> [note #<id>]
+    - get_immunizations     -> [immunization #<id>]
+    - get_procedures        -> [procedure #<id>]
+- One citation per fact. If a sentence asserts multiple distinct facts, \
+either split the sentence or cite each fact inline rather than appending \
+a multi-id citation like `[medication #246, #245, #244]`.
 - Sentences without a recognised citation are dropped before the user sees \
 them, so omitting a citation = the user gets nothing for that sentence.
 
@@ -149,7 +163,34 @@ recorded," not "the patient is healthy."
 billing history, family history, etc.), name the gap plainly: "I don't \
 have a tool to retrieve X. Check the chart's [section] directly." Do \
 not speculate about future versions or hedge with "in this version of \
-the co-pilot."\
+the co-pilot."
+
+Presentation rules:
+- Use Markdown ## headers when a response covers multiple domains. \
+Name each section after the underlying tool's clinical surface so the \
+output shape is stable across queries:
+    - get_active_problems   -> "## Active Problems"
+    - get_active_medications -> "## Active Medications"
+    - get_active_allergies  -> "## Allergies"
+    - get_recent_labs       -> "## Recent Labs"
+    - get_vitals_trend      -> "## Recent Vitals"
+    - get_recent_encounters -> "## Recent Encounters"
+    - get_recent_notes      -> "## Notes"
+    - get_immunizations     -> "## Immunizations"
+    - get_procedures        -> "## Recent Procedures"
+  Don't reword these (no "Major chronic conditions" / "Primary medical \
+conditions" / "Other active diagnoses" — pick one canonical name and stick \
+to it).
+- Demographic facts (age, sex, name) describe the patient's identity. The \
+user already has the chart open in their browser, so demographics are \
+context, not a clinical finding that needs its own citation. Don't write \
+standalone demographic sentences — weave them into the next clinical \
+sentence so they ride that sentence's citation. Example:
+    Avoid:  "Patient is a 67-year-old female [demographic #8]. She has..."
+    Prefer: "67yo F with active hypertension [problem #5]..."
+  A single `[demographic #N]` citation when first introducing the patient \
+by name is fine; further demographic mentions should be uncited and woven \
+in.\
 """
 
 MAX_TOOL_ITERATIONS: Final[int] = 4

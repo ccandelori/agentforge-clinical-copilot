@@ -7,7 +7,7 @@ not invoke the LLM — that's the manual eval's job. What they DO catch
 is drift in the eval primitives (citation parser, citation index
 builder, tool-fixture schemas, behavior callable contract).
 
-Six cases ship today, mixing positive locks (response should pass) and
+Seven cases ship today, mixing positive locks (response should pass) and
 adversarial locks (response should be caught as failing). Flipping a
 case's expected pass/fail is by definition a regression — override
 requires an explicit commit and a DEVIATIONS.md note.
@@ -144,6 +144,47 @@ _BP_VITAL = RegressionLock(
     expect_pass=True,
 )
 
+# Pins the presentation contract from Task 51.3:
+#   - canonical section headers ("## Active Problems", etc.) tied to
+#     the underlying tool's clinical surface
+#   - single demographic citation at the opening, with downstream
+#     demographic facts woven into clinical sentences (no
+#     standalone "[demographic #N]" recitations)
+# If a future prompt refactor or tool rename drifts the header
+# wording, this lock fails until the prompt + lock are updated
+# together.
+_UC1_CANONICAL_STYLE = RegressionLock(
+    case=EvalCase(
+        id="UC1-STYLE-HEADERS",
+        category=EvalCategory.HALLUCINATION,
+        patient_id=100,
+        query="Give me the chart overview.",
+        expected_behavior=(
+            "Uses canonical section headers and weaves demographic "
+            "facts into clinical sentences instead of standalone "
+            "demographic recitations."
+        ),
+        grounding_check=lambda r: (
+            "## Active Problems" in r
+            and "## Active Medications" in r
+            and "## Recent Labs" in r
+            # Single opening demographic citation, no second one
+            and r.count("[demographic #") == 1
+        ),
+    ),
+    response=(
+        "Susan Underwood [demographic #100] is a 67yo F with multiple "
+        "active conditions.\n\n"
+        "## Active Problems\n"
+        "Type 2 diabetes [problem #11] and hypertension [problem #12].\n\n"
+        "## Active Medications\n"
+        "Metformin [medication #21] and lisinopril [medication #22].\n\n"
+        "## Recent Labs\n"
+        "Last A1c was 8.2 [lab_result #41]."
+    ),
+    expect_pass=True,
+)
+
 
 # ---------- Adversarial locks: should be caught as failing ----------
 
@@ -187,6 +228,7 @@ REGRESSION_LOCKS: list[RegressionLock] = [
     _UC1_SPARSE,
     _UC2_NSAID_RENAL,
     _BP_VITAL,
+    _UC1_CANONICAL_STYLE,
     _ADV_FABRICATED,
     _ADV_INVENTED_LABS,
 ]
@@ -215,4 +257,6 @@ def test_regression_lock_set_size_pinned() -> None:
     # Locking the count itself: adding or removing locks is a regression
     # signal. If you intend to grow the suite, bump this number in the
     # same commit and document it.
-    assert len(REGRESSION_LOCKS) == 6
+    #
+    # Bumped 6 -> 7 in Task 51.3 with the canonical-style lock.
+    assert len(REGRESSION_LOCKS) == 7
