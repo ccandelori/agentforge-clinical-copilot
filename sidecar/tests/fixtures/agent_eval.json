@@ -1,0 +1,182 @@
+{
+  "_about": "Agent-eval fixtures. Two synthetic patient phenotypes for the regression locks: a complex chronic patient (100) and a sparse new patient (200). Hand-authored so we don't depend on a populated demo DB to capture against; the schemas mirror each tool's typed Pydantic payload exactly.",
+  "patients": {
+    "100": {
+      "_label": "Susan Complex (chronic, multimorbid)",
+      "demographics": {
+        "patient_id": 100,
+        "given_name": "Susan",
+        "family_name": "Underwood",
+        "date_of_birth": "1958-03-12",
+        "sex": "F",
+        "preferred_language": "en-US"
+      },
+      "problems": {
+        "problems": [
+          {
+            "id": 11,
+            "title": "Type 2 Diabetes Mellitus",
+            "diagnosis": "ICD10:E11.9",
+            "begin_date": "2014-06-22"
+          },
+          {
+            "id": 12,
+            "title": "Essential Hypertension",
+            "diagnosis": "ICD10:I10",
+            "begin_date": "2010-09-01"
+          },
+          {
+            "id": 13,
+            "title": "Chronic Kidney Disease, stage 3",
+            "diagnosis": "ICD10:N18.30",
+            "begin_date": "2021-01-15"
+          }
+        ]
+      },
+      "medications": {
+        "medications": [
+          {
+            "id": 21,
+            "name": "Metformin 500 mg",
+            "begin_date": "2014-07-01",
+            "end_date": null
+          },
+          {
+            "id": 22,
+            "name": "Lisinopril 10 mg",
+            "begin_date": "2010-09-15",
+            "end_date": null
+          }
+        ]
+      },
+      "allergies": {
+        "allergies": [
+          {
+            "id": 31,
+            "name": "Penicillin",
+            "reaction": "Rash",
+            "severity": "moderate",
+            "begin_date": null,
+            "end_date": null
+          }
+        ]
+      },
+      "labs": {
+        "labs": [
+          {
+            "id": 41,
+            "order_id": 410,
+            "report_id": 4100,
+            "test_code": "4548-4",
+            "test_name": "Hemoglobin A1c",
+            "value": "8.2",
+            "units": "%",
+            "reference_range": "4.0 - 5.6",
+            "abnormal": "high",
+            "date": "2026-04-15"
+          },
+          {
+            "id": 42,
+            "order_id": 410,
+            "report_id": 4100,
+            "test_code": "2160-0",
+            "test_name": "Creatinine",
+            "value": "1.6",
+            "units": "mg/dL",
+            "reference_range": "0.6 - 1.2",
+            "abnormal": "high",
+            "date": "2026-04-15"
+          }
+        ]
+      },
+      "vitals": {
+        "vitals": [
+          {
+            "id": 51,
+            "date": "2026-04-15 10:30:00",
+            "systolic": 142,
+            "diastolic": 88,
+            "pulse": 78.0,
+            "respiration": 16.0,
+            "temperature": 98.4,
+            "temp_method": "oral",
+            "oxygen_saturation": 97.0,
+            "height": 64.0,
+            "weight": 168.0,
+            "bmi": 28.8,
+            "bmi_status": "overweight",
+            "note": null
+          }
+        ]
+      },
+      "notes": {
+        "notes": [
+          {
+            "id": 61,
+            "source": "clinical_note",
+            "date": "2026-04-15 00:00:00",
+            "author": "dr.adams",
+            "title": "Diabetes follow-up",
+            "body": "A1c trending up. Reinforced metformin adherence. Counseled on diet.",
+            "note_type": "progress",
+            "permission_denied": false
+          }
+        ]
+      },
+      "search_notes": {
+        "diabetes": [
+          {
+            "id": 61,
+            "source": "clinical_note",
+            "date": "2026-04-15 00:00:00",
+            "title": "Diabetes follow-up",
+            "snippet": "A1c trending up. Reinforced metformin adherence. Counseled on diet.",
+            "score": 2.4,
+            "permission_denied": false
+          }
+        ],
+        "renal": [
+          {
+            "id": 62,
+            "source": "pnote",
+            "date": "2026-03-10 09:15:00",
+            "title": "Renal status note",
+            "snippet": "Stage 3 CKD; eGFR 48. NSAIDs contraindicated.",
+            "score": 1.9,
+            "permission_denied": false
+          }
+        ]
+      }
+    },
+    "200": {
+      "_label": "Alex Sparse (newly registered, minimal record)",
+      "demographics": {
+        "patient_id": 200,
+        "given_name": "Alex",
+        "family_name": "Newman",
+        "date_of_birth": "1990-08-20",
+        "sex": "M",
+        "preferred_language": "en-US"
+      },
+      "problems": {
+        "problems": []
+      },
+      "medications": {
+        "medications": []
+      },
+      "allergies": {
+        "allergies": []
+      },
+      "labs": {
+        "labs": []
+      },
+      "vitals": {
+        "vitals": []
+      },
+      "notes": {
+        "notes": []
+      },
+      "search_notes": {}
+    }
+  }
+}
