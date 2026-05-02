@@ -1,0 +1,86 @@
+# AgentForge sidecar dev stack.
+#
+# Adds the Python sidecar as a sibling service alongside the
+# development-easy compose project. Reuses the redis and langfuse
+# instances from development-easy (no double-running) by joining
+# its default bridge network as external.
+#
+# Boot order:
+#   1. cd docker/development-easy && docker compose up --detach --wait
+#      (this brings up openemr, mysql, phpmyadmin, redis, langfuse)
+#   2. cd docker/agent && docker compose up --build
+#      (this builds + boots the sidecar against the dev-easy network)
+#
+# Fresh-clone smoke test from the repo root:
+#   ./docker/agent/up.sh   (TODO if we ever script the two-stack boot)
+#
+# See docker/agent/README.md for the full setup walkthrough.
+
+services:
+  # Sidecar's session memory + tool result cache. Named to match
+  # production (the droplet runs `agentforge-redis`) so REDIS_URL is
+  # environment-independent. Internal-only — no host port mapping.
+  agentforge-redis:
+    container_name: agentforge-redis
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - openemr-dev
+
+  agent-sidecar:
+    container_name: agentforge-sidecar
+    build:
+      context: ../../sidecar
+      dockerfile: Dockerfile
+    # Bound to 127.0.0.1 so the dev container is never reachable off-host.
+    # OpenEMR's AgentProxyController forwards to http://agentforge-sidecar:8000
+    # via the shared docker network; the published host port is purely for
+    # local curl/wget smoke testing.
+    ports:
+      - "127.0.0.1:${AGENT_SIDECAR_PORT:-8400}:8000"
+    env_file:
+      - .env
+    environment:
+      # Defaults for the dev stack — override in .env if needed. These are
+      # the ones the sidecar's pydantic-settings actually requires; the
+      # rest come from .env.
+      LLM_PROVIDER: claude
+      OPENEMR_BASE_URL: ${OPENEMR_BASE_URL:-http://openemr:80}
+      REDIS_URL: ${REDIS_URL:-redis://agentforge-redis:6379/0}
+    depends_on:
+      agentforge-redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - openemr-dev
+
+# Joins the external network created by docker/development-easy.
+# That network is named after the compose project (development-easy)
+# plus _default. If you renamed the dev-easy compose project, override
+# AGENT_DEV_NETWORK to match.
+networks:
+  openemr-dev:
+    name: ${AGENT_DEV_NETWORK:-development-easy_default}
+    external: true
+
+volumes:
+  redis-data: {}
