@@ -160,10 +160,77 @@ What it does NOT give us:
 The seed is fit for **demo + regression-lock eval**. It is **not**
 fit for **research-grade clinical-decision-support evaluation**.
 
+## CCDA importer probe — 2026-05-02 (subtask 50.2)
+
+OpenEMR ships a Symfony console command for single-shot CCDA import:
+
+```bash
+docker exec development-easy-openemr-1 \
+  php /var/www/localhost/htdocs/openemr/bin/console \
+  openemr:ccda-newpatient-import \
+  --document=/tmp/synthea-test.xml --site=default
+```
+
+(Source: `src/Common/Command/CcdaNewpatientImport.php`. Calls into the
+Carecoordination module's `CarecoordinationTable::importNewPatient()`
+which lives at
+`interface/modules/zend_modules/module/Carecoordination/`.)
+
+**Don't pass `--debug`** — debug mode is interactive and prompts
+per-immunization, which deadlocks any non-TTY pipeline. Non-debug
+runs through silently.
+
+### Coverage on a single Synthea CCDA (Andrea7 Schumm995, 68 y/o, 46 encounters)
+
+| Table | Rows | Date range | Notes |
+|---|---|---|---|
+| `form_encounter` | **46** | 1975 → 2026-01-07 | Recent encounters within 365-day window ✅ |
+| `lists` (medical_problem) | **38** | 1975 → 2025-12-24 | ✅ |
+| `lists` (medication) | **8** | 2015 → 2023-09-08 | ⚠ Latest med is >2 years old; may not appear as "active" |
+| `lists` (allergy) | 0 | — | Source patient has no allergies; not an importer gap |
+| `form_vitals` | **1** | 2016-11-02 only | ⚠ Source CCDA had 62 vital observations; importer only kept 1 |
+| `immunizations` | 15 | — | ✅ |
+| `procedure_order` | 170 | — | ✅ |
+| `procedure_report` | 19 | 2016 → 2025-12-31 | ✅ |
+| `procedure_result` | 267 | — | ✅ ~14 results per report (lab panels) |
+| **`pnotes`** | **0** | — | ❌ Expected — CCDA has no notes |
+| **`form_clinical_notes`** | **0** | — | ❌ Expected — CCDA has no notes |
+
+### Gaps to address downstream
+
+1. **Notes** (`pnotes` / `form_clinical_notes`): CCDA path leaves
+   these empty. We need a FHIR DocumentReference loader. Two
+   plausible paths — defer choice to subtask 50.3:
+   - (a) OpenEMR FHIR R4 server's POST endpoint (respects OAuth2,
+     validation; requires OAuth2 client setup).
+   - (b) Custom Python loader that parses the FHIR bundle and
+     INSERTs into `pnotes` / `form_clinical_notes` directly via
+     mariadb (faster spike, bypasses validation).
+2. **Vitals are over-collapsed** by the importer (62 source
+   observations → 1 row). For the vitals trend demo this is too
+   sparse. Options: (a) accept and supplement with hand-crafted
+   vitals overlay, (b) extend the FHIR loader to also write vitals
+   from FHIR Observation resources. Defer to 50.3.
+3. **Medication recency** depends on Synthea's individual patient
+   profiles. With ~20 patients we expect a mix; some will have
+   currently-active meds, some won't. Acceptable for the demo.
+4. **Allergies** are patient-specific in Synthea — sample patient
+   had none. With ~20 patients we expect roughly half to have at
+   least one allergy. Validate post-batch.
+
+### Subtask 50.2 verdict
+
+Built-in CCDA import path works and covers 8 of 11 target tables
+robustly. Notes are the only structural gap (expected from subtask
+50.1's CCDA / FHIR analysis). Vitals over-collapse is a quality
+concern, not a correctness blocker. Proceed to 50.3 (batch import)
+with an extended scope to also wire a FHIR DocumentReference loader
+for notes.
+
 ## TODO (downstream subtasks)
 
-- 50.2 — OpenEMR CCDA importer probe (which tables actually populate?)
-- 50.3 — Generate ~20 patients, batch import
+- 50.3 — Generate ~20 patients, batch import. **Extended scope:**
+  also wire a FHIR DocumentReference loader (option a or b above).
 - 50.4 — Hand-crafted SQL note overlay for designated demo patients
 - 50.5 — `scripts/validate_seed_data.sql` post-import audit
 - 50.6 — Realign eval fixtures + finalize this doc
