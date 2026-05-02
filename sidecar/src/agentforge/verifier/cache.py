@@ -42,6 +42,7 @@ _KNOWN_TOOLS: dict[str, _ToolDescriptor] = {
     "get_vitals_trend": ("vitals", "vitals", "id"),
     "get_recent_encounters": ("encounter", "encounters", "id"),
     "get_immunizations": ("immunization", "immunizations", "id"),
+    "get_procedures": ("procedure", "procedures", "id"),
 }
 
 

@@ -105,6 +105,7 @@ def _build(*, llm: AsyncMock, problems: AsyncMock) -> Orchestrator:
         search_notes_fetcher=AsyncMock(),
         encounters_fetcher=AsyncMock(),
         immunizations_fetcher=AsyncMock(),
+        procedures_fetcher=AsyncMock(),
         timeout_policy=TimeoutPolicy(per_tool=10.0),
         retry_policy=RetryPolicy(),
         sleep=_no_sleep,

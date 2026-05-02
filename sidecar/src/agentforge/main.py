@@ -49,6 +49,7 @@ from agentforge.tools.labs import LabsFetcher
 from agentforge.tools.medications import MedicationsFetcher
 from agentforge.tools.notes import NotesFetcher
 from agentforge.tools.problems import ProblemsFetcher
+from agentforge.tools.procedures import ProceduresFetcher
 from agentforge.tools.search_notes import SearchNotesFetcher
 from agentforge.tools.vitals import VitalsFetcher
 from agentforge.verifier import DomainConstraints
@@ -130,6 +131,7 @@ def create_app(
     search_notes_fetcher: SearchNotesFetcher | None = None,
     encounters_fetcher: EncountersFetcher | None = None,
     immunizations_fetcher: ImmunizationsFetcher | None = None,
+    procedures_fetcher: ProceduresFetcher | None = None,
     breakglass_audit: BreakglassAuditTool | None = None,
     redis_storage: AgentRedisClient | None = None,
     langfuse_client: LangfuseClient | None = None,
@@ -216,6 +218,9 @@ def create_app(
     immunizations = immunizations_fetcher or ImmunizationsFetcher(
         base_url=settings.openemr_base_url,
     )
+    procedures = procedures_fetcher or ProceduresFetcher(
+        base_url=settings.openemr_base_url,
+    )
     breakglass = breakglass_audit or BreakglassAuditTool(
         base_url=settings.openemr_base_url,
     )
@@ -233,6 +238,7 @@ def create_app(
         search_notes_fetcher=search_notes,
         encounters_fetcher=encounters,
         immunizations_fetcher=immunizations,
+        procedures_fetcher=procedures,
         breakglass_audit=breakglass,
         domain_constraints=DomainConstraints(),
         verifier_enabled=settings.verifier_enabled,

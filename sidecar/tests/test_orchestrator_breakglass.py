@@ -62,6 +62,7 @@ def _build(
         search_notes_fetcher=AsyncMock(),
         encounters_fetcher=AsyncMock(),
         immunizations_fetcher=AsyncMock(),
+        procedures_fetcher=AsyncMock(),
         breakglass_audit=breakglass_audit,
     )
 
