@@ -415,7 +415,44 @@ against the matching note row.
 All readings carry `user = 'agentforge-overlay'` so they can be
 distinguished from the single Synthea-imported vital per patient.
 
+## Validation — 2026-05-02 (subtask 50.5)
+
+`scripts/seed/validate_seed_data.sql` runs after the seed pipeline
+completes and asserts:
+
+- **Overlay loaded** — `>=6` pnotes + `>=10` form_vitals tagged
+  `user='agentforge-overlay'`.
+- **Demo patient shape** — pid=4 / pid=8 each have their expected
+  overlay row counts; pid=8 has the two SUD-prefixed notes that
+  exercise `substance_abuse_cfr42`.
+- **Coverage thresholds** — `>=100` pnotes total (proves the FHIR
+  loader ran), `>=20` recent encounters, `>=500` lab results.
+- **Hygiene** — zero NULL encounter dates, zero orphaned `lists` /
+  `pnotes` / `form_encounter` rows whose pid is missing from
+  `patient_data`.
+
+Fourteen checks total. The wrapper `scripts/seed/validate_seed.sh`
+runs the SQL inside the dev mysql container, color-codes output,
+and exits non-zero if any check shows violations — slottable into
+CI. Run via:
+
+```bash
+./scripts/seed/validate_seed.sh
+# 14 checks — all pass on a clean seeded DB
+```
+
+### What the validation does NOT cover
+
+Cross-table clinical-coherence assertions (e.g. "every diabetes
+problem co-occurs with an A1c lab and a diabetes-class medication")
+were dropped from scope. Synthea's CCDA encodes problems via SNOMED
+(`lists.diagnosis = 'SNOMED-CT:44054006'`), but lab orders and
+medications use ICD/CPT/RxNorm in separate tables — cross-system
+matching is fragile and produces false negatives more often than
+real bugs. We accept Synthea's population-level coherence
+(documented in MITRE's modules) at face value rather than
+re-validating it via SQL.
+
 ## TODO (downstream subtasks)
 
-- 50.5 — `scripts/validate_seed_data.sql` post-import audit
 - 50.6 — Realign eval fixtures + finalize this doc
