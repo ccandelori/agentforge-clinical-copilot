@@ -146,6 +146,34 @@
             "permission_denied": false
           }
         ]
+      },
+      "encounters": {
+        "encounters": [
+          {
+            "id": 71,
+            "date": "2026-04-15 10:30:00",
+            "reason": "Follow-up: diabetes",
+            "encounter_type": "Office Visit",
+            "class_code": "AMB",
+            "provider_id": 12,
+            "provider_name": "dr.adams",
+            "sensitivity": null,
+            "encounter_category": 5,
+            "permission_denied": false
+          },
+          {
+            "id": 72,
+            "date": "2026-03-10 09:00:00",
+            "reason": "Annual physical",
+            "encounter_type": "Wellness Visit",
+            "class_code": "AMB",
+            "provider_id": 12,
+            "provider_name": "dr.adams",
+            "sensitivity": null,
+            "encounter_category": 5,
+            "permission_denied": false
+          }
+        ]
       }
     },
     "200": {
@@ -176,7 +204,10 @@
       "notes": {
         "notes": []
       },
-      "search_notes": {}
+      "search_notes": {},
+      "encounters": {
+        "encounters": []
+      }
     }
   }
 }

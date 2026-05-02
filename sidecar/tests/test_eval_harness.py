@@ -47,6 +47,7 @@ async def _all_tool_results(
         "get_active_allergies": await layer.get_active_allergies(ctx),
         "get_recent_labs": await layer.get_recent_labs(ctx),
         "get_vitals_trend": await layer.get_vitals_trend(ctx),
+        "get_recent_encounters": await layer.get_recent_encounters(ctx),
     }
 
 

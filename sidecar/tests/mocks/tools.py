@@ -30,6 +30,11 @@ from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.tools.allergies import AllergiesPayload, AllergiesResult
 from agentforge.tools.demographics import DemographicsPayload, DemographicsResult
 from agentforge.tools.dtos import ToolResultMetadata
+from agentforge.tools.encounters import (
+    EncounterItem,
+    EncountersPayload,
+    EncountersResult,
+)
 from agentforge.tools.labs import LabsPayload, LabsResult
 from agentforge.tools.medications import MedicationsPayload, MedicationsResult
 from agentforge.tools.notes import NoteItem, NotesPayload, NotesResult
@@ -188,6 +193,20 @@ class MockToolLayer:
         return NotesResult(
             metadata=self._meta("get_recent_notes", "openemr.notes"),
             payload=NotesPayload(notes=items),
+        )
+
+    async def get_recent_encounters(
+        self,
+        ctx: RequestContext,
+        since_days: int | None = None,
+    ) -> EncountersResult:
+        data = self._patient_data(ctx.patient_id)
+        raw = data.get("encounters", {"encounters": []})
+        encs_raw = raw.get("encounters", [])
+        items = tuple(EncounterItem.model_validate(e) for e in encs_raw)
+        return EncountersResult(
+            metadata=self._meta("get_recent_encounters", "openemr.encounters"),
+            payload=EncountersPayload(encounters=items),
         )
 
     async def search_notes(
