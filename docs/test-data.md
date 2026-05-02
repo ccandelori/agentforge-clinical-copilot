@@ -227,10 +227,126 @@ concern, not a correctness blocker. Proceed to 50.3 (batch import)
 with an extended scope to also wire a FHIR DocumentReference loader
 for notes.
 
+## Production seed — 2026-05-02 (subtask 50.3)
+
+### Generation
+
+```bash
+cd ~/Desktop/Gauntlet/synthea
+./run_synthea -p 20 \
+  --exporter.ccda.export=true \
+  --exporter.fhir.export=true \
+  --exporter.baseDirectory=./output_20patients
+# Records: total=25, alive=20, dead=5  (Synthea includes deceased
+# patients to populate historical context — all 25 export OK.)
+```
+
+### CCDA batch import (structured data)
+
+```bash
+docker exec development-easy-openemr-1 mkdir -p /tmp/synthea-batch
+docker cp ~/Desktop/Gauntlet/synthea/output_20patients/ccda/. \
+  development-easy-openemr-1:/tmp/synthea-batch/
+docker exec development-easy-openemr-1 sh -c '
+  cd /var/www/localhost/htdocs/openemr
+  for f in /tmp/synthea-batch/*.xml; do
+    php bin/console openemr:ccda-newpatient-import \
+      --document="$f" --site=default >/dev/null 2>&1 \
+      && echo "ok: $(basename $f)" \
+      || echo "FAIL: $(basename $f)"
+  done
+'
+# 25/25 imported in ~3 min, 0 failures.
+```
+
+### FHIR DocumentReference loader (notes)
+
+CCDA has no notes; FHIR's DocumentReference resources do. Path chosen:
+**custom Python loader directly to MariaDB**, not OpenEMR's FHIR
+server POST endpoint. Reasons:
+
+1. The loader is one-shot seed tooling, not a recurring runtime
+   integration. Bypassing OAuth2 + FHIR validation is fine for seed.
+2. Faster to spike. We control exactly which pnotes columns get
+   filled.
+3. We can iterate on idempotency / dedup logic without re-deploying
+   anything.
+
+```bash
+uv run scripts/seed/load_synthea_notes.py \
+  --fhir-dir ~/Desktop/Gauntlet/synthea/output_20patients/fhir
+# matched=25  missing_pid=0  inserted=880  skipped_existing=2
+```
+
+The script is idempotent on `(pid, date, title)` — re-runs are safe.
+Notes go into `pnotes` only (not `form_clinical_notes`); the agent's
+`NotesRepository` UNIONs both tables, so one is sufficient for the
+demo. `form_clinical_notes` requires a parent encounter linkage via
+the `forms` table that doesn't fall out cleanly from FHIR
+DocumentReference shape.
+
+### Patient name matching gotcha
+
+OpenEMR's CCDA importer stores Synthea's patient names inconsistently:
+
+- Patients with one given name → `fname = "Andrea7"`
+- Patients with multiple given names → `fname = "Kandi717 Maryellen651"`
+  (full space-joined string)
+
+The loader tries both candidates per FHIR Patient resource and falls
+back to the second if the first misses. All 25 patients matched on
+the second dry-run.
+
+### Final cohort counts
+
+| Table | Rows | Within last 365d | Notes |
+|---|---|---|---|
+| `patient_data` | 25 (+3 demo) | n/a | 5 deceased, 20 alive |
+| `form_encounter` | 882 | (most recent goes to 2026-04-28) | avg 35/patient |
+| `lists` (problem) | 720 | n/a | |
+| `lists` (medication) | 133 | mixed | some patients have currently-active meds, some don't |
+| `lists` (allergy) | 33 | n/a | ~half the patients have ≥1 allergy |
+| `form_vitals` | 25 | mostly old | 1 row/patient — importer collapses (known) |
+| `immunizations` | 348 | mixed | |
+| `procedure_result` | 3,341 | recent OK | ~14 per report (lab panels) |
+| **`pnotes`** | **880** | **73** | populated by the FHIR loader |
+| `form_clinical_notes` | 0 | — | not loaded; UNION in NotesRepository covers via pnotes |
+
+### Designated demo patients
+
+Picked from the cohort by data richness, lining up with the
+eval-fixture phenotype labels:
+
+- **pid=8 — Eula461 Crist667, 53F** — *complex chronic*. 16 recent
+  encounters, 55 problems, 13 meds, 11 allergies, 16 recent notes.
+  Replaces Susan Underwood (pid=2) as the eval's complex-chronic
+  exemplar. **Susan stays in the DB** for backward-compat with the
+  old smoke-test scripts.
+- **pid=4 — Alena861 Marquardt819, 35F** — *sparse but active*. 1
+  recent encounter, 17 problems, 0 meds, 0 allergies, 1 recent note.
+  Replaces "Alex Newman" (pid=200, eval-fixture-only) as the sparse
+  exemplar.
+
+These are the patients the hand-crafted SQL overlay (subtask 50.4)
+will target.
+
+### What's still weak
+
+- **Vitals** — 1 reading per patient is not a "trend." `get_vitals_trend`
+  will return 1 datapoint per patient. Worth supplementing later
+  via either (a) extending the FHIR loader to also read Observation
+  resources for vital-sign LOINC codes, or (b) hand-crafted vitals
+  overlay in the same SQL fixture as 50.4.
+- **`form_clinical_notes`** — empty by design (see above). Means we
+  can't demo a clinical-notes / pnotes split, but the
+  `get_recent_notes` tool returns a unified list anyway.
+
 ## TODO (downstream subtasks)
 
-- 50.3 — Generate ~20 patients, batch import. **Extended scope:**
-  also wire a FHIR DocumentReference loader (option a or b above).
-- 50.4 — Hand-crafted SQL note overlay for designated demo patients
+- 50.4 — Hand-crafted SQL note overlay for pid=8 and pid=4 covering
+  sensitivity edge cases (psych_intake, attending_only) plus
+  FULLTEXT-search-target terms. **Extended scope:** consider
+  adding hand-crafted vitals readings for both demo patients to
+  give `get_vitals_trend` a real trend.
 - 50.5 — `scripts/validate_seed_data.sql` post-import audit
 - 50.6 — Realign eval fixtures + finalize this doc
