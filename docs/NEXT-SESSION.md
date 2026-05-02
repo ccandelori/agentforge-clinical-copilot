@@ -1,306 +1,300 @@
-# Where we left off — 2026-05-02
+# Where we left off — 2026-05-02 (late session)
 
 Read me first when picking the project back up. Update or delete me when
 the state captured here goes stale.
 
-## What shipped this session (huge run — 11 Taskmaster tasks + 1 carryforward fix)
+## What shipped this session (long run — 3 Taskmaster tasks + 3 live bug fixes + droplet ops)
 
-TaskMaster: **28/49 → 39/49 (80%)**.
+TaskMaster: **39/49 → 42/51 (82%)** — added two new tasks (50 + 51),
+finished three parent tasks (27 + 45 + 50).
 
 ```
-Notes vertical (PHP + Python, parallel sub-agent on PHP):
-  23  PHP recent_notes endpoint (UNION pnotes + form_clinical_notes)
-  22  Python get_recent_notes tool adapter (per-record sensitivity gating)
-  25  PHP notes_search endpoint (FULLTEXT MATCH AGAINST)
-  24  Python search_notes tool adapter (gating + empty-query short-circuit)
+Synthetic test data + seed pipeline (Task 50, 6 subtasks):
+  50.1  Synthea v4.0.0 install + spike (CCDA + FHIR R4 output)
+  50.2  OpenEMR CCDA importer probe — 8/11 tables populate cleanly,
+        notes need separate path
+  50.3  Production seed: 25 patients via openemr:ccda-newpatient-import
+        + scripts/seed/load_synthea_notes.py (FHIR DocumentReference
+        loader, 880 notes via SSH-tunneled mariadb on droplet)
+  50.4  scripts/seed/agentforge_demo_overlay.sql — hand-crafted notes
+        + vitals trend for pid=8 Eula (complex chronic) and pid=4
+        Alena (sparse). Demoes substance_abuse_cfr42 sensitivity
+        gating via SUD: title prefix.
+  50.5  scripts/seed/validate_seed_data.sql + validate_seed.sh —
+        14-check post-import audit, all green local + droplet
+  50.6  Eval-fixture decoupling docs (intentionally separate pids
+        from live DB; phenotype-level testing only)
 
-Reliability:
-  41  TimeoutPolicy + RetryPolicy + retry_with_policy + orchestrator wiring
-      (transient 503/504/timeout/network retry; degradation notice)
-  34  Breakglass audit (Python BreakglassAuditTool + PHP log_breakglass.php
-      + DEVIATIONS for in-memory dedup vs Redis SETNX)
+Synthesis input truncator (Task 45, 3 subtasks):
+  45.1  tiktoken-backed token counting (count_tokens, count_tool_results)
+  45.2  Priority-based whole-tool drop with PRIORITY tuple +
+        eviction order (unknown tools sort lowest)
+  45.3  Within-tool oldest-first shrink via Pydantic model_copy on
+        list-shaped payloads. Empty-list cleanup edge case fixed.
+  Note: utility is COMPLETE but NOT WIRED into Orchestrator.turn() —
+  same pattern as Task 41 (timeouts).
 
-Eval framework (sequential, solo):
-  37  EvalHarness (programmatic grounding + behavior callable)
-  38  MockToolLayer + agent_eval.json fixtures (8 tools + later extended to 9)
-  39  Regression-lock suite (6 canonical (response, case) triples, locked
-      against the eval primitives)
+Planner agent (Task 27, 3 subtasks):
+  27.1  UseCase StrEnum (4 cases) + PlannedToolCall + Plan model
+        with bijection invariant on tool_calls <-> parallel_batches
+  27.2  TOOL_SELECTION_BY_USE_CASE static rules + default_plan_for()
+        fallback (DEFAULT_BATCH_SIZE=4)
+  27.3  Planner class with submit_plan tool-use forced JSON output,
+        graceful fallback to default_plan_for(ADMIT_SYNTHESIS) on
+        validation failure or no-tool-call response
+  Note: also COMPLETE but NOT WIRED — Orchestrator.turn() doesn't
+  call Planner yet. DEVIATIONS.md captures the LangGraph-deferred
+  rationale.
 
-Ops + tooling:
-  44  scripts/configure_api_logging.php — REFRAMED (spec wanted a
-      users.api_log_option column that doesn't exist; shipped a global-
-      setter instead)
-  21  Encounters tool — Python + PHP, parallel sub-agent. Spec wanted
-      FHIR Encounter endpoint; shipped custom internal endpoint
-      (matches every other AgentForge tool). MockToolLayer now covers 9/9.
+Live bug fixes during smoke testing the seeded cohort:
+  *  fix(deploy): poll sidecar /health to absorb container startup
+     race (commit 1a7947831) — wget retry loop replaces single-shot
+     check; verified live on the next deploy at +6s.
+  *  fix(agentforge): cast DATETIME date columns to DATE in 4
+     repositories (commit 85b142f8a) — pid=8's "what are the
+     patient's medical problems?" returned 503 because Pydantic
+     rejected MariaDB DATETIME strings on Synthea-imported lists
+     rows. SQL-layer DATE() cast is now the wire-format contract.
+  *  fix(agentforge): bump proxy idle timeout 8s -> 30s (commit
+     af9443cb4) — bulky synthesis on 55-row problem list exceeded
+     the prior 8s; can come back down once the truncator wires in.
+  *  fix(agentforge): clinically relevant problem list — drop
+     SNOMED (situation) admin codes, dedup by SNOMED code (commit
+     ee4a67c24). pid=8 Eula: 55 raw -> 25 distinct conditions.
 
-Carryforward fix (from prior session's open issues list):
-  *   Umbrella JwtException catch backported to 5 older controllers
-      (Allergies, Demographics, Medications, Problems, Vitals). Was
-      catching only RequiredConstraintsViolated | RuntimeException —
-      missed InvalidTokenStructure. Vitals' malformed-bearer test was
-      actually failing all session, hidden by --exclude-filter Vitals.
-      Same commit fixed pre-existing phpcs file-header docblock nits
-      on those 5 files. Commit a40b440fe.
+Droplet operational cleanup:
+  *  Seed pipeline pushed to droplet (matches local cohort exactly).
+  *  Stopped 4 parasitic upstream containers (selenium, couchdb,
+     openldap, mailpit). Sidecar CPU dropped 44% -> 0.2% (it had
+     been queue-waiting behind selenium for weeks).
+  *  Removed duplicate `pagentforge-redis` (leftover from earlier
+     deploy).
+  *  Droplet now runs exactly 5 containers — see docs/DEPLOYMENT.md
+     "DO NOT restart casually" section.
+
+Memories saved this session:
+  *  project_synthea_location.md — `~/Desktop/Gauntlet/synthea/`
+  *  feedback_no_rm_rf.md — surface deletion candidates instead
+  *  project_droplet_containers.md — exactly 5 containers should run
 ```
 
-Sidecar test suite: **417/417 passing** on main. mypy clean on src/. ruff clean.
-PHP isolated AgentForge tests: **208/208 passing** (only the
-pre-existing Vitals height-fixture failure is excluded — see
-"Older known issues" below).
+Sidecar test suite: **460/460 passing** (was 417 at session start —
++43 tests across truncator + planner). mypy clean. ruff clean.
+PHP isolated AgentForge tests: **214/214 passing** (was 208 — +6 from
+the new ProblemsRepositoryTest). Single failure remains: pre-existing
+Vitals height-fixture carryforward.
 
 ## Architecture state right now
 
-The agent's tool catalog: **9 tools** (demographics, problems,
-medications, allergies, labs, vitals, notes, search_notes, encounters).
-Five of those gate per-record via `AuthGateway.check_record_visibility`
-(notes, search_notes, encounters, plus the older two implicitly via
-the gateway's existing rules).
+Tool catalog: **9 tools** (demographics, problems, medications,
+allergies, labs, vitals, notes, search_notes, encounters). Task 51
+will add `get_immunizations` as the 10th — see "What's ready to pick
+up next" below.
 
-Reliability primitives wired into the orchestrator:
+Reliability primitives — three are now BUILT BUT NOT WIRED into the
+orchestrator. They're tested and ready for an integration pass:
 
-  - **Tool-result cache** (Redis, 60s TTL) on every dispatch
-  - **StreamingVerifier** with the 5-constraint DomainConstraints —
-    OFF by default; flip via `VERIFIER_ENABLED=true`. Verifier's
-    `_KNOWN_TOOLS` covers 7 of 9 (notes / search_notes citations
-    don't ground; see the verifier-coverage gap below)
-  - **Langfuse traces** — Null impl when not configured, real one
-    when `LANGFUSE_HOST` + keys are set
-  - **Session memory** — opt-in via `session_id` on the request body;
-    SOFT_CAP=6 / HARD_CAP=8 turns
-  - **Sensitivity policy** + record visibility check — loaded on
-    startup; gateway's `check_record_visibility` consumed by 3 tools
-  - **Breakglass audit** — fires once per session via in-memory
-    dedup, never raises (AUDIT_FAILED is an enum value, not an
-    exception)
-  - **Timeout/Retry** — `retry_with_policy` wraps every fetcher call;
-    `TimeoutPolicy.per_tool=2s` is the active budget; transient
-    5xx/timeout/network retries with exponential backoff up to 3
-    attempts. Persistent timeouts surface a degradation notice.
+  - **`SynthesisInputTruncator`** (Task 45) — 12k-token cap; priority
+    drop + within-tool oldest-first shrink; tiktoken cl100k_base
+  - **`Planner`** (Task 27) — UseCase classification + structured
+    Plan via tool-use forced JSON output; cheaper Haiku model fits
+    well here once a second LLMClient is wired
+  - **TimeoutPolicy phase + total_turn budgets** (Task 41
+    carryforward) — `per_tool=2s` is enforced, the rest are config
+    fields with no consumer. Right shape comes alongside Task 27
+    wiring (the planner is what knows about phases).
 
-Eval framework primitives (CI-deterministic, no real LLM required):
+Already wired and active:
 
-  - `tests/mocks/tools.py` — `MockToolLayer` with hand-authored fixtures
-    for 9 tools × 2 patient phenotypes (Susan Underwood complex chronic,
-    Alex Newman sparse).
-  - `tests/eval/harness.py` — `EvalHarness.evaluate(response, case,
-    tool_results)` returns an `EvalResult` with grounded /
-    grounding_failures / behavior_pass / citations_found.
-  - `tests/eval/regression_locks.py` — 6 locked (response, case, fixture)
-    triples, parametrized over a single test. Set size pinned at 6 by
-    a separate test so adding/removing locks requires intent.
-
-The system prompt now declares all 9 tools and mandates `[record_type
-#id]` citations on every factual sentence.
+  - Tool-result cache (Redis, 60s TTL)
+  - StreamingVerifier with 5-constraint DomainConstraints, OFF by
+    default; `VERIFIER_ENABLED=true` on droplet
+  - Langfuse traces (Null when not configured; `LANGFUSE_HOST`
+    unset on droplet)
+  - Session memory (opt-in via `session_id`, SOFT_CAP=6 / HARD_CAP=8
+    turns)
+  - Sensitivity policy + record visibility check (3 tools consume,
+    plus encounter-category gating on encounters)
+  - Breakglass audit (in-memory dedup; single-replica)
+  - Per-tool timeout + retry (`retry_with_policy` wraps every fetcher;
+    transient 5xx/timeout/network with exponential backoff up to 3
+    attempts)
 
 ## What's deployed and where
 
 `https://143.244.157.90:9300/` — production demo, same droplet.
 
-**The droplet is current as of 2026-05-02 end-of-session.** Code-side:
-all 11 tasks + JWT backport from the prior compact were deployed via
-`./scripts/deploy-droplet.sh`. Sidecar comes up clean with no import
-errors from the new modules.
+**The droplet is current end-of-session.** Code matches main as of
+the last `./scripts/deploy-droplet.sh module` run. Data side: full
+Task 50 seed pipeline applied; 25 patients + 3 baseline; 882
+encounters; 3,341 lab results; 886 notes (73 in last 365d); demo
+overlay live for pid=8 / pid=4. All 14 `validate_seed.sh` checks
+pass on droplet.
 
-**Data-side: droplet seed updated to match local.** This session
-(after the deploy) ran the full Task 50 pipeline against the droplet
-DB via SSH bridges:
+Live smoke-test results today (after the bug fixes):
 
-  - Wiped pid > 3 on droplet
-  - Batch-imported the same 25 Synthea CCDAs that were imported locally
-  - Ran `scripts/seed/load_synthea_notes.py` against droplet's mariadb
-    via an SSH tunnel (port 13306 → droplet 8320) → 880 notes loaded
-  - Applied `scripts/seed/agentforge_demo_overlay.sql` (6 hand-crafted
-    notes + 10 vitals on pid=8 / pid=4)
-  - All 14 `validate_seed_data.sql` checks pass on droplet
-
-Droplet now has the same cohort as local: 25 patients (20 alive,
-5 deceased), 882 encounters, 3,341 lab results, 886 notes (73 in last
-365d), 33 allergies, plus the demo overlay and SUD-gated notes on
-pid=8 for substance_abuse_cfr42 sensitivity demo.
+  - ✅ get_active_problems — 25 distinct conditions, real CKD
+       progression, no admin noise, IPV/SDOH preserved
+  - ✅ get_active_medications — 6 active + 4 ended cited cleanly
+  - ✅ get_active_allergies — 11 allergens with severity
+  - ❌ "Has this patient been immunized?" — agent invents a
+       capability statement ("in this version of the co-pilot")
+       because there's no get_immunizations tool. Tracked as
+       Task 51.
 
 Droplet env still: `VERIFIER_ENABLED=true`, `agentforge-redis`
 container running, `LANGFUSE_HOST` unset (NullLangfuseClient),
-`policy_loaded: false` (sensitivity policy path issue, mitigated by
-`SENSITIVITY_POLICY_REQUIRED=false`).
+`policy_loaded: false` (sensitivity policy YAML path issue,
+mitigated by `SENSITIVITY_POLICY_REQUIRED=false`).
 
-The Task 45 truncator code is in the deployed sidecar image as of the
-end-of-session redeploy below, but **it is not wired into the
-orchestrator** — Task 27 (Planner) is the natural place to plumb it
-in. No behavior change today.
+Container layout pinned: see `docs/DEPLOYMENT.md` and the project
+memory `project_droplet_containers.md`. **Five containers** —
+openemr, mysql, phpmyadmin, agentforge-sidecar, agentforge-redis.
+The four parasitic upstream containers should stay stopped.
 
-### Re-running the seed pipeline against the droplet
+## Live carryforwards (still deferred)
 
-If the droplet's seed ever drifts (DB wipe, fresh container,
-re-provision), the same six-step recipe in `docs/test-data.md`
-applies, with one substitution: route DB-touching steps through SSH
-(direct `docker exec`) and route Python loader steps through an SSH
-tunnel:
-
-```bash
-ssh -fN -L 13306:127.0.0.1:8320 root@143.244.157.90
-uv run --project sidecar scripts/seed/load_synthea_notes.py \
-  --fhir-dir ~/Desktop/Gauntlet/synthea/output_20patients/fhir \
-  --db-host 127.0.0.1 --db-port 13306
-pkill -f 'ssh.*-L 13306'
-```
-
-## Live carryforwards (deferred items from this session's work)
-
-These are decisions or follow-ups that were intentional, logged in
-`docs/DEVIATIONS.md` (scroll to the 2026-05-01 / 2026-05-02 entries),
-but want eyes:
+These survived this session — items intentionally not yet shipped,
+logged in `docs/DEVIATIONS.md` (search 2026-05-01 / 2026-05-02
+entries) and worth eyes on the next pass:
 
 1. **Sensitivity policy YAML path doesn't resolve inside the Docker
-   image.** Same as last session — `Settings.sensitivity_policy_path`
-   resolves relative to the package layout, which differs in the
-   container. Two fixes worth considering: bake YAML at a fixed path
-   in the Dockerfile and override `SENSITIVITY_POLICY_PATH` in
-   container env; or use `importlib.resources`. Currently mitigated
-   by `SENSITIVITY_POLICY_REQUIRED=false` on the droplet.
+   image.** Mitigated by `SENSITIVITY_POLICY_REQUIRED=false`. Two
+   fixes to consider: bake YAML at a fixed path in the Dockerfile +
+   override `SENSITIVITY_POLICY_PATH`, or use `importlib.resources`.
 
-2. **Verifier coverage gap on notes / search_notes / encounters.**
-   `verifier/cache.py` `_KNOWN_TOOLS` registers encounters this
-   session but still doesn't cover notes or search_notes. So a
-   citation like `[note #61]` won't ground via the production
-   verifier (it WILL ground via the eval harness because eval uses
-   the same `build_citation_index`, but the eval was checked against
-   `_KNOWN_TOOLS`). When the model starts citing notes in real
-   responses, this becomes a redaction problem. Trivial fix:
-   register `"get_recent_notes": ("note", "notes", "id")` and
-   `"search_notes": ("note", "results", "id")` in the dispatch table.
+2. **Verifier coverage gap on notes / search_notes.**
+   `verifier/cache.py` `_KNOWN_TOOLS` registers encounters now but
+   still doesn't cover notes or search_notes. `[note #61]` won't
+   ground via the production verifier. Trivial fix: register
+   `"get_recent_notes": ("note", "notes", "id")` and
+   `"search_notes": ("note", "results", "id")`.
 
-3. **Frontend still doesn't mint or send `session_id`.** Multi-turn
-   memory is fully wired server-side, but
-   `interface/modules/custom_modules/oe-module-agentforge/public/js/chat-panel.js`
-   still posts only `{message: ...}`. Until the JS mints a session
-   id (e.g. `crypto.randomUUID()` in localStorage on conversation
-   start), every turn is independent.
+3. **Frontend doesn't mint or send `session_id`.** Multi-turn
+   memory is fully wired server-side, but `chat-panel.js` still
+   posts only `{message: ...}`. Until the JS mints a session id,
+   every turn is independent.
 
-4. **In-memory breakglass dedup → multi-replica gap.**
-   `BreakglassAuditTool._logged_sessions` is a per-process set.
-   Sidecar restart wipes it; multi-replica deployments would write
-   one audit row per replica per session. Replace with Redis SETNX
-   when going multi-replica. Currently single-replica on the
-   droplet — non-issue today.
+4. **In-memory breakglass dedup → multi-replica gap.** Replace with
+   Redis SETNX when going multi-replica.
 
-5. **TimeoutPolicy phase + total-turn budgets deferred.** Only
-   `per_tool` is enforced. `tool_phase`, `total_turn`, `max_steps`,
-   `synthesis_input_cap` are config fields with no consumer yet.
-   Right shape comes alongside Task 27 (Planner restructure) — the
-   Planner is the layer that knows about phases.
+5. **Three orchestrator utilities built but not wired** —
+   SynthesisInputTruncator (Task 45), Planner (Task 27), and the
+   phase/total_turn budgets in TimeoutPolicy (Task 41). The
+   integration pass is its own beat.
 
 6. **`per_attempt_timeout` not wired through httpx.** RetryPolicy
    has the field; each fetcher still uses httpx's default 5s.
-   Wiring per-attempt timeout through every fetcher constructor
-   was out of scope for Task 41.
 
-7. **Eval framework caveats:**
-   - Fixtures hand-authored (not captured from a real demo DB SHA)
-   - No LLM-as-judge — grounding + behavior callable only
-   - Regression locks pin canonical agent-style response strings, not
-     model behavior. End-to-end model regression is a real-LLM eval
-     run, which is an open follow-up.
+7. **Eval framework caveats:** fixtures hand-authored (not captured
+   from a real demo DB SHA), no LLM-as-judge, regression-locks pin
+   canonical agent-style strings (not model behavior end-to-end).
 
-8. **Search results gate on title-prefix only** because the PHP
-   notes_search response doesn't surface `note_type` or
-   `attending_only`. Title-prefix policy rules fire correctly;
-   note-type / attending-only rules are best-effort allow until the
-   search response is extended. Worth tracking if those rule
-   classes ever fire in prod.
+8. **Search results gate on title-prefix only** because
+   `notes_search` PHP response doesn't surface `note_type` or
+   `attending_only`.
 
-9. ~~**Demo DB lacks clinical notes + encounters for our test
-   patients.**~~ **Resolved 2026-05-02 by Task 50** — full seed
-   pipeline (Synthea CCDA batch + FHIR DocumentReference loader +
-   hand-crafted overlay) deployed to both local and droplet. Demo
-   patients are now pid=8 Eula Crist (complex chronic) and pid=4
-   Alena Marquardt (sparse). See `docs/test-data.md` for the full
-   pipeline and the cohort audit. Sensitivity demo: ask about
-   pid=8's substance-use history; the SUD-prefixed pnotes are
-   gated by `substance_abuse_cfr42`.
+## Known issues / quality gaps surfaced today
 
-## Older known issues (still open from earlier sessions)
+- **Vitals height fixture mismatch.** Pre-existing carryforward.
+  `'height' => 70.0` vs actual `70`. JSON int round-trip suspected.
+  Only remaining AgentForge isolated-test failure.
 
-- **Vitals height fixture mismatch.** `InternalVitalsControllerTest::
-  returnsVitalsArrayOnHappyPath` expects `'height' => 70.0`, gets
-  `'height' => 70`. Looks like a JSON-decoding round-trip issue
-  where 70.0 deserializes as int. Pre-existing failure all session;
-  the only remaining AgentForge isolated-test failure. Likely a
-  small fixture-side fix.
+- **No `get_immunizations` tool.** 348 rows in immunizations table,
+  zero tools. Tracked as Task 51 (parent + 4 subtasks).
 
-- **`docs/demo-slides.html` still uncommitted.** Decide whether to
-  commit or delete.
+- **MedicationsRepository may have similar duplication issues to
+  what we just fixed in ProblemsRepository.** Eula's response
+  showed multiple discontinued contraceptive entries — Synthea
+  generates per-fill rows. Less clear-cut than problems (real meds
+  legitimately have multiple courses) but worth a closer look. Not
+  yet tracked.
+
+- **Demographic citation grammar drifts.** `[demographic #8]` reads
+  stilted; the patient's identity isn't a fact that needs citing.
+  Tracked under Task 51.3.
+
+- **Section labels in synthesis responses are inconsistent.** Same
+  patient, two queries: "Major chronic conditions" vs "Primary
+  medical conditions." Worth deciding whether to pin in the system
+  prompt or accept variability. Tracked under Task 51.3.
 
 - **Old controller bootstraps use `DriverManager::getConnection(...)`
-  directly.** CLAUDE.md prefers `DatabaseConnectionFactory`. Module-
-  wide tech debt across all `public/internal/*.php` files. Sub-agent
-  flagged this on Task 34; not Task-21 / 34 scope.
+  directly.** CLAUDE.md prefers `DatabaseConnectionFactory`.
+  Module-wide tech debt, not blocking.
 
 ## What's ready to pick up next
 
-Pending tasks remaining: 10. From `task-master list`:
+Pending tasks remaining: 9.
 
-- **27** — Planner Agent. The heaviest remaining sidecar work and the
-  one that unlocks the deferred phase/turn budgets from Task 41 plus
-  the synthesis cap from Task 45.
-- **35, 36, 47** — Docker Compose + reverse proxy + end-to-end integration
-  test. The deploy / infra triplet. Probably best done together when
-  there's appetite for ops work.
-- **42** — Identity Ambiguity (depends on 27 — Planner first).
+- **51 — Tool catalog gaps + agent output quality + out-of-scope
+  handling.** Newly added; 4 subtasks (immunizations, audit/add
+  procedures, output refinement, out-of-scope guardrail). High
+  priority — addresses the most visible demo gaps.
+- **27/45/41 integration pass** — wire the three deferred
+  utilities into `Orchestrator.turn()`. No Taskmaster ID yet; would
+  need to be created. Probably the next task to add and the highest-
+  leverage pure-code work.
+- **35, 36, 47** — Docker Compose + reverse proxy + e2e (deploy
+  infra triplet, do as a unit when there's appetite for ops work).
+- **42** — Identity Ambiguity (newly unblocked by 27, but waits on
+  the integration pass to be useful).
 - **43** — Prompt Library (depends on 27, 28).
-- **45** — Synthesis Input Cap (depends on 26 — done).
-- **46** — Stale Data + Conflict detection (depends on 28, 29).
-- **48** — Deployment checklist doc (depends on 40, 44 — done; small).
+- **46** — Stale Data + Conflict detection.
+- **48** — Deployment checklist doc (small).
 - **49** — Re-evaluate `idx_procedure_*` index (low priority).
 
-Quick wins that would close known issues without picking up a fresh
-Taskmaster task:
+Quick wins still available:
 
-- Fix the Vitals height-fixture (~5 min if it's a fixture issue).
-- Backport `_KNOWN_TOOLS` to cover notes + search_notes (~10 min).
-- Mint `session_id` in chat-panel.js so multi-turn memory actually
-  fires (~30 min).
-- Bake sensitivity YAML at a fixed path in the Dockerfile + override
-  env (~30 min). Would land `policy_loaded: true` on the droplet.
+- **Fix verifier `_KNOWN_TOOLS` for notes + search_notes** (~10 min,
+  closes carryforward #2).
+- **Fix Vitals height-fixture** (~5 min if it's a fixture issue).
+- **Mint `session_id` in chat-panel.js** (~30 min, lights up
+  multi-turn memory).
+- **Bake sensitivity YAML at fixed Dockerfile path** (~30 min,
+  lands `policy_loaded: true` on the droplet).
+- **Bring proxy timeout back down** once the truncator is wired
+  (one-line change after the integration pass).
 
 ## Quick-start checklist for next time
 
 1. `git status` — confirm no uncommitted changes you forgot about.
 2. `task-master list` and `task-master next` — see what's on deck.
-3. `cd sidecar && uv run pytest` — confirm 417/417 still green.
+3. `cd sidecar && uv run pytest` — confirm 460/460 still green.
 4. If demo'ing again or testing locally:
    - `cd sidecar && ./scripts/sidecar.sh start` (sidecar on :8000)
    - `docker compose -f docker/development-easy/docker-compose.yml ps`
    - Open `http://localhost:8300/` (admin / pass)
 5. If deploying to droplet:
-   - `./scripts/deploy-droplet.sh check` — confirm droplet still
-     healthy (currently running the prior-session's code)
-   - **Heads up:** this session's 11 tasks are NOT yet on the droplet.
-     A push will deploy the full 9-tool catalog, retry/timeout
-     machinery, breakglass audit, eval framework (test-only), and
-     the JWT backport.
-6. Tail Langfuse traces (when configured) for live trace inspection;
-   `LANGFUSE_HOST` is still unset on the droplet, so
+   - `./scripts/deploy-droplet.sh check` — confirm droplet healthy
+     (currently end-of-session-2026-05-02 state).
+   - Code-side and data-side are BOTH current relative to main.
+6. Tail Langfuse traces (when configured) for live trace
+   inspection; `LANGFUSE_HOST` is unset on the droplet, so
    `NullLangfuseClient` is in use.
 
 ## Files worth opening in the first 60 seconds
 
-- `docs/DEPLOYMENT.md` — droplet state of play (gained an
-  "Optional: tighten REST api_log body logging" section this session).
-- `docs/DEVIATIONS.md` — design decisions vs the original plan. New
-  this session: 6 entries on 2026-05-01 / 2026-05-02 covering
-  Task 41 (timeouts), Task 34 (breakglass dedup + auth-gateway
-  placement), Tasks 37/38/39 (eval scope), Task 44 (api_log_option
-  reframe), and Task 21 (FHIR vs custom endpoint).
-- `ARCHITECTURE.md` — original plan, still authoritative for unbuilt
-  sections (§3 Planner = Task 27, §6 Verification = mostly done,
-  §7 Observability = mostly done, §8 Eval = framework done, real-
-  LLM eval still open).
+- `docs/DEPLOYMENT.md` — droplet state including the new "DO NOT
+  restart casually" container section.
+- `docs/test-data.md` — full seed pipeline reference (six-step
+  recipe for re-running from scratch, plus the audits and the
+  decoupling rationale on eval fixtures).
+- `docs/DEVIATIONS.md` — design decisions vs original plan. New
+  this session: the LangGraph-deferred entry for Task 27.
+- `docs/CHALLENGES.md` — retrospective on the project's hard parts.
+  Updated each session with newly-surfaced classes of friction.
+- `ARCHITECTURE.md` — original plan, still authoritative for
+  unbuilt sections.
 - `.taskmaster/tasks/tasks.json` — the roadmap.
-- `sidecar/src/agentforge/timeouts.py` — new this session; worth a
-  read before adding anything else to the orchestrator's failure
-  handling.
+- `sidecar/src/agentforge/orchestrator/planner.py` — Task 27.
+  Standalone class waiting to be wired in.
+- `sidecar/src/agentforge/orchestrator/truncation.py` — Task 45.
+  Same — built, tested, not wired in yet.
 - `sidecar/tests/eval/regression_locks.py` — the canonical examples
-  that lock the eval framework's primitives. Add cases here
-  (and bump the size-pin) when you have new product intent worth
-  freezing.
+  that lock the eval framework's primitives. Add cases (and bump
+  the size pin) when you have new product intent worth freezing.
+- `scripts/seed/` — Task 50's pipeline (load_synthea_notes.py,
+  agentforge_demo_overlay.sql, validate_seed_data.sql,
+  validate_seed.sh). Every script's preamble describes what it
+  does and how to invoke it.
