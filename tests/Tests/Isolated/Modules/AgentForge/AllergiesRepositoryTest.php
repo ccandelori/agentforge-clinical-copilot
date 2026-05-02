@@ -38,7 +38,13 @@ final class AllergiesRepositoryTest extends TestCase
                     return str_contains($sql, 'FROM lists')
                         && str_contains($sql, "type = 'allergy'")
                         && str_contains($sql, 'activity = 1')
-                        && str_contains($sql, 'pid = :pid');
+                        && str_contains($sql, 'pid = :pid')
+                        // The wire-format contract: dates are date-only,
+                        // not DATETIME. Keeps the sidecar's pydantic
+                        // ``date | None`` parser happy regardless of
+                        // whether the source row had HH:MM:SS data.
+                        && str_contains($sql, 'DATE(begdate)')
+                        && str_contains($sql, 'DATE(enddate)');
                 }),
                 ['pid' => 123]
             )

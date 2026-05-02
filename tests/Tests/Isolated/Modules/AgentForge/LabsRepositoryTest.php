@@ -45,6 +45,11 @@ final class LabsRepositoryTest extends TestCase
                     self::assertStringContainsString('procedure_result pres', $sql);
                     self::assertStringContainsString('po.patient_id = :pid', $sql);
                     self::assertStringContainsString('po.date_ordered >= :since', $sql);
+                    // Wire-format contract: the SELECT projects
+                    // DATE(po.date_ordered) so the JSON ships date-only
+                    // strings. The sidecar's pydantic ``date | None``
+                    // field rejects datetime strings with non-zero time.
+                    self::assertStringContainsString('DATE(po.date_ordered)', $sql);
                     self::assertStringContainsString('ORDER BY po.date_ordered DESC', $sql);
                     self::assertStringContainsString('pr.procedure_report_id DESC', $sql);
                     self::assertStringContainsString('pres.procedure_result_id ASC', $sql);

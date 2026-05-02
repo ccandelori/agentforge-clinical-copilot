@@ -59,6 +59,13 @@ class LabsRepository
             ->sub(new \DateInterval('P' . $days . 'D'))
             ->format('Y-m-d 00:00:00');
 
+        // DATE(po.date_ordered) strips the time component. The column
+        // is DATETIME and Synthea-imported orders carry real
+        // timestamps; without the cast the JSON ships
+        // "2026-04-15 09:30:00" and the sidecar's pydantic
+        // ``date | None`` field rejects datetime strings with
+        // non-zero time. Same wire-format contract as the lists-table
+        // repos (problems / medications / allergies).
         $sql = "SELECT
                     pres.procedure_result_id  AS id,
                     po.procedure_order_id     AS order_id,
@@ -69,7 +76,7 @@ class LabsRepository
                     pres.units                AS units,
                     pres.range                AS reference_range,
                     pres.abnormal             AS abnormal,
-                    po.date_ordered           AS date
+                    DATE(po.date_ordered)     AS date
                 FROM procedure_order po
                 INNER JOIN procedure_report pr
                     ON pr.procedure_order_id = po.procedure_order_id
