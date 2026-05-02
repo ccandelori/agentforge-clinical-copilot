@@ -32,14 +32,34 @@ Containers (post-AgentForge deploy):
 | `development-easy-openemr-1` | `openemr/openemr:flex` | 80, 443 | OpenEMR PHP/Apache |
 | `development-easy-mysql-1` | `mariadb:11.8.6` | 3306 | DB |
 | `development-easy-phpmyadmin-1` | `phpmyadmin:latest` | 80 | DB admin UI |
-| `development-easy-couchdb-1` | `couchdb:3.5.1` | 5984 | (unused by AgentForge — left running) |
-| `development-easy-selenium-1` | `selenium/standalone-chromium` | 4444 | (unused — was for e2e, can stop to save RAM) |
-| `development-easy-openldap-1` | `openemr/dev-ldap:easy` | 389 | (unused) |
-| `development-easy-mailpit-1` | `axllent/mailpit:v1.29.7` | 1025 | (unused) |
 | **`agentforge-sidecar`** | `agentforge-sidecar:latest` (built on droplet) | 8000 | **Python sidecar (added by us)** |
+| **`agentforge-redis`** | `redis:7-alpine` | 6379 | **Tool-result cache (added by us)** |
 
 The sidecar is on the **`development-easy_default`** docker network so the
 OpenEMR container can resolve it as `agentforge-sidecar` via internal DNS.
+
+### Stopped 2026-05-02 — DO NOT restart casually
+
+The upstream `development-easy` compose stack also ships `couchdb`,
+`selenium`, `openldap`, and `mailpit` containers — none of which AgentForge
+uses. They were running for the first weeks of this droplet but were
+stopped on 2026-05-02 after `selenium` was caught burning a full CPU core
+and pushing the load average above 40. After stopping all four, sidecar
+CPU dropped from 44% → 0.2% (it had been queue-waiting behind selenium).
+
+If `docker compose up` is ever re-run on the droplet (e.g. for a stack
+upgrade), these will come back; stop them again immediately:
+
+```bash
+docker stop development-easy-selenium-1 \
+            development-easy-couchdb-1 \
+            development-easy-openldap-1 \
+            development-easy-mailpit-1
+```
+
+A duplicate-named `pagentforge-redis` container was also removed in the
+same cleanup pass — leftover from an earlier deploy attempt that never
+got wired in. The actual cache the sidecar uses is `agentforge-redis`.
 
 ## Public URLs
 
