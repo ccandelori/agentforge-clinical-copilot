@@ -1296,3 +1296,58 @@ are useful; they answer different questions.
 [`sidecar/tests/eval/regression_locks.py`](../sidecar/tests/eval/regression_locks.py).
 
 ---
+
+## 2026-05-02 — Task 44 reframed: `api_log_option` is global, not per-user
+
+**Plan:** Task 44 specs a deploy script that does
+
+```php
+QueryUtils::sqlStatementThrowException(
+    "UPDATE users SET api_log_option = 1 WHERE id = ?",
+    [$agentUserId]
+);
+```
+
+with the rationale "suppress body logging for the agent's API user."
+
+**Deviation:** Two factual problems with the spec, fixed by
+reframing what we ship:
+
+1. There is no `users.api_log_option` column. `api_log_option` is a
+   site-wide global (`globals.gl_name = 'api_log_option'`) defined in
+   `library/globals.inc.php` with three valid values (`0`, `1`, `2`).
+   The `users` table has no per-row override, and the REST listener
+   (`ApiResponseLoggerListener`) reads only the global.
+2. AgentForge's internal endpoints don't pass through
+   `ApiResponseLoggerListener` because the listener fires only on
+   `HttpRestRequest` — our `public/internal/*.php` scripts use bare
+   `Symfony\Component\HttpFoundation\Request`. So the body-logging
+   the spec wants to suppress is *already not happening* for
+   AgentForge calls today.
+
+We ship `scripts/configure_api_logging.php` instead — sets the
+**global** to `1` (minimal logging) idempotently, with `--check` for
+read-only inspection. That's the real lever, and shipping the script
+puts a defense-in-depth control in operators' hands for any future
+calls that DO route through the REST stack. The spec's per-user
+fantasy is documented as not-applicable.
+
+Subtask 44.5 (integration test for "API logging suppression
+behavior") is intentionally a no-op: with no AgentForge call
+flowing through the listener, there is no behaviour to suppress and
+nothing to assert beyond the global value, which the script's
+`--check` mode already reports.
+
+**What we learned:** Task specs at this fork's level can encode
+data-model assumptions that don't match the upstream OpenEMR
+schema. When the assumption breaks, the right move is to ship the
+*intent* (PHI hygiene in `api_log`) rather than the literal
+mechanism (per-user UPDATE). Always grep the schema before trusting
+a spec's column references.
+
+**Artifacts:**
+[`scripts/configure_api_logging.php`](../scripts/configure_api_logging.php),
+[`docs/DEPLOYMENT.md`](DEPLOYMENT.md) (new "Optional: tighten REST
+api_log body logging" section).
+
+---
