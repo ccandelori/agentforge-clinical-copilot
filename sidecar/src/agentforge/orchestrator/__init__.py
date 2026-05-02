@@ -52,6 +52,11 @@ from agentforge.tools.demographics import (
     DemographicsResult,
 )
 from agentforge.tools.dtos import ToolResult
+from agentforge.tools.encounters import (
+    ENCOUNTERS_TOOL_SPEC,
+    EncountersFetcher,
+    EncountersResult,
+)
 from agentforge.tools.labs import LABS_TOOL_SPEC, LabsFetcher, LabsResult
 from agentforge.tools.medications import (
     MEDICATIONS_TOOL_SPEC,
@@ -97,13 +102,16 @@ is asking about a single patient whose chart is currently open in their \
 browser. You answer questions grounded in that patient's record by calling \
 tools — never from memory or speculation.
 
-You have six tools:
+You have nine tools:
   - get_demographics      : name, DOB, sex, preferred language
   - get_active_problems   : current diagnoses / problem list
   - get_active_medications: currently active medications (with begin/end dates)
   - get_active_allergies  : known allergies (allergen, reaction, severity)
   - get_recent_labs       : recent lab analytes (name, value, units, range, abnormal flag, date)
   - get_vitals_trend      : recent vital signs (BP, pulse, temp, SpO2, weight, BMI)
+  - get_recent_notes      : recent free-form patient notes + structured clinical notes
+  - search_notes          : full-text search over the patient's notes
+  - get_recent_encounters : recent visits / consults / follow-ups (date, type, reason, provider)
 
 Citation rules:
 - Every factual sentence about the patient MUST end with an inline citation \
@@ -146,6 +154,7 @@ class Orchestrator:
         vitals_fetcher: VitalsFetcher,
         notes_fetcher: NotesFetcher,
         search_notes_fetcher: SearchNotesFetcher,
+        encounters_fetcher: EncountersFetcher,
         *,
         domain_constraints: DomainConstraintChecker | None = None,
         verifier_enabled: bool = False,
@@ -167,6 +176,7 @@ class Orchestrator:
         self._vitals = vitals_fetcher
         self._notes = notes_fetcher
         self._search_notes = search_notes_fetcher
+        self._encounters = encounters_fetcher
         self._domain_constraints = (
             domain_constraints or NullDomainConstraintChecker()
         )
@@ -234,6 +244,7 @@ class Orchestrator:
             VITALS_TOOL_SPEC,
             NOTES_TOOL_SPEC,
             SEARCH_NOTES_TOOL_SPEC,
+            ENCOUNTERS_TOOL_SPEC,
         ]
         # Per-turn tool-result accumulator. Keyed by tool name; later
         # iterations of the same tool overwrite — acceptable for MVP
@@ -454,6 +465,17 @@ class Orchestrator:
                 since_days = raw_since if isinstance(raw_since, int) else None
                 result = await self._call_with_retry(
                     lambda: self._notes.fetch(
+                        ctx=ctx,
+                        since_days=since_days,
+                    )
+                )
+            elif tool_name == "get_recent_encounters":
+                # Encounters do per-record sensitivity gating internally
+                # (encounter category + sensitivity marker), like notes.
+                raw_since = call.input.get("since_days")
+                since_days = raw_since if isinstance(raw_since, int) else None
+                result = await self._call_with_retry(
+                    lambda: self._encounters.fetch(
                         ctx=ctx,
                         since_days=since_days,
                     )
@@ -706,6 +728,7 @@ _RESULT_CLASSES: Final[dict[str, type[ToolResult[Any]]]] = {
     "get_vitals_trend": VitalsResult,
     "get_recent_notes": NotesResult,
     "search_notes": SearchNotesResult,
+    "get_recent_encounters": EncountersResult,
 }
 
 

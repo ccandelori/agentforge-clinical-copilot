@@ -1351,3 +1351,38 @@ a spec's column references.
 api_log body logging" section).
 
 ---
+
+## 2026-05-02 — Encounters tool reads form_encounter directly, not via FHIR
+
+**Plan:** Task 21 spec calls for the agent's encounters tool to call
+OpenEMR's standard FHIR `Encounter` endpoint (`/apis/fhir/r4/Encounter`).
+
+**Deviation:** Mirrors the AgentForge custom-internal-endpoint pattern
+(`/agentforge/internal/recent_encounters.php`) instead, reading
+`form_encounter` directly via Doctrine DBAL — same shape as every
+other AgentForge tool.
+
+**Why:** Routing through FHIR would require:
+  * OpenEMR OAuth2 client credentials provisioned for the agent.
+  * A token-management layer in the sidecar (acquire, refresh, scope).
+  * A second authorization story in addition to the per-user JWT we
+    already mint and forward.
+
+None of this infrastructure exists yet. Building it just to fetch
+encounters duplicates the trust boundary the existing internal
+endpoints already establish — JWT-validated, pid-scoped, no session
+state. The custom-endpoint path also keeps the sensitivity-gating
+contract coherent: the gateway sees `RecordMetadata` with both
+`encounter_category` (pc_catid) and `note_type` (the `sensitivity`
+column), which a FHIR Encounter resource doesn't surface as cleanly.
+
+**What we learned:** Reusing existing OpenEMR REST surfaces is a real
+option but it's not free — the sidecar's auth model would have to
+grow. Picking the consistent-internal-endpoint path keeps the auth
+story flat and the gating logic in one shape.
+
+**Artifacts:**
+[`sidecar/src/agentforge/tools/encounters.py`](../sidecar/src/agentforge/tools/encounters.py),
+[`interface/modules/custom_modules/oe-module-agentforge/public/internal/recent_encounters.php`](../interface/modules/custom_modules/oe-module-agentforge/public/internal/recent_encounters.php).
+
+---

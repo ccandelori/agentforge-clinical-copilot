@@ -103,6 +103,7 @@ def _build(
         vitals_fetcher=AsyncMock(),
         notes_fetcher=AsyncMock(),
         search_notes_fetcher=AsyncMock(),
+        encounters_fetcher=AsyncMock(),
         verifier_enabled=verifier_enabled,
         langfuse=langfuse,
         hmac_key=hmac_key,

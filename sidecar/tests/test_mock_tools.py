@@ -14,6 +14,7 @@ import pytest
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.tools.allergies import AllergiesResult
 from agentforge.tools.demographics import DemographicsResult
+from agentforge.tools.encounters import EncountersResult
 from agentforge.tools.labs import LabsResult
 from agentforge.tools.medications import MedicationsResult
 from agentforge.tools.notes import NotesResult
@@ -109,6 +110,22 @@ async def test_notes_for_complex_patient_returns_progress_note() -> None:
     assert isinstance(result, NotesResult)
     assert len(result.payload.notes) == 1
     assert result.payload.notes[0].note_type == "progress"
+
+
+async def test_encounters_for_complex_patient_include_followup_and_physical() -> None:
+    layer = MockToolLayer()
+    result = await layer.get_recent_encounters(_ctx(100))
+    assert isinstance(result, EncountersResult)
+    assert len(result.payload.encounters) == 2
+    types = [e.encounter_type for e in result.payload.encounters]
+    assert "Office Visit" in types
+    assert "Wellness Visit" in types
+
+
+async def test_sparse_patient_encounters_is_empty() -> None:
+    layer = MockToolLayer()
+    result = await layer.get_recent_encounters(_ctx(200))
+    assert result.payload.encounters == ()
 
 
 async def test_search_notes_finds_diabetes_match() -> None:
