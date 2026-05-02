@@ -85,7 +85,13 @@ asyncio_mode = "auto"
 # tests are fast (<1s/test, no LLM); only the UC-flow tests in
 # tests/integration/test_use_cases.py spend tokens. Run them
 # explicitly with: uv run pytest -m slow
-addopts = ["--strict-markers", "--strict-config", "-m", "not slow"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-m",
+    "not slow and not latency",
+]
 markers = [
     "slow: integration tests that call the real LLM (deselected by default)",
+    "latency: latency-budget tests that fire many requests (deselected by default)",
 ]
