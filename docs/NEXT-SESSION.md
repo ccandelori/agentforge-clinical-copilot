@@ -97,32 +97,53 @@ The system prompt now declares all 9 tools and mandates `[record_type
 
 `https://143.244.157.90:9300/` — production demo, same droplet.
 
-**The droplet is current as of 2026-05-02 end-of-session.** All 11
-tasks + the JWT backport were redeployed via
+**The droplet is current as of 2026-05-02 end-of-session.** Code-side:
+all 11 tasks + JWT backport from the prior compact were deployed via
 `./scripts/deploy-droplet.sh`. Sidecar comes up clean with no import
-errors from the new modules (notes, search_notes, encounters,
-breakglass, timeouts). Live smoke test confirmed:
+errors from the new modules.
 
-  - ✅ `get_recent_notes` fires and returns a clean empty result
-       (Susan Underwood) — no hallucinated notes
-  - ✅ `get_recent_encounters` ditto — clean empty result
-  - ✅ Deploy-script race fix verified — `/health` polled at +6s
-       (would have been a false-positive failure under the old
-       single-shot wget)
-  - ⚠️ Empty results above mean **the demo DB doesn't have notes /
-       encounters for Susan** — see Test data carryforward in
-       "Live carryforwards" below
-  - ⚠️ `policy_loaded: false` still present — sensitivity policy
-       path issue, mitigated by `SENSITIVITY_POLICY_REQUIRED=false`
-       (carryforward #1)
-  - ⚪ Verifier redaction path still not tested live (no
-       speculative-question test run yet)
+**Data-side: droplet seed updated to match local.** This session
+(after the deploy) ran the full Task 50 pipeline against the droplet
+DB via SSH bridges:
+
+  - Wiped pid > 3 on droplet
+  - Batch-imported the same 25 Synthea CCDAs that were imported locally
+  - Ran `scripts/seed/load_synthea_notes.py` against droplet's mariadb
+    via an SSH tunnel (port 13306 → droplet 8320) → 880 notes loaded
+  - Applied `scripts/seed/agentforge_demo_overlay.sql` (6 hand-crafted
+    notes + 10 vitals on pid=8 / pid=4)
+  - All 14 `validate_seed_data.sql` checks pass on droplet
+
+Droplet now has the same cohort as local: 25 patients (20 alive,
+5 deceased), 882 encounters, 3,341 lab results, 886 notes (73 in last
+365d), 33 allergies, plus the demo overlay and SUD-gated notes on
+pid=8 for substance_abuse_cfr42 sensitivity demo.
 
 Droplet env still: `VERIFIER_ENABLED=true`, `agentforge-redis`
-container running, `LANGFUSE_HOST` unset (NullLangfuseClient).
+container running, `LANGFUSE_HOST` unset (NullLangfuseClient),
+`policy_loaded: false` (sensitivity policy path issue, mitigated by
+`SENSITIVITY_POLICY_REQUIRED=false`).
 
-If you redeploy, the deploy script is at `scripts/deploy-droplet.sh`
-and retains all prior conventions.
+The Task 45 truncator code is in the deployed sidecar image as of the
+end-of-session redeploy below, but **it is not wired into the
+orchestrator** — Task 27 (Planner) is the natural place to plumb it
+in. No behavior change today.
+
+### Re-running the seed pipeline against the droplet
+
+If the droplet's seed ever drifts (DB wipe, fresh container,
+re-provision), the same six-step recipe in `docs/test-data.md`
+applies, with one substitution: route DB-touching steps through SSH
+(direct `docker exec`) and route Python loader steps through an SSH
+tunnel:
+
+```bash
+ssh -fN -L 13306:127.0.0.1:8320 root@143.244.157.90
+uv run --project sidecar scripts/seed/load_synthea_notes.py \
+  --fhir-dir ~/Desktop/Gauntlet/synthea/output_20patients/fhir \
+  --db-host 127.0.0.1 --db-port 13306
+pkill -f 'ssh.*-L 13306'
+```
 
 ## Live carryforwards (deferred items from this session's work)
 
@@ -188,15 +209,15 @@ but want eyes:
    search response is extended. Worth tracking if those rule
    classes ever fire in prod.
 
-9. **Demo DB lacks clinical notes + encounters for our test
-   patients.** Live smoke test of `get_recent_notes` and
-   `get_recent_encounters` against Susan Underwood (pid=2) on the
-   droplet returned clean empty results — tools fire correctly but
-   there's nothing to retrieve. We can't meaningfully demo the
-   notes / search_notes / encounters tools, the sensitivity gating,
-   or the verifier's citation grounding without populated data.
-   Open Taskmaster task tracks options (Synthea, hand-crafted
-   fixtures, hybrid) and the chosen seed pipeline.
+9. ~~**Demo DB lacks clinical notes + encounters for our test
+   patients.**~~ **Resolved 2026-05-02 by Task 50** — full seed
+   pipeline (Synthea CCDA batch + FHIR DocumentReference loader +
+   hand-crafted overlay) deployed to both local and droplet. Demo
+   patients are now pid=8 Eula Crist (complex chronic) and pid=4
+   Alena Marquardt (sparse). See `docs/test-data.md` for the full
+   pipeline and the cohort audit. Sensitivity demo: ask about
+   pid=8's substance-use history; the SUD-prefixed pnotes are
+   gated by `substance_abuse_cfr42`.
 
 ## Older known issues (still open from earlier sessions)
 
