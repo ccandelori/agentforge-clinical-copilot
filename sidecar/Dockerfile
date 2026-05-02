@@ -24,6 +24,16 @@ COPY src/ ./src/
 # SENSITIVITY_POLICY_REQUIRED=false in dev, but production must run
 # with the policy loaded).
 COPY config/ ./config/
+# Prompt library lives at /app/prompts/ (Task 43 — versioned templates).
+# load_prompt() walks up from /app/src/agentforge/prompts.py to find a
+# sibling 'prompts' dir with a version.json — without this layer
+# orchestrator/__init__.py crashes at module import.
+#
+# Sourced from a named build context ('prompts') so the Dockerfile can
+# pull from outside the sidecar/ build context. Local dev builds use
+# `additional_contexts` in docker-compose; the deploy script passes
+# --build-context prompts=<repo-root>/prompts to docker build.
+COPY --from=prompts . ./prompts/
 
 # Install only the production dependencies into /app/.venv.
 ENV UV_LINK_MODE=copy \
@@ -50,6 +60,11 @@ COPY --from=builder --chown=agentforge:agentforge /app/src /app/src
 # fails — fine in dev (SENSITIVITY_POLICY_REQUIRED=false) but production
 # must run with the policy loaded.
 COPY --from=builder --chown=agentforge:agentforge /app/config /app/config
+# Prompt library (Task 43). load_prompt() walks up from
+# /app/src/agentforge/prompts.py looking for a sibling 'prompts' dir
+# with version.json; this layer puts it there. Sourced from the
+# 'prompts' named build context (see notes in the builder stage).
+COPY --from=builder --chown=agentforge:agentforge /app/prompts /app/prompts
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
