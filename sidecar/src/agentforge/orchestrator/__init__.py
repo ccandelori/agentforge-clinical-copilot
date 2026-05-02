@@ -74,6 +74,11 @@ from agentforge.tools.problems import (
     ProblemsFetcher,
     ProblemsResult,
 )
+from agentforge.tools.procedures import (
+    PROCEDURES_TOOL_SPEC,
+    ProceduresFetcher,
+    ProceduresResult,
+)
 from agentforge.tools.search_notes import (
     SEARCH_NOTES_TOOL_SPEC,
     SearchNotesFetcher,
@@ -107,7 +112,7 @@ is asking about a single patient whose chart is currently open in their \
 browser. You answer questions grounded in that patient's record by calling \
 tools — never from memory or speculation.
 
-You have ten tools:
+You have eleven tools:
   - get_demographics      : name, DOB, sex, preferred language
   - get_active_problems   : current diagnoses / problem list
   - get_active_medications: currently active medications (with begin/end dates)
@@ -118,6 +123,7 @@ You have ten tools:
   - search_notes          : full-text search over the patient's notes
   - get_recent_encounters : recent visits / consults / follow-ups (date, type, reason, provider)
   - get_immunizations     : vaccine history (name, CVX code, administered date)
+  - get_procedures        : recent procedures (screenings, surgeries, imaging — distinct from labs)
 
 Citation rules:
 - Every factual sentence about the patient MUST end with an inline citation \
@@ -163,6 +169,7 @@ class Orchestrator:
         search_notes_fetcher: SearchNotesFetcher,
         encounters_fetcher: EncountersFetcher,
         immunizations_fetcher: ImmunizationsFetcher,
+        procedures_fetcher: ProceduresFetcher,
         *,
         domain_constraints: DomainConstraintChecker | None = None,
         verifier_enabled: bool = False,
@@ -186,6 +193,7 @@ class Orchestrator:
         self._search_notes = search_notes_fetcher
         self._encounters = encounters_fetcher
         self._immunizations = immunizations_fetcher
+        self._procedures = procedures_fetcher
         self._domain_constraints = (
             domain_constraints or NullDomainConstraintChecker()
         )
@@ -255,6 +263,7 @@ class Orchestrator:
             SEARCH_NOTES_TOOL_SPEC,
             ENCOUNTERS_TOOL_SPEC,
             IMMUNIZATIONS_TOOL_SPEC,
+            PROCEDURES_TOOL_SPEC,
         ]
         # Per-turn tool-result accumulator. Keyed by tool name; later
         # iterations of the same tool overwrite — acceptable for MVP
@@ -449,6 +458,16 @@ class Orchestrator:
                 result = await self._call_with_retry(
                     lambda: self._immunizations.fetch(
                         patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                    )
+                )
+            elif tool_name == "get_procedures":
+                raw_since = call.input.get("since_days")
+                since_days = raw_since if isinstance(raw_since, int) else None
+                result = await self._call_with_retry(
+                    lambda: self._procedures.fetch(
+                        patient_id=ctx.patient_id,
+                        raw_token=ctx.raw_token,
+                        since_days=since_days,
                     )
                 )
             elif tool_name == "get_recent_labs":
@@ -746,6 +765,7 @@ _RESULT_CLASSES: Final[dict[str, type[ToolResult[Any]]]] = {
     "search_notes": SearchNotesResult,
     "get_recent_encounters": EncountersResult,
     "get_immunizations": ImmunizationsResult,
+    "get_procedures": ProceduresResult,
 }
 
 
