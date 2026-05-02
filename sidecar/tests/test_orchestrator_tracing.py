@@ -101,6 +101,7 @@ def _build(
         allergies_fetcher=AsyncMock(),
         labs_fetcher=AsyncMock(),
         vitals_fetcher=AsyncMock(),
+        notes_fetcher=AsyncMock(),
         verifier_enabled=verifier_enabled,
         langfuse=langfuse,
         hmac_key=hmac_key,

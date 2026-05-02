@@ -44,6 +44,7 @@ from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
 from agentforge.tools.labs import LabsFetcher
 from agentforge.tools.medications import MedicationsFetcher
+from agentforge.tools.notes import NotesFetcher
 from agentforge.tools.problems import ProblemsFetcher
 from agentforge.tools.vitals import VitalsFetcher
 from agentforge.verifier import DomainConstraints
@@ -121,6 +122,7 @@ def create_app(
     allergies_fetcher: AllergiesFetcher | None = None,
     labs_fetcher: LabsFetcher | None = None,
     vitals_fetcher: VitalsFetcher | None = None,
+    notes_fetcher: NotesFetcher | None = None,
     redis_storage: AgentRedisClient | None = None,
     langfuse_client: LangfuseClient | None = None,
     redis_client: _AppRedisProto | None = None,
@@ -191,6 +193,10 @@ def create_app(
     vitals = vitals_fetcher or VitalsFetcher(
         base_url=settings.openemr_base_url,
     )
+    notes = notes_fetcher or NotesFetcher(
+        base_url=settings.openemr_base_url,
+        gateway=auth_gateway,
+    )
     langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
 
     orchestrator = Orchestrator(
@@ -201,6 +207,7 @@ def create_app(
         allergies_fetcher=allergies,
         labs_fetcher=labs,
         vitals_fetcher=vitals,
+        notes_fetcher=notes,
         domain_constraints=DomainConstraints(),
         verifier_enabled=settings.verifier_enabled,
         langfuse=langfuse,

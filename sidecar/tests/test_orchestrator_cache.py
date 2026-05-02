@@ -89,6 +89,7 @@ def _build(
         allergies_fetcher=AsyncMock(),
         labs_fetcher=AsyncMock(),
         vitals_fetcher=AsyncMock(),
+        notes_fetcher=AsyncMock(),
         redis_storage=redis_storage,
         hmac_key=hmac_key,
     )

@@ -48,6 +48,7 @@ from agentforge.tools.medications import (
     MedicationsFetcher,
     MedicationsResult,
 )
+from agentforge.tools.notes import NOTES_TOOL_SPEC, NotesFetcher, NotesResult
 from agentforge.tools.problems import (
     PROBLEMS_TOOL_SPEC,
     ProblemsFetcher,
@@ -128,6 +129,7 @@ class Orchestrator:
         allergies_fetcher: AllergiesFetcher,
         labs_fetcher: LabsFetcher,
         vitals_fetcher: VitalsFetcher,
+        notes_fetcher: NotesFetcher,
         *,
         domain_constraints: DomainConstraintChecker | None = None,
         verifier_enabled: bool = False,
@@ -143,6 +145,7 @@ class Orchestrator:
         self._allergies = allergies_fetcher
         self._labs = labs_fetcher
         self._vitals = vitals_fetcher
+        self._notes = notes_fetcher
         self._domain_constraints = (
             domain_constraints or NullDomainConstraintChecker()
         )
@@ -196,6 +199,7 @@ class Orchestrator:
             ALLERGIES_TOOL_SPEC,
             LABS_TOOL_SPEC,
             VITALS_TOOL_SPEC,
+            NOTES_TOOL_SPEC,
         ]
         # Per-turn tool-result accumulator. Keyed by tool name; later
         # iterations of the same tool overwrite — acceptable for MVP
@@ -359,6 +363,16 @@ class Orchestrator:
                 result = await self._vitals.fetch(
                     patient_id=ctx.patient_id,
                     raw_token=ctx.raw_token,
+                    since_days=since_days,
+                )
+            elif tool_name == "get_recent_notes":
+                # Notes do per-record sensitivity gating internally —
+                # the fetcher takes the full ctx (not just raw_token)
+                # and the gateway it was constructed with.
+                raw_since = call.input.get("since_days")
+                since_days = raw_since if isinstance(raw_since, int) else None
+                result = await self._notes.fetch(
+                    ctx=ctx,
                     since_days=since_days,
                 )
             else:
@@ -571,6 +585,7 @@ _RESULT_CLASSES: Final[dict[str, type[ToolResult[Any]]]] = {
     "get_active_allergies": AllergiesResult,
     "get_recent_labs": LabsResult,
     "get_vitals_trend": VitalsResult,
+    "get_recent_notes": NotesResult,
 }
 
 
