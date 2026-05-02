@@ -43,6 +43,11 @@ _KNOWN_TOOLS: dict[str, _ToolDescriptor] = {
     "get_recent_encounters": ("encounter", "encounters", "id"),
     "get_immunizations": ("immunization", "immunizations", "id"),
     "get_procedures": ("procedure", "procedures", "id"),
+    # Notes payload uses "notes" as the list field; search_notes uses
+    # "results". Both cite as [note #N] — the agent doesn't distinguish
+    # search hits from regular notes at citation time.
+    "get_recent_notes": ("note", "notes", "id"),
+    "search_notes": ("note", "results", "id"),
 }
 
 
