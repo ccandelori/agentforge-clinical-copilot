@@ -17,6 +17,13 @@ WORKDIR /app
 # layer caches when source changes but deps don't.
 COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
+# Sensitivity policy YAML lives at /app/config/sensitivity_policy.yaml
+# in production — Settings.sensitivity_policy_path resolves there via
+# Path(__file__).resolve().parents[2]. Without this layer the YAML is
+# absent at runtime and load_sensitivity_policy fails (mitigated by
+# SENSITIVITY_POLICY_REQUIRED=false in dev, but production must run
+# with the policy loaded).
+COPY config/ ./config/
 
 # Install only the production dependencies into /app/.venv.
 ENV UV_LINK_MODE=copy \
@@ -37,6 +44,12 @@ WORKDIR /app
 # Copy resolved virtualenv and source from the builder stage.
 COPY --from=builder --chown=agentforge:agentforge /app/.venv /app/.venv
 COPY --from=builder --chown=agentforge:agentforge /app/src /app/src
+# Sensitivity policy YAML (Settings.sensitivity_policy_path resolves to
+# /app/config/sensitivity_policy.yaml via Path(__file__).parents[2]).
+# Without this layer the file is absent at runtime and load_sensitivity_policy
+# fails — fine in dev (SENSITIVITY_POLICY_REQUIRED=false) but production
+# must run with the policy loaded.
+COPY --from=builder --chown=agentforge:agentforge /app/config /app/config
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
