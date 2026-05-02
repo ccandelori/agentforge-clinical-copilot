@@ -71,6 +71,7 @@ def _build(
         notes_fetcher=AsyncMock(),
         search_notes_fetcher=AsyncMock(),
         encounters_fetcher=AsyncMock(),
+        immunizations_fetcher=AsyncMock(),
         memory=memory,
     )
 

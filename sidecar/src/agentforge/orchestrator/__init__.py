@@ -57,6 +57,11 @@ from agentforge.tools.encounters import (
     EncountersFetcher,
     EncountersResult,
 )
+from agentforge.tools.immunizations import (
+    IMMUNIZATIONS_TOOL_SPEC,
+    ImmunizationsFetcher,
+    ImmunizationsResult,
+)
 from agentforge.tools.labs import LABS_TOOL_SPEC, LabsFetcher, LabsResult
 from agentforge.tools.medications import (
     MEDICATIONS_TOOL_SPEC,
@@ -102,7 +107,7 @@ is asking about a single patient whose chart is currently open in their \
 browser. You answer questions grounded in that patient's record by calling \
 tools — never from memory or speculation.
 
-You have nine tools:
+You have ten tools:
   - get_demographics      : name, DOB, sex, preferred language
   - get_active_problems   : current diagnoses / problem list
   - get_active_medications: currently active medications (with begin/end dates)
@@ -112,6 +117,7 @@ You have nine tools:
   - get_recent_notes      : recent free-form patient notes + structured clinical notes
   - search_notes          : full-text search over the patient's notes
   - get_recent_encounters : recent visits / consults / follow-ups (date, type, reason, provider)
+  - get_immunizations     : vaccine history (name, CVX code, administered date)
 
 Citation rules:
 - Every factual sentence about the patient MUST end with an inline citation \
@@ -133,10 +139,11 @@ appropriate. Don't hedge with "as an AI…".
 5. If a tool returns an error or empty result, say so plainly. Do not \
 invent data to fill gaps. An empty problem list means "no active problems \
 recorded," not "the patient is healthy."
-6. If the user asks about something you don't have a tool for (encounter \
-history, imaging, immunizations, etc.), name the gap explicitly: "I \
-don't have access to encounter history in this version of the co-pilot \
-— it's visible in the chart's encounters section."\
+6. If the user asks about something you don't have a tool for (imaging, \
+billing history, family history, etc.), name the gap plainly: "I don't \
+have a tool to retrieve X. Check the chart's [section] directly." Do \
+not speculate about future versions or hedge with "in this version of \
+the co-pilot."\
 """
 
 MAX_TOOL_ITERATIONS: Final[int] = 4
@@ -155,6 +162,7 @@ class Orchestrator:
         notes_fetcher: NotesFetcher,
         search_notes_fetcher: SearchNotesFetcher,
         encounters_fetcher: EncountersFetcher,
+        immunizations_fetcher: ImmunizationsFetcher,
         *,
         domain_constraints: DomainConstraintChecker | None = None,
         verifier_enabled: bool = False,
@@ -177,6 +185,7 @@ class Orchestrator:
         self._notes = notes_fetcher
         self._search_notes = search_notes_fetcher
         self._encounters = encounters_fetcher
+        self._immunizations = immunizations_fetcher
         self._domain_constraints = (
             domain_constraints or NullDomainConstraintChecker()
         )
@@ -245,6 +254,7 @@ class Orchestrator:
             NOTES_TOOL_SPEC,
             SEARCH_NOTES_TOOL_SPEC,
             ENCOUNTERS_TOOL_SPEC,
+            IMMUNIZATIONS_TOOL_SPEC,
         ]
         # Per-turn tool-result accumulator. Keyed by tool name; later
         # iterations of the same tool overwrite — acceptable for MVP
@@ -432,6 +442,12 @@ class Orchestrator:
             elif tool_name == "get_active_allergies":
                 result = await self._call_with_retry(
                     lambda: self._allergies.fetch(
+                        patient_id=ctx.patient_id, raw_token=ctx.raw_token
+                    )
+                )
+            elif tool_name == "get_immunizations":
+                result = await self._call_with_retry(
+                    lambda: self._immunizations.fetch(
                         patient_id=ctx.patient_id, raw_token=ctx.raw_token
                     )
                 )
@@ -729,6 +745,7 @@ _RESULT_CLASSES: Final[dict[str, type[ToolResult[Any]]]] = {
     "get_recent_notes": NotesResult,
     "search_notes": SearchNotesResult,
     "get_recent_encounters": EncountersResult,
+    "get_immunizations": ImmunizationsResult,
 }
 
 
