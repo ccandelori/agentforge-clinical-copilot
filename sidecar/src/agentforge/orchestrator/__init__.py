@@ -416,6 +416,35 @@ class Orchestrator:
             sleep=self._sleep,
         )
 
+    async def _dispatch_batch(
+        self,
+        ctx: RequestContext,
+        calls: list[ToolCall],
+        trace: TraceHandle | None,
+        timed_out_tools: list[str],
+    ) -> list[tuple[str, ToolResult[Any] | None]]:
+        """Run a list of tool calls in parallel and return results
+        in input order.
+
+        Each call goes through the same ``_dispatch`` path the
+        sequential loop uses — same retry policy, same cache, same
+        trace spans — so per-tool behavior is unchanged. The win is
+        that wall-clock time becomes ``max(latency)`` rather than
+        ``sum(latency)`` across the batch.
+
+        Empty batches short-circuit without calling
+        :func:`asyncio.gather` so a no-op batch can never accidentally
+        emit a span or trip a side-effect.
+        """
+        if not calls:
+            return []
+        return await asyncio.gather(
+            *(
+                self._dispatch(ctx, call, trace, timed_out_tools)
+                for call in calls
+            )
+        )
+
     async def _dispatch(
         self,
         ctx: RequestContext,
