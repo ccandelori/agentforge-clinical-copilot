@@ -49,10 +49,10 @@ class TimeoutPolicy:
     common path.
     """
 
-    per_tool: float = 2.0
-    tool_phase: float = 4.0
-    synthesis_phase: float = 5.0
-    total_turn: float = 7.0
+    per_tool: float = 8.0
+    tool_phase: float = 15.0
+    synthesis_phase: float = 30.0
+    total_turn: float = 60.0
     max_steps: int = 7
     synthesis_input_cap: int = 12000
 

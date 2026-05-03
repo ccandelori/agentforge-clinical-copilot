@@ -33,9 +33,15 @@ from agentforge.timeouts import (
 
 def test_timeout_policy_defaults_match_architecture_doc() -> None:
     policy = TimeoutPolicy()
-    assert policy.per_tool == 2.0
-    assert policy.tool_phase == 4.0
-    assert policy.total_turn == 7.0
+    # Production-tuned budgets — per-tool ≤ tool_phase ≤ total_turn,
+    # synthesis_phase ≤ total_turn. Initial sub-10s budgets were too
+    # tight once the streaming verifier started buffering sentence
+    # boundaries on real Anthropic latency; bumped after the demo
+    # smoke test surfaced budget_exceeded on chart-overview turns.
+    assert policy.per_tool == 8.0
+    assert policy.tool_phase == 15.0
+    assert policy.synthesis_phase == 30.0
+    assert policy.total_turn == 60.0
     assert policy.max_steps == 7
     assert policy.synthesis_input_cap == 12000
 
@@ -51,7 +57,7 @@ def test_timeout_policy_is_overridable() -> None:
     assert policy.per_tool == 5.0
     assert policy.total_turn == 15.0
     # Other fields keep defaults
-    assert policy.tool_phase == 4.0
+    assert policy.tool_phase == 15.0
 
 
 # ---------- RetryPolicy defaults ----------
