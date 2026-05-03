@@ -94,6 +94,7 @@ class StreamingVerifier:
             # Citation-fabrication is still blocked below.
             return VerifiedChunk(text=claim, verified=True, rejection_reason=None)
 
+
         # MVP rule: a claim passes only if all of its citations resolve.
         # Models occasionally emit two citations in one sentence (one
         # real, one parroted) — rejecting on the first miss is the
