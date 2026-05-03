@@ -89,9 +89,10 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-m",
-    "not slow and not latency",
+    "not slow and not latency and not eval",
 ]
 markers = [
     "slow: integration tests that call the real LLM (deselected by default)",
     "latency: latency-budget tests that fire many requests (deselected by default)",
+    "eval: baseline eval suite — invokes the real orchestrator end-to-end against the running stack and spends Anthropic tokens (deselected by default)",
 ]
