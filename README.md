@@ -29,10 +29,10 @@ multiple medications, and recent labs). Open her chart, find the
 ## Architecture in five lines
 
 1. **OpenEMR custom module** (`interface/modules/custom_modules/oe-module-agentforge/`) renders the chat panel inside the patient summary and mints a per-turn JWT scoped to the open patient.
-2. **Python sidecar** (`sidecar/`, FastAPI + LangGraph) receives the JWT, fans out to a typed tool catalog (problems, medications, labs, vitals, allergies, immunizations, procedures, notes, search, encounters, demographics), synthesizes a response, and runs a streaming verifier over each claim.
-3. **Citations are enforced**: every clinical fact in the response carries `[type #id]` markers parseable back to a row in OpenEMR.
-4. **Session memory** (Redis) supports multi-turn conversation; **Langfuse** captures non-PHI traces; **sensitivity policy** gates record visibility before tool dispatch.
-5. **Eval suite** seeds a known-state demo DB and runs the real orchestrator end-to-end against happy-path, missing-data, ambiguous, unauthorized, and hallucination probes — results live in `docs/eval-report-*.md`.
+2. **Python sidecar** (`sidecar/`, FastAPI + LangGraph) receives the JWT, fans out to a typed tool catalog (problems, medications, labs, vitals, allergies, immunizations, procedures, notes, search, encounters, demographics) in parallel, then streams the synthesized response back over SSE.
+3. **Verify-before-emit**: every assistant sentence is gated against the per-turn citation cache before reaching the wire — ungrounded claims are replaced with a refusal marker, never streamed and rewritten. Citations carry `[type #id]` markers parseable back to a row in OpenEMR.
+4. **Session memory** (Redis) supports multi-turn conversation; **Langfuse** captures non-PHI traces with HMAC-pseudonymized IDs; **sensitivity policy** gates record visibility before tool dispatch; **per-turn cost** rides back on the `X-Agent-Cost-USD` response header.
+5. **Eval suite** runs the real orchestrator against twelve YAML failure-mode cases (happy-path, missing-data, ambiguous, unauthorized, hallucination) with deterministic + LLM-judge graders — see the most recent [`docs/eval-report-2026-05-03.md`](docs/eval-report-2026-05-03.md).
 
 Read deeper:
 
@@ -40,6 +40,7 @@ Read deeper:
 - [`USERS.md`](USERS.md) — User research, persona (Dr. Aisha Patel), use cases, success metrics.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — Six load-bearing decisions, three explicit tradeoffs, full system design.
 - [`DEPLOY.md`](DEPLOY.md) — Pre-deploy gates, deploy steps, rollback plan, post-deploy validation.
+- [`docs/eval-report-2026-05-03.md`](docs/eval-report-2026-05-03.md) — Most recent eval report (does it work on hard cases?).
 
 ## 60-second local quickstart
 
