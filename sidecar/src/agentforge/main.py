@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Protocol, cast
 
 import redis.asyncio as redis_async
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
 from agentforge.breakglass import BreakglassAuditTool
@@ -39,7 +39,7 @@ from agentforge.observability import (
     LangfuseClient,
     NullLangfuseClient,
 )
-from agentforge.orchestrator import Orchestrator
+from agentforge.orchestrator import Orchestrator, get_turn_cost_usd
 from agentforge.orchestrator.memory import ConversationMemory
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import AllergiesFetcher
@@ -282,10 +282,18 @@ def create_app(
         body: TurnRequest,
         ctx: Annotated[RequestContext, Depends(get_request_context)],
         orchestrator: Annotated[Orchestrator, Depends(get_orchestrator)],
+        response: Response,
     ) -> TurnResponse:
         reply = await orchestrator.turn(
             ctx, body.message, session_id=body.session_id
         )
+        # Surface accumulated LLM cost as a response header so the
+        # PHP module can log it next to the user/pid for the request
+        # (Week 1 Task #14). Read AFTER turn() returns and within the
+        # same asyncio task so the ContextVar still holds this turn's
+        # value. Six-decimal format because Anthropic's cheapest call
+        # is ~$1e-5 — three decimals would round to zero.
+        response.headers["X-Agent-Cost-USD"] = f"{get_turn_cost_usd():.6f}"
         return TurnResponse(reply=reply)
 
     return app
