@@ -67,6 +67,9 @@ def cost_recording_client(
     monkeypatch.setenv("JWT_SECRET", "test-jwt-secret")
     monkeypatch.setenv("HMAC_KEY", "test-hmac-key-32-bytes-aaaaaaaaaaaaa")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    # X-Agent-Cost-USD header is a non-streaming feature — the streaming path
+    # embeds cost in the SSE final frame instead. Force the non-streaming path.
+    monkeypatch.setenv("STREAMING_ENABLED", "false")
     get_settings.cache_clear()
 
     stash: dict[str, Any] = {

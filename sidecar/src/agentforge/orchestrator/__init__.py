@@ -731,21 +731,61 @@ class Orchestrator:
             # total_turn handler in :meth:`stream_turn` catches
             # ``TimeoutError`` and emits the budget-exceeded events.
             async with asyncio.timeout(self._timeout_policy.synthesis_phase):
-                async for event in self._llm.stream(
-                    system=SYSTEM_PROMPT,
-                    messages=messages,
-                    tools=tools,
-                    max_tokens=1024,
-                ):
-                    if isinstance(event, StreamTextDelta):
-                        iter_text_buffer.append(event.text)
-                        # Propagate the delta to the consumer
-                        # immediately. The verifier-before-emit gate
-                        # (Task #13) replaces this passthrough with a
-                        # sentence-buffered safety check.
-                        yield event
-                    elif isinstance(event, StreamFinal):
-                        iter_response = event.response
+                if self._verifier_enabled:
+                    # Verifier-before-emit gate (week1-gaps Task #13).
+                    # Tokens are piped through StreamingVerifier before
+                    # reaching the consumer.  Each VerifiedChunk is either
+                    # the original sentence (verified) or REJECTION_MARKER
+                    # (ungrounded).  The citation index is built from the
+                    # tool_results collected so far this turn so synthesis
+                    # sentences can only cite records the model actually
+                    # fetched.
+                    _final_holder: list[LLMResponse] = []
+
+                    async def _token_source() -> AsyncIterator[str]:
+                        async for event in self._llm.stream(
+                            system=SYSTEM_PROMPT,
+                            messages=messages,
+                            tools=tools,
+                            max_tokens=1024,
+                        ):
+                            if isinstance(event, StreamTextDelta):
+                                iter_text_buffer.append(event.text)
+                                yield event.text
+                            elif isinstance(event, StreamFinal):
+                                _final_holder.append(event.response)
+
+                    _index = build_citation_index(tool_results)
+                    _verifier = StreamingVerifier(
+                        citation_index=_index,
+                        domain_checker=self._domain_constraints,
+                    )
+                    _verified_parts: list[str] = []
+                    async for _chunk in _verifier.verify_stream(_token_source()):
+                        _verified_parts.append(_chunk.text)
+                        yield StreamTextDelta(text=_chunk.text)
+
+                    if _final_holder:
+                        _raw = _final_holder[0]
+                        iter_response = (
+                            _raw.model_copy(
+                                update={"text": "".join(_verified_parts)}
+                            )
+                            if _verified_parts
+                            else _raw
+                        )
+                else:
+                    async for event in self._llm.stream(
+                        system=SYSTEM_PROMPT,
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=1024,
+                    ):
+                        if isinstance(event, StreamTextDelta):
+                            iter_text_buffer.append(event.text)
+                            yield event
+                        elif isinstance(event, StreamFinal):
+                            iter_response = event.response
 
             if iter_response is None:
                 # Defensive: LLM.stream() contract guarantees one
