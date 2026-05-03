@@ -252,6 +252,38 @@ def test_record_llm_call_omits_cost_when_not_provided() -> None:
     assert "cost_usd" not in metadata
 
 
+# ---------- record_planner_decision ----------
+
+
+def test_record_planner_decision_emits_evaluator_span_with_use_case() -> None:
+    """Planner span captures the closed-enum ``use_case`` plus dispatch
+    shape (tool_count, batch_count). All values are non-PHI — ``use_case``
+    is from the four-element closed taxonomy and counts describe the
+    planner's structural output, not its content. Mirror of
+    ``record_verifier_decision`` so the dashboard treats both as
+    evaluator-style observations.
+    """
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_planner_decision(
+        handle,
+        use_case="admit_synthesis",
+        tool_count=10,
+        batch_count=3,
+    )
+
+    parent_span.start_observation.assert_called_once()
+    kwargs = parent_span.start_observation.call_args.kwargs
+    assert kwargs["name"] == "planner"
+    assert kwargs["as_type"] == "evaluator"
+    md = kwargs["metadata"]
+    assert md["use_case"] == "admit_synthesis"
+    assert md["tool_count"] == 10
+    assert md["batch_count"] == 3
+
+
 # ---------- record_verifier_decision ----------
 
 
@@ -339,6 +371,15 @@ def test_null_client_methods_are_noops_and_do_not_raise() -> None:
             claims_emitted=0,
             claims_rejected=0,
             by_category={},
+        )
+        is None
+    )
+    assert (
+        client.record_planner_decision(
+            handle,
+            use_case="admit_synthesis",
+            tool_count=0,
+            batch_count=0,
         )
         is None
     )

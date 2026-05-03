@@ -80,6 +80,15 @@ class LangfuseClient(Protocol):
         cost_usd: float | None = None,
     ) -> None: ...
 
+    def record_planner_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        use_case: str,
+        tool_count: int,
+        batch_count: int,
+    ) -> None: ...
+
     def record_verifier_decision(
         self,
         trace: TraceHandle,
