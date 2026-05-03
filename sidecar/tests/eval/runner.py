@@ -17,6 +17,8 @@ See ARCHITECTURE.md §8 and harness.py for the EvalHarness contract.
 
 from __future__ import annotations
 
+import datetime
+from collections import defaultdict
 from typing import Any
 
 from agentforge.gateway.auth_gateway import RequestContext
@@ -77,3 +79,56 @@ class EvalRunner:
             results.append(result)
         eval_cases = [c for c, _ in cases]
         return EvalHarness.summarize(results, eval_cases)
+
+
+def generate_report(results: list[EvalResult], cases: list[EvalCase]) -> str:
+    """Build a markdown eval report from graded results.
+
+    Groups cases by category, marks each PASS/FAIL, and appends a
+    failure reason line for any case that did not pass.
+    """
+    passed = sum(1 for r in results if r.passed)
+    failed = len(results) - passed
+
+    lines = [
+        f"# Eval Report {datetime.date.today()}",
+        "",
+        "## Summary",
+        "",
+        f"- Total: {len(results)}",
+        f"- Passed: {passed}",
+        f"- Failed: {failed}",
+        "",
+        "## Results",
+        "",
+    ]
+
+    by_category: dict[str, list[tuple[EvalCase, EvalResult]]] = defaultdict(list)
+    for case, result in zip(cases, results):
+        by_category[case.category.value].append((case, result))
+
+    for category, items in by_category.items():
+        lines.append(f"### {category}")
+        lines.append("")
+        for case, result in items:
+            marker = "PASS" if result.passed else "FAIL"
+            query_snippet = case.query[:60]
+            lines.append(f"- [{marker}] **{case.id}**: {query_snippet}")
+            if not result.passed:
+                reason = _failure_reason(result)
+                lines.append(f"  - Reason: {reason}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _failure_reason(result: EvalResult) -> str:
+    parts: list[str] = []
+    if not result.grounded:
+        ids = ", ".join(
+            f"{c.record_type}#{c.record_id}" for c in result.grounding_failures
+        )
+        parts.append(f"ungrounded citations: {ids}" if ids else "ungrounded citations")
+    if not result.behavior_pass:
+        parts.append("behavior check failed")
+    return "; ".join(parts) if parts else "unknown"
