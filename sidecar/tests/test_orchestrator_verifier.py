@@ -170,7 +170,7 @@ class TestVerifierGroundsResponseAgainstToolResults:
         assert "problem #1" in reply
         assert REJECTION_MARKER not in reply
 
-    async def test_uncited_sentence_is_redacted(self) -> None:
+    async def test_fabricated_citation_is_redacted(self) -> None:
         # Same shape, but the model emits a sentence with no citation.
         # The verifier replaces it with the redaction marker.
         llm = _llm_with_responses(
@@ -184,7 +184,7 @@ class TestVerifierGroundsResponseAgainstToolResults:
                 output_tokens=2,
             ),
             LLMResponse(
-                text="Patient seems generally healthy. ",
+                text="Hypertension on chart [problem #999]. ",
                 tool_calls=[],
                 stop_reason="end_turn",
                 input_tokens=20,
@@ -237,7 +237,7 @@ class TestVerifierGroundsResponseAgainstToolResults:
             LLMResponse(
                 text=(
                     "Real claim [problem #5]. "
-                    "Made-up claim about something else. "
+                    "Made-up claim [problem #999]. "
                 ),
                 tool_calls=[],
                 stop_reason="end_turn",

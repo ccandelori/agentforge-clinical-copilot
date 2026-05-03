@@ -224,10 +224,10 @@ class TestStreamingVerifierGate:
         assert REJECTION_MARKER not in text
 
     async def test_ungrounded_sentence_replaced_with_rejection_marker(self) -> None:
-        # Synthesis text has no citations → entire sentence is redacted.
+        # Synthesis text cites a record not in tool_results → redacted.
         llm = _make_streaming_llm(
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
-            _synthesis_events("Patient seems generally healthy. "),
+            _synthesis_events("Patient has hypertension [problem #999]. "),
         )
         problems = _fetcher_returning(_problems(1))
         orch = _build_orchestrator(llm=llm, problems=problems)
@@ -237,12 +237,12 @@ class TestStreamingVerifierGate:
         assert REJECTION_MARKER in "".join(deltas)
 
     async def test_multiple_sentences_order_preserved(self) -> None:
-        # Three sentences: first and third cite real records, second does not.
+        # Three sentences: first and third cite real records, second cites a fake one.
         llm = _make_streaming_llm(
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
             _synthesis_events(
                 "Known problem [problem #5]. ",
-                "Something made up entirely. ",
+                "Made up problem [problem #999]. ",
                 "Also on file [problem #5]. ",
             ),
         )
@@ -285,7 +285,7 @@ class TestStreamingVerifierGate:
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
             _synthesis_events(
                 "Verified claim [problem #2]. ",
-                "Unverified claim with no citation. ",
+                "Unverified claim [problem #999]. ",
             ),
         )
         problems = _fetcher_returning(_problems(2))

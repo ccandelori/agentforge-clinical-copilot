@@ -287,7 +287,7 @@ class TestVerifierDecisionSpan:
             LLMResponse(
                 text=(
                     "Real claim [problem #1]. "
-                    "Made-up claim with no citation. "
+                    "Made-up claim [problem #999]. "
                 ),
                 tool_calls=[],
                 stop_reason="end_turn",
@@ -308,8 +308,8 @@ class TestVerifierDecisionSpan:
         kwargs = langfuse.record_verifier_decision.call_args.kwargs
         assert kwargs["claims_emitted"] == 2
         assert kwargs["claims_rejected"] == 1
-        assert "no_citation" in kwargs["by_category"]
-        assert kwargs["by_category"]["no_citation"] == 1
+        assert "citation_not_in_cache" in kwargs["by_category"]
+        assert kwargs["by_category"]["citation_not_in_cache"] == 1
 
     async def test_no_verifier_span_when_verifier_disabled(self) -> None:
         llm = _llm_with(

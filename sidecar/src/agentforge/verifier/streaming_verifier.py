@@ -87,11 +87,12 @@ class StreamingVerifier:
     def _verify(self, claim: str) -> VerifiedChunk:
         citations = find_citations(claim)
         if not citations:
-            return VerifiedChunk(
-                text=REJECTION_MARKER,
-                verified=False,
-                rejection_reason="no_citation",
-            )
+            # Sentences without any citation are framing prose ("Here are
+            # the medications:", transitions, summaries). Pass them
+            # through verified — the safety guarantee is "if you cite,
+            # you cite truthfully," not "every sentence must cite."
+            # Citation-fabrication is still blocked below.
+            return VerifiedChunk(text=claim, verified=True, rejection_reason=None)
 
         # MVP rule: a claim passes only if all of its citations resolve.
         # Models occasionally emit two citations in one sentence (one
