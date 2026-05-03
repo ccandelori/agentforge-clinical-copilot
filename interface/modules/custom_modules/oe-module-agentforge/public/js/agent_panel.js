@@ -122,6 +122,81 @@
         return 'sid-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 10);
     }
 
+    /**
+     * Create an empty agent bubble for incremental token fill.
+     * Mirrors appendMessage('agent', ...) but leaves text empty.
+     */
+    function createStreamingBubble(messagesEl) {
+        var emptyState = messagesEl.querySelector('[data-role="empty-state"]');
+        if (emptyState) {
+            emptyState.remove();
+        }
+        var wrapper = document.createElement('div');
+        wrapper.className = 'agentforge-message mb-2 d-flex';
+        var bubble = document.createElement('div');
+        bubble.className = 'px-2 py-1 rounded bg-white border';
+        bubble.style.maxWidth = '85%';
+        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.style.wordBreak = 'break-word';
+        wrapper.appendChild(bubble);
+        messagesEl.appendChild(wrapper);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return bubble;
+    }
+
+    /**
+     * Read SSE frames from a ReadableStream reader and append text
+     * tokens to ``bubble`` as they arrive.
+     *
+     * Wire shape the sidecar emits (see main.py _sse_stream):
+     *   data: {"text": "..."}\n\n      — text delta
+     *   data: {"final": true, ...}\n\n — cost / stop_reason (informational)
+     *   data: [DONE]\n\n               — clean stream end
+     *
+     * The ``remaining`` buffer accumulates bytes between read() calls so
+     * a frame split across two chunks is reassembled before JSON.parse.
+     */
+    function consumeSseStream(reader, bubble, messagesEl) {
+        var decoder = new TextDecoder();
+        var remaining = '';
+
+        function readNext() {
+            return reader.read().then(function (result) {
+                if (result.done) {
+                    return;
+                }
+                remaining += decoder.decode(result.value, { stream: true });
+                var lines = remaining.split('\n');
+                // Keep the last (potentially incomplete) line for the next chunk.
+                remaining = lines[lines.length - 1];
+                for (var i = 0; i < lines.length - 1; i++) {
+                    var line = lines[i].trimEnd();
+                    if (line.indexOf('data: ') !== 0) {
+                        continue;
+                    }
+                    var data = line.slice(6);
+                    if (data === '[DONE]') {
+                        return; // clean end — stop reading
+                    }
+                    try {
+                        var parsed = JSON.parse(data);
+                        if (parsed && typeof parsed.text === 'string') {
+                            bubble.textContent += parsed.text;
+                            messagesEl.scrollTop = messagesEl.scrollHeight;
+                        }
+                        // final frame carries cost_usd + stop_reason; no
+                        // visible action needed here — JS already has it.
+                    } catch (e) {
+                        // malformed frame — skip silently
+                    }
+                }
+                return readNext();
+            });
+        }
+
+        return readNext();
+    }
+
     function send(panel, message) {
         var url = panel.getAttribute('data-turn-url') || '';
         var messagesEl = $(panel, 'messages');
@@ -139,16 +214,26 @@
             credentials: 'same-origin',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json, text/plain;q=0.9, */*;q=0.5'
+                // Prefer SSE so the sidecar streams tokens as they are
+                // produced; fall back to JSON for older/buffered paths.
+                'Accept': 'text/event-stream, application/json;q=0.9'
             },
             body: JSON.stringify(body)
         }).then(function (response) {
-            return response.text().then(function (body) {
-                if (!response.ok) {
-                    appendMessage(messagesEl, 'error', extractError(response.status, body));
-                    return;
-                }
-                appendMessage(messagesEl, 'agent', extractReply(body));
+            if (!response.ok) {
+                return response.text().then(function (rawBody) {
+                    appendMessage(messagesEl, 'error', extractError(response.status, rawBody));
+                });
+            }
+            var ct = (response.headers.get('content-type') || '').toLowerCase();
+            if (ct.indexOf('text/event-stream') !== -1 && response.body) {
+                // SSE streaming path — tokens appear incrementally.
+                var bubble = createStreamingBubble(messagesEl);
+                return consumeSseStream(response.body.getReader(), bubble, messagesEl);
+            }
+            // Non-streaming fallback — render full reply at once.
+            return response.text().then(function (rawBody) {
+                appendMessage(messagesEl, 'agent', extractReply(rawBody));
             });
         }).catch(function (err) {
             var msg = (err && err.message) ? err.message : 'Network error';
