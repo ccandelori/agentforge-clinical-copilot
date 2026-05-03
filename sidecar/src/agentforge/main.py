@@ -15,6 +15,7 @@ and the verifier are still deferred. See ARCHITECTURE.md §1.
 from __future__ import annotations
 
 import builtins
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -23,6 +24,7 @@ from typing import Annotated, Protocol, cast
 
 import redis.asyncio as redis_async
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agentforge.breakglass import BreakglassAuditTool
@@ -35,6 +37,7 @@ from agentforge.gateway.auth_gateway import (
 from agentforge.gateway.policy_loader import POLICY_LOADED_KEY, load_sensitivity_policy
 from agentforge.llm.claude import ClaudeClient
 from agentforge.llm.client import LLMClient
+from agentforge.llm.types import StreamFinal, StreamTextDelta
 from agentforge.observability import (
     AgentLangfuse,
     LangfuseClient,
@@ -99,6 +102,55 @@ def get_orchestrator(request: Request) -> Orchestrator:
             detail="Orchestrator is not configured on app.state",
         )
     return orchestrator
+
+
+async def _sse_stream(
+    orchestrator: Orchestrator,
+    ctx: RequestContext,
+    body: TurnRequest,
+) -> AsyncIterator[str]:
+    """Format ``orchestrator.stream_turn`` events as a Server-Sent Events
+    stream (week1-gaps Task #10).
+
+    Wire shape, per :rfc:`8895` SSE conventions:
+
+    .. code-block:: text
+
+        data: {"text": "Hello, "}
+
+        data: {"text": "Susan!"}
+
+        data: {"final": true, "stop_reason": "end_turn", "cost_usd": 0.001234}
+
+        data: [DONE]
+
+    Each frame is one ``data:`` line followed by an empty line. The
+    terminal ``[DONE]`` sentinel matches the OpenAI / Anthropic
+    streaming convention so JS readers built against either provider
+    can consume our stream without reshaping.
+
+    Cost is emitted on the ``final`` frame because we can't set an
+    HTTP header after the response body has started; the PHP proxy
+    parses the final frame and re-emits the cost as the same
+    ``X-Agent-Cost-USD`` header it surfaces today.
+    """
+    async for event in orchestrator.stream_turn(
+        ctx, body.message, session_id=body.session_id
+    ):
+        if isinstance(event, StreamTextDelta):
+            yield f"data: {json.dumps({'text': event.text})}\n\n"
+        elif isinstance(event, StreamFinal):
+            payload = {
+                "final": True,
+                "stop_reason": event.response.stop_reason,
+                "cost_usd": round(get_turn_cost_usd(), 6),
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+
+    # Terminator. SSE consumers know the stream is done when the
+    # connection closes; ``[DONE]`` is the upstream-compatible explicit
+    # signal so a client can detect a clean shutdown vs network drop.
+    yield "data: [DONE]\n\n"
 
 
 def _build_langfuse(settings: Settings) -> LangfuseClient:
@@ -314,7 +366,27 @@ def create_app(
         ctx: Annotated[RequestContext, Depends(get_request_context)],
         orchestrator: Annotated[Orchestrator, Depends(get_orchestrator)],
         response: Response,
-    ) -> TurnResponse:
+    ) -> TurnResponse | StreamingResponse:
+        # Streaming path (week1-gaps Task #10). Off by default; production
+        # flips ``STREAMING_ENABLED=true`` only after the verify-BEFORE-emit
+        # gate ships in #13. The cost header is emitted as a "final"
+        # SSE frame instead of an HTTP header because the cost isn't
+        # known until the body completes — by which time the response
+        # headers have already been sent.
+        if settings.streaming_enabled:
+            return StreamingResponse(
+                _sse_stream(orchestrator, ctx, body),
+                media_type="text/event-stream",
+                # Cache-Control: no SSE intermediary should buffer.
+                # X-Accel-Buffering: nginx-specific knob with the same
+                # intent — suppresses proxy buffering so deltas reach
+                # the client as they're emitted.
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         reply = await orchestrator.turn(
             ctx, body.message, session_id=body.session_id
         )
