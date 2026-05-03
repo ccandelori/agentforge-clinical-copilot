@@ -235,6 +235,25 @@ class Orchestrator:
                 ctx, session_id=session_id
             )
 
+        # Planner runs ONCE per turn, before the tool loop. The agent
+        # loop below still does its own tool selection — subtask 4.3
+        # only makes the call so 4.4 can attach use_case to the trace
+        # and #5 can consume ``plan.parallel_batches`` to seed
+        # dispatch. The return value is intentionally discarded for
+        # this commit; 4.4 reintroduces the binding when it uses it.
+        # Skipped entirely when no planner is wired (the legacy path
+        # the test suite was originally written against).
+        #
+        # Cost gap (carryforward): this LLM call is NOT yet routed
+        # through ``_record_llm_call``. The Planner consumes its own
+        # LLMClient and doesn't surface token counts, so the per-turn
+        # cost ContextVar undercounts by the planner's contribution
+        # (small system prompt + 1024-cap output, ~$0.005 per turn
+        # with claude-sonnet-4-5). Address before #20 enables the
+        # planner by default — otherwise dashboards understate cost.
+        if self._planner is not None:
+            await self._planner.plan(user_message)
+
         messages: list[Message] = []
         if self._memory is not None and session_id is not None:
             for entry in await self._memory.get_memory(session_id):
