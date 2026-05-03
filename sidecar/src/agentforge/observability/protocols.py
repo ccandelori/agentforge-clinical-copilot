@@ -106,6 +106,22 @@ class LangfuseClient(Protocol):
         by_category: dict[str, int],
     ) -> None: ...
 
+    def record_identity_guard_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        is_valid: bool,
+        matched_pattern: str | None,
+    ) -> None: ...
+
+    def record_data_quality_metrics(
+        self,
+        trace: TraceHandle,
+        *,
+        stale_labs_count: int,
+        conflict_count: int,
+    ) -> None: ...
+
     def flush(self) -> None: ...
 
     async def aclose(self) -> None: ...
