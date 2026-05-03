@@ -350,6 +350,85 @@ class TestConcurrentDispatchSafety:
         ], f"results out of input order: {order}"
 
 
+class TestParallelBatchObservability:
+    """Subtask 5.4 — every parallel batch emits a Langfuse span."""
+
+    async def test_orchestrator_records_parallel_batch_metric(
+        self, monkeypatch: Any
+    ) -> None:
+        """Each iteration of the tool loop that dispatches calls in
+        parallel must emit a ``record_parallel_batch`` observation
+        carrying batch_size and batch_duration_ms. The dashboard
+        joins this with the per-tool spans to compute savings.
+        """
+        from agentforge.llm.types import LLMResponse
+
+        first_calls = [
+            _tool_call("get_demographics", "t1"),
+            _tool_call("get_active_problems", "t2"),
+        ]
+        llm = AsyncMock()
+        llm.complete.side_effect = [
+            LLMResponse(
+                text="",
+                tool_calls=first_calls,
+                stop_reason="tool_use",
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=10,
+                output_tokens=5,
+            ),
+        ]
+
+        langfuse = MagicMock()
+        langfuse.trace_turn.return_value = MagicMock(trace_id="t-parallel-1")
+        langfuse.aclose = AsyncMock()
+
+        orch = Orchestrator(
+            llm=llm,
+            demographics_fetcher=AsyncMock(),
+            medications_fetcher=AsyncMock(),
+            problems_fetcher=AsyncMock(),
+            allergies_fetcher=AsyncMock(),
+            labs_fetcher=AsyncMock(),
+            vitals_fetcher=AsyncMock(),
+            notes_fetcher=AsyncMock(),
+            search_notes_fetcher=AsyncMock(),
+            encounters_fetcher=AsyncMock(),
+            immunizations_fetcher=AsyncMock(),
+            procedures_fetcher=AsyncMock(),
+            langfuse=langfuse,
+            hmac_key=b"test-key",
+        )
+
+        # Stub _dispatch_batch to keep the loop happy without going
+        # through the real fetchers — same pattern as 5.2's test.
+        async def stub_batch(
+            ctx: RequestContext,
+            calls: list[ToolCall],
+            trace: Any,
+            timed_out_tools: list[str],
+        ) -> list[tuple[str, Any]]:
+            del ctx, trace, timed_out_tools
+            return [(f'{{"name":"{c.name}"}}', None) for c in calls]
+
+        monkeypatch.setattr(orch, "_dispatch_batch", stub_batch)
+
+        await orch.turn(_ctx(), "Give me a chart overview.")
+
+        langfuse.record_parallel_batch.assert_called_once()
+        kwargs = langfuse.record_parallel_batch.call_args.kwargs
+        assert kwargs["batch_size"] == 2
+        # batch_duration_ms is non-negative; the stub returns
+        # essentially instantly but the metric must still be recorded.
+        assert kwargs["batch_duration_ms"] >= 0
+
+
 # Marker — keeps the import set quiet against ruff's
 # unused-import warning when test classes get reshuffled.
 _ = (MagicMock,)

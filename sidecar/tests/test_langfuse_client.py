@@ -284,6 +284,34 @@ def test_record_planner_decision_emits_evaluator_span_with_use_case() -> None:
     assert md["batch_count"] == 3
 
 
+# ---------- record_parallel_batch ----------
+
+
+def test_record_parallel_batch_emits_span_with_size_and_duration() -> None:
+    """The parallel-dispatch span carries batch_size + batch_duration_ms.
+    Sequential-equivalent timing is NOT logged here — per-tool spans
+    already carry each tool's latency, and the dashboard joins them
+    to compute savings (sum(per-tool) - batch_duration_ms). Keeping
+    the metadata small keeps the cost of every batch span tiny.
+    """
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_parallel_batch(
+        handle,
+        batch_size=5,
+        batch_duration_ms=1200,
+    )
+
+    parent_span.start_observation.assert_called_once()
+    kwargs = parent_span.start_observation.call_args.kwargs
+    assert kwargs["name"] == "parallel_batch"
+    md = kwargs["metadata"]
+    assert md["batch_size"] == 5
+    assert md["batch_duration_ms"] == 1200
+
+
 # ---------- record_verifier_decision ----------
 
 
@@ -380,6 +408,14 @@ def test_null_client_methods_are_noops_and_do_not_raise() -> None:
             use_case="admit_synthesis",
             tool_count=0,
             batch_count=0,
+        )
+        is None
+    )
+    assert (
+        client.record_parallel_batch(
+            handle,
+            batch_size=0,
+            batch_duration_ms=0,
         )
         is None
     )

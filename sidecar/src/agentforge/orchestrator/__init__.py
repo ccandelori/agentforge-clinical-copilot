@@ -353,8 +353,14 @@ class Orchestrator:
             #
             # Result list comes back in input order (asyncio.gather
             # guarantee), so zipping with response.tool_calls is safe.
+            batch_start = time.perf_counter()
             batch_results = await self._dispatch_batch(
                 ctx, list(response.tool_calls), trace, timed_out_tools
+            )
+            self._record_parallel_batch(
+                trace,
+                batch_size=len(response.tool_calls),
+                batch_duration_ms=_elapsed_ms(batch_start),
             )
             for call, (content_json, result) in zip(
                 response.tool_calls, batch_results, strict=True
@@ -745,6 +751,21 @@ class Orchestrator:
             use_case=use_case,
             tool_count=tool_count,
             batch_count=batch_count,
+        )
+
+    def _record_parallel_batch(
+        self,
+        trace: TraceHandle | None,
+        *,
+        batch_size: int,
+        batch_duration_ms: int,
+    ) -> None:
+        if self._langfuse is None or trace is None:
+            return
+        self._langfuse.record_parallel_batch(
+            trace,
+            batch_size=batch_size,
+            batch_duration_ms=batch_duration_ms,
         )
 
     def _record_verifier_decision(
