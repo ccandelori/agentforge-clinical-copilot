@@ -1,4 +1,4 @@
-# Where we left off — 2026-05-02 (mid-session, week1-gaps 8/22 — Planner + parallel dispatch + truncator wiring shipped)
+# Where we left off — 2026-05-02 (end of session, week1-gaps 8/22 — three integration tasks shipped)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
@@ -12,22 +12,30 @@ new PRD (`.taskmaster/docs/week1-gaps-prd.md`), parsed it into 22
 remediation tasks under the `week1-gaps` tag, expanded the heavy
 ones into 44 subtasks, and started shipping.
 
-**Current state: week1-gaps 7/22 done + 1 hotfix.** Phase 1 (visible
-deliverables) complete. Phase 2 integration pass started: Planner
-(#4) and parallel dispatch (#5) BOTH shipped this session and are
-exercising on every /turn locally. Eval baseline holds at 6 pass +
-1 xfail across both refactors; the ADV-CROSS-PATIENT XFAIL is the
-deliberate signal that #7 (IdentityGuard) hasn't shipped yet.
+**Current state: week1-gaps 8/22 done + 1 hotfix.** Phase 1 (visible
+deliverables) complete. Phase 2 integration pass is well underway:
+Planner (#4), parallel dispatch (#5), AND truncator wiring (#6) all
+shipped this session. Planner + parallel dispatch are exercising on
+every /turn locally; the truncator is constructible and held but
+**deliberately not yet invoked** by `Orchestrator.turn` — see
+DEVIATIONS.md 2026-05-02 for the architectural reason.
+
+Eval baseline holds at 6 pass + 1 xfail across all three refactors;
+the ADV-CROSS-PATIENT XFAIL is the deliberate signal that #7
+(IdentityGuard) hasn't shipped yet.
 
 **Eval runtime moved from 98s (pre-Planner) → 139s (Planner default-on)
-→ 122s (parallel dispatch).** The +41s from Planner is the cost-gap
-carryforward — every turn now does +1 LLM call for classification.
-The -17s from parallel dispatch is the headline: UC-1 / UC-3 chart
-overviews where the LLM emits 5-8 tool_calls in one shot now run
+→ 122s (parallel dispatch) → 122s (truncator wiring; no behavior
+change).** The +41s from Planner is the cost-gap carryforward —
+every turn now does +1 LLM call for classification. The -17s from
+parallel dispatch is the headline: UC-1 / UC-3 chart overviews
+where the LLM emits 5-8 tool_calls in one shot now run
 max(per-tool-latency) instead of sum.
 
-Integration pass continues: #6 (truncator) → #7 (data-quality +
-identity guard) → #8 (latency budget). Streaming refactor
+Integration pass continues: #7 (data-quality + identity guard) →
+#8 (latency budget). The single most informative signal the next
+session can produce is **ADV-CROSS-PATIENT flipping XFAIL → XPASS**
+when #7 wires IdentityGuard end-to-end. Streaming refactor
 (#9-#13) still untouched — touches the same orchestrator file
 heavily so sequence after the integration pass.
 
@@ -74,8 +82,9 @@ week1-gaps tasks closed (in merge order, all on main):
   14  Cost accounting in LLM calls + traces   (X-Agent-Cost-USD header)
   4   Planner wired into Orchestrator.turn    (5 subtasks)
   5   Parallel tool dispatch via gather       (4 subtasks)
+  6   SynthesisInputTruncator constructor     (wiring only — see DEVIATIONS)
 
-7 / 22 done.
+8 / 22 done.
 
 Hotfixes (no week1-gaps task ID — pre-existing bug surfaced by #21):
   * fix-w1-policy-sentinel-key-mismatch — auth_gateway used
@@ -85,27 +94,33 @@ Hotfixes (no week1-gaps task ID — pre-existing bug surfaced by #21):
     wired both halves to the same Redis. Aliased to a single key.
 ```
 
-Sidecar test suite: **598 → 617** default-tier (+19 from Planner
-wiring + parallel dispatch + observability spans). Plus **6 passed
-+ 1 xfailed** on ``-m eval`` against the live local stack — the
-xfail is the ADV-CROSS-PATIENT IdentityGuard probe, strict-xfailed
-until #7 wires the guard so a flip to passing reports as XPASS.
+Sidecar test suite: **598 → 621** default-tier (+23 from Planner
+wiring + parallel dispatch + observability spans + truncator
+wiring). Plus **6 passed + 1 xfailed** on ``-m eval`` against the
+live local stack — the xfail is the ADV-CROSS-PATIENT IdentityGuard
+probe, strict-xfailed until #7 wires the guard so a flip to
+passing reports as XPASS.
 
 PHP isolated AgentForge: still **251/251** (no PHP work this push).
 
 ## Where the integration pass stands
 
-**TWO utilities still BUILT BUT NOT WIRED:**
+**TWO utilities still BUILT BUT NOT WIRED behaviorally:**
 
-  * SynthesisInputTruncator (Task 45) — token cap + drop/shrink → #6
+  * SynthesisInputTruncator (Task 45) — **constructor wired** in
+    #6 but `Orchestrator.turn` does NOT yet invoke `truncate()`.
+    See DEVIATIONS.md 2026-05-02 — the iterative tool-use loop has
+    no separate synthesis-input seam, and aggressive post-loop
+    truncation regresses verifier citation cache. Behavioral
+    integration moves to the streaming refactor.
   * DataQualityChecker (Task 46) + IdentityGuard (Task 42) → #7
+    (next session)
 
 (Planner #27 wired in #4; parallel dispatch wired in #5.)
 
 Remaining sequence:
 
-  6 truncator → 7 DataQuality + IdentityGuard → 8 latency budget
-  enforcement.
+  7 DataQuality + IdentityGuard → 8 latency budget enforcement.
 
 Task #7 has a documented data-sourcing decision (option A/B/C —
 recommended B: fetch demographics first, then run IdentityGuard).
@@ -113,10 +128,11 @@ See `task-master show 7` for details.
 
 The baseline eval (#21) is the safety net during this refactor —
 ``uv run pytest -m eval`` produced identical 6 pass + 1 xfail
-across BOTH #4 (Planner) AND #5 (parallel dispatch). Continue
-running it between subtasks. **Watch for ADV-CROSS-PATIENT
-flipping XFAIL → XPASS when #7 wires IdentityGuard — that's the
-deliberate signal that the guard is working end-to-end.**
+across #4 (Planner), #5 (parallel dispatch), AND #6 (truncator
+wiring). Continue running it between subtasks. **Watch for
+ADV-CROSS-PATIENT flipping XFAIL → XPASS when #7 wires IdentityGuard
+— that's the deliberate signal that the guard is working
+end-to-end.**
 
 ## Where streaming stands
 
@@ -154,11 +170,13 @@ to be visible:
     fix: redeploying #2 without the hotfix takes the droplet down.**
 
 **Recommended:** redeploy at next session start so the droplet
-reflects #2, #3, #14, AND the hotfix together. Run baseline eval
-(#21) against droplet first to confirm pre-redeploy behavior, then
-redeploy, then run again to confirm cost header appears AND the
-IdentityGuard xfail still fires on the droplet (proves #7 is still
-the open question, not infrastructure drift).
+reflects #2, #3, #4, #5, #6, #14, AND the hotfix together. Run
+baseline eval (#21) against droplet first to confirm pre-redeploy
+behavior, then redeploy, then run again to confirm cost header
+appears AND the IdentityGuard xfail still fires on the droplet
+(proves #7 is still the open question, not infrastructure drift).
+Droplet is now significantly behind main — ~17 commits, including
+the entire integration-pass progress this session.
 
 ## Live carryforwards (still deferred — no taskmaster ID)
 
@@ -219,27 +237,39 @@ and remain backlog. Don't accidentally pull these in mid-session.
 
 ## Quick wins still available (within week1-gaps)
 
-  * **Continue integration pass at #6 (truncator)** — same shape
-    as #4: wire an existing utility (SynthesisInputTruncator) into
-    Orchestrator.turn after tool results are collected, before the
-    final synthesis call. Should be ~3-5 commits like #4 was.
+  * **Continue integration pass at #7 (DataQualityChecker +
+    IdentityGuard)** — THE headline next move. Will flip
+    ADV-CROSS-PATIENT from XFAIL → XPASS once IdentityGuard is
+    invoking on every turn. Has a documented option A/B/C
+    data-sourcing decision (see `task-master show 7`); option B
+    is recommended (fetch demographics first, then run guard).
+    Multi-file: `orchestrator/identity_guard.py` is built; needs
+    integration into `Orchestrator.turn` + `create_app`. Needs
+    its own branch; expect 4-6 commits.
 
   * **Start streaming refactor at #9 (LLM stream interface)** —
     pure sidecar change, ~2-3 hours. Independent of integration
-    pass; sequence after #6/#7/#8 land because both branches
-    touch orchestrator/__init__.py heavily.
+    pass; sequence after #7/#8 land because both branches touch
+    orchestrator/__init__.py heavily.
 
   * **#15 (cost_report CLI tool)** — INDEPENDENT of integration
     pass. Reads cost spans from Langfuse and prints a per-turn
     breakdown. Could be parallelized via subagent if you push
     main to origin first; otherwise run foreground.
 
+  * **Re-record post-integration eval baseline.** The current
+    `docs/eval-baseline-post-hotfix.txt` and
+    `docs/eval-baseline-after-task-4.txt` are pre-#5 and pre-#6.
+    Run `uv run pytest -m eval -v -s | tee
+    docs/eval-baseline-post-task-6.txt` so the diff line into #7
+    is accurate.
+
 ## Quick-start checklist for next time
 
 1. ``git status`` — confirm no uncommitted changes you forgot about.
 2. ``task-master tags use week1-gaps && task-master list`` — confirm
-   7/22 still reflects reality.
-3. ``cd sidecar && uv run pytest`` — confirm 617/617 still green.
+   8/22 still reflects reality.
+3. ``cd sidecar && uv run pytest`` — confirm 621/621 still green.
 4. **Verify sidecar can boot.** Before running the eval, confirm
    the sidecar is alive on :8000 — `tail -3 sidecar/var/sidecar.log`
    should end with "Application startup complete." If it shows a
@@ -249,9 +279,11 @@ and remain backlog. Don't accidentally pull these in mid-session.
    missing keys). See carryforward #10.
 5. ``cd sidecar && uv run pytest -m eval`` — confirm baseline at
    **6 passed + 1 xfailed** (the xfail is ADV-CROSS-PATIENT until
-   #7 ships).
-6. ``task-master next`` should propose **#6 (truncator
-   integration)** as the recommended next task.
+   #7 ships). If you see SKIPPED instead of PASSED on any case,
+   restart sidecar cleanly first — `--reload` churn from this
+   session may still be in flight (carryforward #9).
+6. ``task-master next`` should propose **#7 (DataQuality +
+   IdentityGuard integration)** as the recommended next task.
 7. If iterating locally:
    - **Host-script mode:** ``./sidecar/scripts/sidecar.sh start``
      (sidecar on :8000, ``--reload``)
@@ -282,12 +314,20 @@ and remain backlog. Don't accidentally pull these in mid-session.
   * `.taskmaster/docs/week1-gaps-prd.md` — the remediation PRD
   * `task-master tags use week1-gaps` then `task-master list` —
     full task graph
-  * `task-master show 4` — Planner integration, 5 subtasks
   * `task-master show 7` — DataQuality + IdentityGuard
-    (option A/B/C decision in there)
+    (option A/B/C decision in there) — **next session's task**
+  * `docs/DEVIATIONS.md` (top of file, 2026-05-02 entries) — both
+    the planner-as-class deviation AND the truncator-wiring-only
+    deviation explain why the architecture isn't matching the PRD
   * `task-master show 13` — verify-BEFORE-emit design (corrected
     from finalize-after-stream)
-  * `sidecar/tests/eval/baseline/` — the new baseline eval suite
+  * `sidecar/src/agentforge/orchestrator/__init__.py` — the
+    integrated orchestrator. Planner call site is right after
+    breakglass; parallel-batch dispatch is in the tool loop;
+    truncator is held but not yet invoked.
+  * `sidecar/src/agentforge/orchestrator/identity_guard.py` —
+    the identity guard waiting to be wired in #7
+  * `sidecar/tests/eval/baseline/` — the baseline eval suite
   * `DEPLOY.md`, `docs/DEPLOYMENT.md` — deployment plan
   * `ARCHITECTURE.md` — six load-bearing decisions
 
@@ -300,24 +340,28 @@ local main to origin first or pass an explicit base. Otherwise the
 subagent reports "files don't exist" because the project's
 foundational scaffolding is on commits the worktree never sees.
 
-## How this session is going (mid-session checkpoint)
+## How this session ended
 
 ```
-7 / 22 week1-gaps tasks closed + 1 hotfix (no new hotfixes this slice)
-617 default sidecar tests + 4 slow + 2 latency + 7 eval (6 pass / 1 xfail) — all opt-in
+8 / 22 week1-gaps tasks closed + 1 hotfix (no new hotfixes this slice)
+621 default sidecar tests + 4 slow + 2 latency + 7 eval (6 pass / 1 xfail) — all opt-in
 251 PHP isolated AgentForge tests (untouched this slice)
-~24 commits across this slice, 4 merges to main
-9 commits between #4 (Planner) start and #5 (parallel dispatch) merge
+~26 commits across this slice, 5 task merges to main
+3 heavy integration tasks shipped: #4 Planner (5 subtasks), #5
+  parallel dispatch (4 subtasks), #6 truncator wiring (single)
 Eval runtime: 98s → 139s (Planner default-on) → 122s (parallel
-  dispatch) — net +24s for richer functionality with parallel
-  reclaim
+  dispatch) → 122s (truncator wiring; behavior unchanged)
 ```
 
-Continuing the integration pass: #6 truncator → #7 DataQuality +
-IdentityGuard → #8 latency budget. **The single most informative
-signal the next session can produce is ADV-CROSS-PATIENT flipping
-XFAIL → XPASS — that's the moment IdentityGuard is wired
-end-to-end and the eval suite earns its keep a third time.**
+Next session opens at the integration pass's most informative
+moment: **#7 DataQuality + IdentityGuard, with ADV-CROSS-PATIENT
+the strict-xfail waiting to flip to XPASS.** When that flips,
+the eval suite has earned its keep a third time and the
+clinical-safety guarantee is end-to-end live.
+
+After #7: #8 (latency budget enforcement) closes the integration
+pass; then either streaming (#9-#13) or the smaller carryforwards
+(#15 cost CLI, #22 observability acceptance) are unblocked.
 
 ## Lessons surfaced this session
 
@@ -356,3 +400,20 @@ end-to-end and the eval suite earns its keep a third time.**
   "redis_url Field required" on every restart. Bypassed via
   `REDIS_URL=... ./scripts/sidecar.sh restart`. Carry forward
   #10 covers the fix.
+
+* **Architecture-vs-PRD mismatches are real.** Both #6 (truncator)
+  and likely #7 (data-quality / identity-guard) PRDs were written
+  against the planner-driven fetch-then-synthesize pattern from
+  ARCHITECTURE.md §3. The actual orchestrator stayed iterative
+  tool-use because nothing has flipped that switch yet. #6 wired
+  the kwarg but deferred behavior; expect to make a similar call
+  on #7. DEVIATIONS.md 2026-05-02 captures the truncator case in
+  full; mirror that pattern when the same shape recurs.
+
+* **Don't restart the sidecar mid-session unless you have to.**
+  The original sidecar process (pid 47237) had been running for
+  hours with parent-shell env vars set. After I restarted it to
+  pick up reload churn, .env-only loading failed and recovery
+  required `REDIS_URL=...` injection. If the running sidecar is
+  serving 200s, leave it alone — `--reload` will pick up code
+  changes without a restart.
