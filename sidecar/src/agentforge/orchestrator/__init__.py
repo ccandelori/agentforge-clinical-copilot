@@ -342,10 +342,23 @@ class Orchestrator:
                 )
                 return final_text
 
-            for call in response.tool_calls:
-                content_json, result = await self._dispatch(
-                    ctx, call, trace, timed_out_tools
-                )
+            # Dispatch every tool the LLM asked for in this iteration
+            # concurrently. The previous implementation looped
+            # _dispatch one-at-a-time, which spent
+            # sum(per-tool-latency) waiting on independent fetches
+            # whose dependencies were already resolved (the LLM
+            # decided to call them all in one shot, so it considers
+            # them mutually independent). Using _dispatch_batch
+            # collapses that wait to max(per-tool-latency).
+            #
+            # Result list comes back in input order (asyncio.gather
+            # guarantee), so zipping with response.tool_calls is safe.
+            batch_results = await self._dispatch_batch(
+                ctx, list(response.tool_calls), trace, timed_out_tools
+            )
+            for call, (content_json, result) in zip(
+                response.tool_calls, batch_results, strict=True
+            ):
                 if result is not None:
                     tool_results[call.name] = result
                 messages.append(

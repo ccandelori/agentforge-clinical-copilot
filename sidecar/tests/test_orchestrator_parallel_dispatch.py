@@ -169,6 +169,91 @@ class TestDispatchBatch:
         assert result == []
 
 
+class TestTurnUsesDispatchBatch:
+    """Subtask 5.2 — turn() dispatches all tool_calls in one batch."""
+
+    async def test_turn_dispatches_response_tool_calls_in_parallel(
+        self, monkeypatch: Any
+    ) -> None:
+        """When the LLM emits multiple tool_calls in one response, the
+        orchestrator must hand them all to ``_dispatch_batch`` in a
+        single call rather than looping ``_dispatch`` sequentially.
+        Sentinel: the test stubs ``_dispatch_batch`` to mark
+        invocations and counts them. One LLM response with three
+        tool_calls → one ``_dispatch_batch`` call carrying all three.
+        """
+        from agentforge.llm.types import LLMResponse
+
+        # Two-step LLM script: first turn emits 3 tool_calls, second
+        # turn emits the final text. Mirrors the pattern used in
+        # tests/test_orchestrator_tracing for the same reason — every
+        # tool-using turn is at least 2 LLM round-trips.
+        first_calls = [
+            _tool_call("get_demographics", "t1"),
+            _tool_call("get_active_problems", "t2"),
+            _tool_call("get_active_medications", "t3"),
+        ]
+        llm = AsyncMock()
+        llm.complete.side_effect = [
+            LLMResponse(
+                text="",
+                tool_calls=first_calls,
+                stop_reason="tool_use",
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=10,
+                output_tokens=5,
+            ),
+        ]
+
+        orch = _build_orchestrator()
+        # Replace the LLM after construction so the typed Orchestrator
+        # signature still drives the build.
+        monkeypatch.setattr(orch, "_llm", llm)
+
+        # Stub _dispatch_batch wholesale. The real implementation routes
+        # to per-tool fetchers — those would need typed ToolResult mocks
+        # that we don't care about here. What 5.2 verifies is that the
+        # whole list of tool_calls flows through ONE batch call, not
+        # three sequential _dispatch calls. Returning a static result
+        # tuple per call keeps the assistant-message construction happy
+        # without dragging the catalogue mocks in.
+        batch_calls_seen: list[list[ToolCall]] = []
+
+        async def stub_batch(
+            ctx: RequestContext,
+            calls: list[ToolCall],
+            trace: Any,
+            timed_out_tools: list[str],
+        ) -> list[tuple[str, Any]]:
+            del ctx, trace, timed_out_tools
+            batch_calls_seen.append(list(calls))
+            return [(f'{{"name":"{c.name}"}}', None) for c in calls]
+
+        monkeypatch.setattr(orch, "_dispatch_batch", stub_batch)
+
+        await orch.turn(_ctx(), "Give me a chart overview.")
+
+        # One LLM response with 3 tool_calls → exactly ONE batch
+        # invocation carrying all three names. Two batch calls would
+        # mean the loop is still serializing one-at-a-time across
+        # iterations of the outer loop.
+        assert len(batch_calls_seen) == 1, (
+            f"_dispatch_batch should be called once for the single "
+            f"tool-using LLM response; saw {len(batch_calls_seen)} calls"
+        )
+        assert {c.name for c in batch_calls_seen[0]} == {
+            "get_demographics",
+            "get_active_problems",
+            "get_active_medications",
+        }
+
+
 # Marker — keeps the import set quiet against ruff's
 # unused-import warning when test classes get reshuffled.
 _ = (MagicMock,)
