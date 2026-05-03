@@ -173,6 +173,36 @@ class AgentLangfuse:
         )
         span.end()
 
+    def record_planner_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        use_case: str,
+        tool_count: int,
+        batch_count: int,
+    ) -> None:
+        """Emit an evaluator-style span describing the planner output.
+
+        The values logged here are PHI-safe by construction:
+        ``use_case`` is from the four-element closed enum (see
+        :class:`agentforge.orchestrator.planner.UseCase`) and the counts
+        describe dispatch shape, not patient content.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="planner",
+            as_type="evaluator",
+            metadata={
+                "use_case": use_case,
+                "tool_count": tool_count,
+                "batch_count": batch_count,
+            },
+        )
+        span.end()
+
     def record_verifier_decision(
         self,
         trace: TraceHandle,

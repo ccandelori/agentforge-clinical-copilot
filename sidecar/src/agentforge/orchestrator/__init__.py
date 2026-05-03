@@ -35,6 +35,7 @@ from agentforge.observability.cost import calculate_cost
 from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
+from agentforge.orchestrator.planner import Planner
 from agentforge.prompts import load_prompt
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.timeouts import (
@@ -165,6 +166,7 @@ class Orchestrator:
         retry_policy: RetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         breakglass_audit: BreakglassAuditTool | None = None,
+        planner: Planner | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -190,6 +192,11 @@ class Orchestrator:
         self._retry_policy = retry_policy or RetryPolicy()
         self._sleep = sleep
         self._breakglass_audit = breakglass_audit
+        # Optional planner. When set, ``turn()`` (subtask 4.3) calls
+        # ``planner.plan(user_message)`` before the tool loop and uses
+        # the resulting ``Plan`` to seed dispatch. ``None`` keeps the
+        # legacy "let the model pick tools as it goes" path intact.
+        self._planner = planner
 
     async def turn(
         self,
@@ -227,6 +234,22 @@ class Orchestrator:
             await self._breakglass_audit.log_breakglass_access(
                 ctx, session_id=session_id
             )
+
+        # Planner runs ONCE per turn, before the tool loop. The agent
+        # loop below still does its own tool selection — the plan's
+        # use_case rides on the trace (this subtask) and #5 will
+        # consume ``plan.parallel_batches`` to seed dispatch.
+        # Skipped entirely when no planner is wired (the legacy path
+        # the test suite was originally written against).
+        #
+        # Cost gap (carryforward): this LLM call is NOT yet routed
+        # through ``_record_llm_call``. The Planner consumes its own
+        # LLMClient and doesn't surface token counts, so the per-turn
+        # cost ContextVar undercounts by the planner's contribution
+        # (small system prompt + 1024-cap output, ~$0.005 per turn
+        # with claude-sonnet-4-5). Address before #20 enables the
+        # planner by default — otherwise dashboards understate cost.
+        plan = await self._planner.plan(user_message) if self._planner else None
 
         messages: list[Message] = []
         if self._memory is not None and session_id is not None:
@@ -266,6 +289,18 @@ class Orchestrator:
         timed_out_tools: list[str] = []
 
         trace = self._open_trace(ctx)
+        # Planner ran above; surface its classification on the trace so
+        # cohort filters in Langfuse can split metrics by use_case
+        # (admit_synthesis vs contraindication etc) without mining
+        # turn payloads. tool_count + batch_count describe dispatch
+        # shape only — no PHI leaves this call.
+        if plan is not None:
+            self._record_planner_decision(
+                trace,
+                use_case=plan.use_case.value,
+                tool_count=len(plan.tool_calls),
+                batch_count=len(plan.parallel_batches),
+            )
 
         for _ in range(MAX_TOOL_ITERATIONS):
             llm_start = time.perf_counter()
@@ -651,6 +686,23 @@ class Orchestrator:
             cache_hit=cache_hit,
             args_hash=args_hash,
             result_hash=result_hash,
+        )
+
+    def _record_planner_decision(
+        self,
+        trace: TraceHandle | None,
+        *,
+        use_case: str,
+        tool_count: int,
+        batch_count: int,
+    ) -> None:
+        if self._langfuse is None or trace is None:
+            return
+        self._langfuse.record_planner_decision(
+            trace,
+            use_case=use_case,
+            tool_count=tool_count,
+            batch_count=batch_count,
         )
 
     def _record_verifier_decision(

@@ -41,6 +41,7 @@ from agentforge.observability import (
 )
 from agentforge.orchestrator import Orchestrator, get_turn_cost_usd
 from agentforge.orchestrator.memory import ConversationMemory
+from agentforge.orchestrator.planner import Planner
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
@@ -137,6 +138,7 @@ def create_app(
     redis_storage: AgentRedisClient | None = None,
     langfuse_client: LangfuseClient | None = None,
     redis_client: _AppRedisProto | None = None,
+    planner: Planner | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -241,6 +243,12 @@ def create_app(
     )
     langfuse: LangfuseClient = langfuse_client or _build_langfuse(settings)
 
+    # Default-on planner. Constructed against the same LLM client the
+    # orchestrator uses so cost tracking, model selection, and any
+    # future client-side instrumentation share one path. Tests can
+    # inject a stub via the `planner=` kwarg to skip the real LLM.
+    planner_instance = planner or Planner(llm=llm)
+
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
@@ -261,6 +269,7 @@ def create_app(
         hmac_key=settings.hmac_key.encode("utf-8"),
         redis_storage=storage,
         memory=ConversationMemory(redis_storage=storage),
+        planner=planner_instance,
     )
 
     app.state.auth_gateway = auth_gateway

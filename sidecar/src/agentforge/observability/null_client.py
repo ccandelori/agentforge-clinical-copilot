@@ -79,6 +79,16 @@ class NullLangfuseClient:
     ) -> None:
         del trace, model, prompt_tokens, completion_tokens, latency_ms, cost_usd
 
+    def record_planner_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        use_case: str,
+        tool_count: int,
+        batch_count: int,
+    ) -> None:
+        del trace, use_case, tool_count, batch_count
+
     def record_verifier_decision(
         self,
         trace: TraceHandle,
