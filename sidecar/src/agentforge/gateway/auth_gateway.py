@@ -27,11 +27,22 @@ import redis.exceptions
 from fastapi import Depends, Header, HTTPException, Request, status
 
 from agentforge.gateway.policy import RecordClassRule, SensitivityPolicy
+from agentforge.gateway.policy_loader import POLICY_LOADED_KEY
 from agentforge.gateway.policy_reader import fetch_sensitivity_rules
 
 ISSUER = "openemr-agentforge"
 
-POLICY_SENTINEL_KEY = "agentforge:policy:version"
+# Alias for the canonical sentinel key the loader writes
+# (``agentforge:policy:loaded``). Historically this module used a
+# distinct ``POLICY_SENTINEL_KEY = "agentforge:policy:version"`` that
+# nothing else in the codebase wrote — the mismatch was invisible
+# while the auth gateway ran without a Redis client (tests mocked
+# either key separately). Once Week 1 #2 wired the production
+# auth_gateway to a real Redis, every /turn request hit the missing
+# sentinel and 503'd. Re-aliased here so a single string flows from
+# loader to reader; the old constant name is retained for any
+# external reference.
+POLICY_SENTINEL_KEY = POLICY_LOADED_KEY
 ROLE_CLEARANCES_PREFIX = "agentforge:policy:role:"
 
 
