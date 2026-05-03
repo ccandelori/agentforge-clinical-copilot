@@ -87,6 +87,7 @@ class LangfuseClient(Protocol):
         use_case: str,
         tool_count: int,
         batch_count: int,
+        latency_ms: int = 0,
     ) -> None: ...
 
     def record_parallel_batch(
@@ -104,6 +105,7 @@ class LangfuseClient(Protocol):
         claims_emitted: int,
         claims_rejected: int,
         by_category: dict[str, int],
+        latency_ms: int = 0,
     ) -> None: ...
 
     def record_identity_guard_decision(
@@ -112,6 +114,28 @@ class LangfuseClient(Protocol):
         *,
         is_valid: bool,
         matched_pattern: str | None,
+        latency_ms: int = 0,
+    ) -> None: ...
+
+    def record_verifier_span(
+        self,
+        trace: TraceHandle,
+        *,
+        latency_ms: int,
+        claims_emitted: int,
+        claims_rejected: int,
+        by_category: dict[str, int],
+    ) -> None: ...
+
+    def record_tool_failure_detail(
+        self,
+        trace: TraceHandle,
+        *,
+        tool_name: str,
+        error_type: str,
+        retry_attempts: int,
+        final_outcome: str,
+        latency_ms: int,
     ) -> None: ...
 
     def record_data_quality_metrics(

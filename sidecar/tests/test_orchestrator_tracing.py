@@ -327,6 +327,131 @@ class TestVerifierDecisionSpan:
         langfuse.record_verifier_decision.assert_not_called()
 
 
+class TestVerifierSpan:
+    """record_verifier_span is called by the streaming verifier path and
+    carries explicit latency_ms plus the chunk counts."""
+
+    async def test_record_verifier_span_emits_on_langfuse(self) -> None:
+        langfuse = _make_langfuse_mock()
+        langfuse.record_verifier_span = MagicMock()
+
+        # Call the protocol method directly through the mock to verify
+        # the signature is correct.
+        handle = langfuse.trace_turn.return_value
+        langfuse.record_verifier_span(
+            handle,
+            latency_ms=42,
+            claims_emitted=5,
+            claims_rejected=1,
+            by_category={"no_citation": 1},
+        )
+
+        langfuse.record_verifier_span.assert_called_once()
+        kwargs = langfuse.record_verifier_span.call_args.kwargs
+        assert kwargs["latency_ms"] == 42
+        assert kwargs["claims_emitted"] == 5
+        assert kwargs["claims_rejected"] == 1
+        assert kwargs["by_category"] == {"no_citation": 1}
+
+    async def test_record_tool_failure_detail_emits_on_langfuse(self) -> None:
+        langfuse = _make_langfuse_mock()
+        langfuse.record_tool_failure_detail = MagicMock()
+
+        handle = langfuse.trace_turn.return_value
+        langfuse.record_tool_failure_detail(
+            handle,
+            tool_name="get_recent_labs",
+            error_type="timeout",
+            retry_attempts=3,
+            final_outcome="degraded",
+            latency_ms=15000,
+        )
+
+        langfuse.record_tool_failure_detail.assert_called_once()
+        kwargs = langfuse.record_tool_failure_detail.call_args.kwargs
+        assert kwargs["tool_name"] == "get_recent_labs"
+        assert kwargs["error_type"] == "timeout"
+        assert kwargs["retry_attempts"] == 3
+        assert kwargs["final_outcome"] == "degraded"
+        assert kwargs["latency_ms"] == 15000
+
+
+class TestTraceIdContextVar:
+    """get_last_trace_id() returns the trace ID set by _open_trace during
+    a turn so main.py can emit it as X-Trace-Id without inspecting the handle."""
+
+    async def test_get_last_trace_id_returns_none_when_no_langfuse(self) -> None:
+        from agentforge.orchestrator import get_last_trace_id
+
+        llm = _llm_with(
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=5,
+                output_tokens=2,
+            )
+        )
+        orch = _build(llm=llm, langfuse=None)
+        await orch.turn(_ctx(), "hi")
+
+        assert get_last_trace_id() is None
+
+    async def test_get_last_trace_id_returns_trace_id_when_langfuse_configured(
+        self,
+    ) -> None:
+        from agentforge.orchestrator import get_last_trace_id
+
+        llm = _llm_with(
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=5,
+                output_tokens=2,
+            )
+        )
+        langfuse = _make_langfuse_mock()
+        langfuse.trace_turn.return_value = MagicMock(trace_id="trace-abc-999")
+        orch = _build(llm=llm, langfuse=langfuse)
+        await orch.turn(_ctx(), "hi")
+
+        assert get_last_trace_id() == "trace-abc-999"
+
+    async def test_trace_id_resets_to_none_before_each_turn(self) -> None:
+        """A null-langfuse turn after a real-langfuse turn must reset
+        get_last_trace_id() to None so stale IDs don't leak across turns."""
+        from agentforge.orchestrator import get_last_trace_id
+
+        llm_real = _llm_with(
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=5,
+                output_tokens=2,
+            )
+        )
+        langfuse = _make_langfuse_mock()
+        langfuse.trace_turn.return_value = MagicMock(trace_id="trace-first")
+        orch_real = _build(llm=llm_real, langfuse=langfuse)
+        await orch_real.turn(_ctx(), "first")
+        assert get_last_trace_id() == "trace-first"
+
+        llm_null = _llm_with(
+            LLMResponse(
+                text="ok2",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=5,
+                output_tokens=2,
+            )
+        )
+        orch_null = _build(llm=llm_null, langfuse=None)
+        await orch_null.turn(_ctx(), "second")
+        assert get_last_trace_id() is None
+
+
 class TestCostAccounting:
     """Per-turn LLM cost lands in the ContextVar AND on the Langfuse
     generation span (Week 1 Task #14). Calculated from token counts +

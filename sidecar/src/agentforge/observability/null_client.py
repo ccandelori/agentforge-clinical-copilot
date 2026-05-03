@@ -86,8 +86,9 @@ class NullLangfuseClient:
         use_case: str,
         tool_count: int,
         batch_count: int,
+        latency_ms: int = 0,
     ) -> None:
-        del trace, use_case, tool_count, batch_count
+        del trace, use_case, tool_count, batch_count, latency_ms
 
     def record_parallel_batch(
         self,
@@ -105,8 +106,9 @@ class NullLangfuseClient:
         claims_emitted: int,
         claims_rejected: int,
         by_category: dict[str, int],
+        latency_ms: int = 0,
     ) -> None:
-        del trace, claims_emitted, claims_rejected, by_category
+        del trace, claims_emitted, claims_rejected, by_category, latency_ms
 
     def record_identity_guard_decision(
         self,
@@ -114,8 +116,32 @@ class NullLangfuseClient:
         *,
         is_valid: bool,
         matched_pattern: str | None,
+        latency_ms: int = 0,
     ) -> None:
-        del trace, is_valid, matched_pattern
+        del trace, is_valid, matched_pattern, latency_ms
+
+    def record_verifier_span(
+        self,
+        trace: TraceHandle,
+        *,
+        latency_ms: int,
+        claims_emitted: int,
+        claims_rejected: int,
+        by_category: dict[str, int],
+    ) -> None:
+        del trace, latency_ms, claims_emitted, claims_rejected, by_category
+
+    def record_tool_failure_detail(
+        self,
+        trace: TraceHandle,
+        *,
+        tool_name: str,
+        error_type: str,
+        retry_attempts: int,
+        final_outcome: str,
+        latency_ms: int,
+    ) -> None:
+        del trace, tool_name, error_type, retry_attempts, final_outcome, latency_ms
 
     def record_data_quality_metrics(
         self,

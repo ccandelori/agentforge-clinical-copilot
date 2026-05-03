@@ -43,7 +43,7 @@ from agentforge.observability import (
     LangfuseClient,
     NullLangfuseClient,
 )
-from agentforge.orchestrator import Orchestrator, get_turn_cost_usd
+from agentforge.orchestrator import Orchestrator, get_last_trace_id, get_turn_cost_usd
 from agentforge.orchestrator.memory import ConversationMemory
 from agentforge.orchestrator.planner import Planner
 from agentforge.orchestrator.truncation import SynthesisInputTruncator
@@ -397,6 +397,12 @@ def create_app(
         # value. Six-decimal format because Anthropic's cheapest call
         # is ~$1e-5 — three decimals would round to zero.
         response.headers["X-Agent-Cost-USD"] = f"{get_turn_cost_usd():.6f}"
+        # Emit Langfuse trace ID so the PHP proxy can log it alongside
+        # the user/patient context for cross-system correlation. Only
+        # set when a real trace was opened (NullLangfuseClient → None).
+        trace_id = get_last_trace_id()
+        if trace_id is not None:
+            response.headers["X-Trace-Id"] = trace_id
         return TurnResponse(reply=reply)
 
     return app
