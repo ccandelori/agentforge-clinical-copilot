@@ -20,7 +20,7 @@ against a healthy stack, not infrastructure availability.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Final
+from typing import Any, Final
 from uuid import uuid4
 
 import httpx
@@ -52,7 +52,37 @@ _LLM_TIMEOUT: Final[httpx.Timeout] = httpx.Timeout(
 pytestmark = pytest.mark.eval
 
 
-@pytest.mark.parametrize("case", ALL_CASES, ids=[c.id for c in ALL_CASES])
+def _parametrize_cases() -> list[Any]:
+    """Build the parametrize list with per-case xfail markers.
+
+    A case carrying ``xfail_reason`` becomes a strict-xfail entry —
+    the test fails when expected and reports XPASS (surprise success)
+    when the underlying defect is fixed. This lets the eval suite
+    encode "we know this is broken; tell us when it's not" without
+    silently masking it.
+
+    Return type is ``list[Any]`` because :func:`pytest.param` returns
+    an opaque ``_pytest.mark.structures.ParameterSet`` that mypy can't
+    treat as a typing annotation; the actual content is uniform.
+    """
+    out: list[Any] = []
+    for case in ALL_CASES:
+        if case.xfail_reason is not None:
+            out.append(
+                pytest.param(
+                    case,
+                    id=case.id,
+                    marks=pytest.mark.xfail(
+                        reason=case.xfail_reason, strict=True
+                    ),
+                )
+            )
+        else:
+            out.append(pytest.param(case, id=case.id))
+    return out
+
+
+@pytest.mark.parametrize("case", _parametrize_cases())
 async def test_baseline_case(
     case: BaselineCase,
     authenticated_client: httpx.AsyncClient,
