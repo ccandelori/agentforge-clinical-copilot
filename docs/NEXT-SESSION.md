@@ -1,4 +1,4 @@
-# Where we left off — 2026-05-02 (mid-session, week1-gaps 5/22)
+# Where we left off — 2026-05-02 (end of session, week1-gaps 5/22 + 1 hotfix)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
@@ -12,11 +12,22 @@ new PRD (`.taskmaster/docs/week1-gaps-prd.md`), parsed it into 22
 remediation tasks under the `week1-gaps` tag, expanded the heavy
 ones into 44 subtasks, and started shipping.
 
-**Current state: week1-gaps 5/22 done.** Phase 1 (visible
-deliverables) is complete; baseline eval is in place; cost
-accounting is wired. Integration pass (#4-#7) and streaming refactor
-(#9-#13) are now unblocked but neither has been started — both are
-multi-file refactors that warrant fresh context.
+**Current state: week1-gaps 5/22 done + 1 hotfix.** Phase 1 (visible
+deliverables) is complete; baseline eval is in place AND has run
+live against the dev stack; cost accounting is wired; a real
+production bug (auth-gateway sentinel key mismatch) was discovered
+by the eval and fixed. Integration pass (#4-#7) and streaming
+refactor (#9-#13) are now unblocked but neither has been started —
+both are multi-file refactors that warrant fresh context.
+
+**The eval suite earned its keep on first live run.** It surfaced
+two things 51/51 master + 598 unit tests didn't: a pre-existing
+auth-gateway 503 that hit every /turn the moment redis_client got
+wired (the policy sentinel was looking for a key the loader never
+wrote), and the agent's IdentityGuard regression — when asked
+about a different patient, the agent attributes the bound chart's
+records to the wrong name. The first is fixed; the second is
+encoded as a strict-xfail until Task #7 ships.
 
 ## Why we're on a new tag
 
@@ -53,10 +64,20 @@ week1-gaps tasks closed (in merge order, all on main):
 
 5 / 22 done. 44 subtasks expanded across the 7 heavy parents
 (#4, #7, #11, #13, #14, #21, #22).
+
+Hotfixes (no week1-gaps task ID — pre-existing bug surfaced by #21):
+  * fix-w1-policy-sentinel-key-mismatch — auth_gateway used
+    POLICY_SENTINEL_KEY="agentforge:policy:version" while the loader
+    wrote POLICY_LOADED_KEY="agentforge:policy:loaded". Each side's
+    tests mocked their own key; mismatch was invisible until #2
+    wired both halves to the same Redis. Aliased to a single key.
 ```
 
-Sidecar test suite: **583 → 598** (+15 from cost accounting and
-related observability tests).
+Sidecar test suite: **583 → 598** default-tier (+15 from cost
+accounting + observability). Plus **6 passed + 1 xfailed** on
+``-m eval`` against the live local stack — the xfail is the
+ADV-CROSS-PATIENT IdentityGuard probe, strict-xfailed until #7
+wires the guard so a flip to passing reports as XPASS.
 
 PHP isolated AgentForge: still **251/251** (no PHP work this push).
 
@@ -81,7 +102,9 @@ See `task-master show 7` for details.
 The baseline eval (#21) is the safety net during this refactor —
 ``uv run pytest -m eval`` should produce identical pass/fail per
 case before and after the integration pass lands. Run it as the
-regression check between subtasks.
+regression check between subtasks. **Watch for ADV-CROSS-PATIENT
+flipping XFAIL → XPASS when #7 wires IdentityGuard — that's the
+deliberate signal that the guard is working end-to-end.**
 
 ## Where streaming stands
 
@@ -114,11 +137,16 @@ to be visible:
     on droplet.
   * #14 cost accounting — sidecar; needs redeploy.
   * #21 baseline eval — test code only, no production change.
+  * **Policy sentinel hotfix — sidecar; MUST be in any redeploy
+    or every droplet /turn 503's. This is now coupled with the #2
+    fix: redeploying #2 without the hotfix takes the droplet down.**
 
 **Recommended:** redeploy at next session start so the droplet
-reflects #2, #3, #14. Run baseline eval (#21) against droplet first
-to confirm pre-redeploy behavior, then redeploy, then run again to
-confirm cost header appears.
+reflects #2, #3, #14, AND the hotfix together. Run baseline eval
+(#21) against droplet first to confirm pre-redeploy behavior, then
+redeploy, then run again to confirm cost header appears AND the
+IdentityGuard xfail still fires on the droplet (proves #7 is still
+the open question, not infrastructure drift).
 
 ## Live carryforwards (still deferred — no taskmaster ID)
 
@@ -149,6 +177,14 @@ and remain backlog. Don't accidentally pull these in mid-session.
    `notes_search` PHP response doesn't surface `note_type` or
    `attending_only`.
 
+8. **Pre-hotfix eval baseline file** captured at commit
+   `1a7bc1a5b` shows all 7 cases failing with 502s — that was the
+   policy sentinel bug, not real eval failures. The post-hotfix
+   true baseline is **6 passed + 1 xfailed**. Re-record at next
+   session start (run ``uv run pytest -m eval -v -s | tee
+   docs/eval-baseline-post-hotfix.txt``) so the diff line is
+   accurate before #4 starts.
+
 ## Quick wins still available (within week1-gaps)
 
   * **Start integration pass at #4 (Planner)** — ~2-4 hour focused
@@ -169,7 +205,10 @@ and remain backlog. Don't accidentally pull these in mid-session.
 2. ``task-master tags use week1-gaps && task-master list`` — confirm
    5/22 still reflects reality.
 3. ``cd sidecar && uv run pytest`` — confirm 598/598 still green.
-4. ``task-master next`` should propose **#4 Planner integration**
+4. ``cd sidecar && uv run pytest -m eval`` — confirm baseline at
+   **6 passed + 1 xfailed** (sidecar must be running locally; the
+   xfail is ADV-CROSS-PATIENT until #7 ships).
+5. ``task-master next`` should propose **#4 Planner integration**
    as the recommended next task.
 5. If iterating locally:
    - **Host-script mode:** ``./sidecar/scripts/sidecar.sh start``
@@ -218,13 +257,35 @@ foundational scaffolding is on commits the worktree never sees.
 ## How this session ended
 
 ```
-5 / 22 week1-gaps tasks closed
-598 sidecar tests + 4 slow-tier + 2 latency-tier + 7 eval-tier (all opt-in)
+5 / 22 week1-gaps tasks closed + 1 hotfix
+598 default sidecar tests + 4 slow + 2 latency + 7 eval (6 pass / 1 xfail) — all opt-in
 251 PHP isolated AgentForge tests (untouched this push)
-~10 commits, 5 merges to main, 1 subagent attempt (failed cleanly)
+~14 commits, 7 merges to main, 1 subagent attempt (failed cleanly)
+1 real production safety finding (IdentityGuard regression),
+  encoded as strict-xfail in the eval until #7 ships
 ```
 
 Next session is aimed at the integration pass: wire Planner +
 parallel dispatch + truncator + data-quality + identity-guard
 into Orchestrator.turn. Use the baseline eval (#21) as the
-regression check between subtasks.
+regression check between subtasks. **The single most informative
+signal the next session can produce is ADV-CROSS-PATIENT flipping
+XFAIL → XPASS — that's the moment IdentityGuard is wired
+end-to-end.**
+
+## Lessons surfaced this session
+
+* **Closing all the tasks ≠ meeting the rubric.** Master closed at
+  51/51, but eight rubric items weren't in the task list.
+  Task-master scope is what we tracked, not what we were graded on.
+
+* **An eval that runs the agent end-to-end pays for itself on
+  first run.** The ContextVar wiring + tuned cases caught both a
+  pre-existing infrastructure bug AND a real clinical safety
+  regression. Unit tests had been green throughout.
+
+* **"Untracked" is not a value judgment.** Don't recommend
+  deleting `.claude/`, `.learning/`, `.clj-kondo/`, or other
+  tool-state dirs even at session-end cleanup; only flag files I
+  created and know to be throwaway. Captured in the user-memory
+  store as `feedback_untracked_is_not_junk.md`.
