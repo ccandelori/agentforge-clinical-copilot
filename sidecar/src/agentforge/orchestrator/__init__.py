@@ -23,14 +23,21 @@ import asyncio
 import json
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from typing import Any, Final
 
 from agentforge.breakglass import BreakglassAuditTool
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.llm.client import LLMClient
-from agentforge.llm.types import Message, ToolCall
+from agentforge.llm.types import (
+    LLMResponse,
+    Message,
+    StreamEvent,
+    StreamFinal,
+    StreamTextDelta,
+    ToolCall,
+)
 from agentforge.observability.cost import calculate_cost
 from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
@@ -551,6 +558,337 @@ class Orchestrator:
 
         return "(orchestrator hit max tool iterations without a final answer)"
 
+    # ----------- Streaming variant -----------
+
+    async def stream_turn(
+        self,
+        ctx: RequestContext,
+        user_message: str,
+        *,
+        session_id: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Streaming variant of :meth:`turn`.
+
+        Yields :class:`StreamTextDelta` events as the model emits text
+        and exactly one terminal :class:`StreamFinal` carrying the
+        fully-assembled :class:`LLMResponse`. Wire-format choice (SSE,
+        WebSocket, gRPC) is the caller's job; this method speaks
+        provider-agnostic events.
+
+        Mirrors :meth:`turn` for safety features (hard-cap session
+        refusal, breakglass audit, planner classification,
+        IdentityGuard, DataQuality warnings, total_turn / synthesis_phase
+        / tool_phase budget enforcement) — only the synthesis surface
+        differs. The verifier-before-emit gate (week1-gaps Task #13)
+        wraps the deltas BEFORE they reach the consumer; until that
+        ships, the ``streaming_enabled`` setting in
+        :class:`agentforge.config.Settings` stays off so unverified
+        clinical text never reaches the wire in production.
+
+        Same-task ``asyncio.timeout`` keeps the per-turn cost
+        ContextVar visible to /turn after the iterator drains.
+        """
+        # Reset cost var unconditionally — refusals / budget overruns
+        # cost zero by default. Done OUTSIDE the timeout block so the
+        # zero shows even when the body raises immediately.
+        _TURN_COST_VAR.set(0.0)
+
+        try:
+            async with asyncio.timeout(self._timeout_policy.total_turn):
+                async for event in self._stream_turn_inner(
+                    ctx, user_message, session_id=session_id
+                ):
+                    yield event
+        except TimeoutError:
+            # Outer envelope fired. Yield a synthetic terminal pair so
+            # SSE consumers see one delta + one final regardless of
+            # whether the inner loop had already streamed anything.
+            # The wire shape stays "deltas... then exactly one final."
+            yield StreamTextDelta(text=_TURN_BUDGET_EXCEEDED_TEXT)
+            yield StreamFinal(
+                response=LLMResponse(
+                    text=_TURN_BUDGET_EXCEEDED_TEXT,
+                    tool_calls=[],
+                    stop_reason="budget_exceeded",
+                    input_tokens=0,
+                    output_tokens=0,
+                )
+            )
+
+    async def _stream_turn_inner(
+        self,
+        ctx: RequestContext,
+        user_message: str,
+        *,
+        session_id: str | None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Body of :meth:`stream_turn` minus the total-turn timeout
+        wrapper. Same-task generator so cost/trace ContextVars stay
+        consistent with :meth:`_turn_inner`.
+        """
+        # Hard-cap session refusal — single delta + final.
+        if self._memory is not None and session_id is not None:
+            existing = await self._memory.get_memory(session_id)
+            if len(existing) // 2 >= HARD_CAP:
+                yield StreamTextDelta(text=_SESSION_REFUSAL_TEXT)
+                yield StreamFinal(
+                    response=LLMResponse(
+                        text=_SESSION_REFUSAL_TEXT,
+                        tool_calls=[],
+                        stop_reason="session_refusal",
+                        input_tokens=0,
+                        output_tokens=0,
+                    )
+                )
+                return
+
+        if self._breakglass_audit is not None:
+            await self._breakglass_audit.log_breakglass_access(
+                ctx, session_id=session_id
+            )
+
+        plan = await self._planner.plan(user_message) if self._planner else None
+
+        tool_results: dict[str, ToolResult[Any]] = {}
+        trace = self._open_trace(ctx)
+
+        if plan is not None:
+            self._record_planner_decision(
+                trace,
+                use_case=plan.use_case.value,
+                tool_count=len(plan.tool_calls),
+                batch_count=len(plan.parallel_batches),
+            )
+
+        if self._identity_guard_enabled:
+            demo_result = await self._safe_fetch_demographics(ctx)
+            if demo_result is not None:
+                tool_results["get_demographics"] = demo_result
+                await self._maybe_cache_set(
+                    ctx,
+                    "get_demographics",
+                    self._hash_args({}),
+                    demo_result,
+                )
+
+                guard = self._build_identity_guard(ctx, demo_result)
+                check = guard.check_message(user_message)
+                self._record_identity_guard_decision(
+                    trace,
+                    is_valid=check.is_valid,
+                    matched_pattern=check.matched_pattern,
+                )
+                if not check.is_valid:
+                    assert check.refusal_reason is not None
+                    await self._maybe_persist_turn(
+                        session_id, user_message, check.refusal_reason
+                    )
+                    yield StreamTextDelta(text=check.refusal_reason)
+                    yield StreamFinal(
+                        response=LLMResponse(
+                            text=check.refusal_reason,
+                            tool_calls=[],
+                            stop_reason="identity_guard_refusal",
+                            input_tokens=0,
+                            output_tokens=0,
+                        )
+                    )
+                    return
+
+        messages: list[Message] = []
+        if self._memory is not None and session_id is not None:
+            for entry in await self._memory.get_memory(session_id):
+                role_raw = entry.get("role")
+                content_raw = entry.get("content")
+                role = role_raw if isinstance(role_raw, str) else "user"
+                content = content_raw if isinstance(content_raw, str) else ""
+                if role in ("user", "assistant"):
+                    messages.append(Message(role=role, content=content))  # type: ignore[arg-type]
+
+        messages.append(Message(role="user", content=user_message))
+        tools = [
+            DEMOGRAPHICS_TOOL_SPEC,
+            PROBLEMS_TOOL_SPEC,
+            MEDICATIONS_TOOL_SPEC,
+            ALLERGIES_TOOL_SPEC,
+            LABS_TOOL_SPEC,
+            VITALS_TOOL_SPEC,
+            NOTES_TOOL_SPEC,
+            SEARCH_NOTES_TOOL_SPEC,
+            ENCOUNTERS_TOOL_SPEC,
+            IMMUNIZATIONS_TOOL_SPEC,
+            PROCEDURES_TOOL_SPEC,
+        ]
+        timed_out_tools: list[str] = []
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+            llm_start = time.perf_counter()
+            iter_response: LLMResponse | None = None
+            iter_text_buffer: list[str] = []
+
+            # Synthesis-phase budget per iteration. On timeout the
+            # inner stream's tasks are cancelled; the outer
+            # total_turn handler in :meth:`stream_turn` catches
+            # ``TimeoutError`` and emits the budget-exceeded events.
+            async with asyncio.timeout(self._timeout_policy.synthesis_phase):
+                async for event in self._llm.stream(
+                    system=SYSTEM_PROMPT,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=1024,
+                ):
+                    if isinstance(event, StreamTextDelta):
+                        iter_text_buffer.append(event.text)
+                        # Propagate the delta to the consumer
+                        # immediately. The verifier-before-emit gate
+                        # (Task #13) replaces this passthrough with a
+                        # sentence-buffered safety check.
+                        yield event
+                    elif isinstance(event, StreamFinal):
+                        iter_response = event.response
+
+            if iter_response is None:
+                # Defensive: LLM.stream() contract guarantees one
+                # StreamFinal. If the implementation drops it (or the
+                # stream was cancelled mid-flight), surface what we
+                # have rather than dangling.
+                yield StreamFinal(
+                    response=LLMResponse(
+                        text="".join(iter_text_buffer),
+                        tool_calls=[],
+                        stop_reason="incomplete_stream",
+                        input_tokens=0,
+                        output_tokens=0,
+                    )
+                )
+                return
+
+            self._record_llm_call(
+                trace,
+                latency_ms=_elapsed_ms(llm_start),
+                prompt_tokens=iter_response.input_tokens,
+                completion_tokens=iter_response.output_tokens,
+            )
+
+            messages.append(
+                Message(
+                    role="assistant",
+                    content=iter_response.text,
+                    tool_calls=iter_response.tool_calls
+                    if iter_response.tool_calls
+                    else None,
+                )
+            )
+
+            if (
+                iter_response.stop_reason != "tool_use"
+                or not iter_response.tool_calls
+            ):
+                # Final iteration. Append data-quality warnings + any
+                # graceful-degradation notice as additional deltas so
+                # the consumer sees the full assistant text inline.
+                final_text = iter_response.text
+
+                dq_suffix = self._data_quality_suffix(tool_results, trace)
+                if dq_suffix:
+                    yield StreamTextDelta(text=dq_suffix)
+                    final_text += dq_suffix
+
+                degradation = GracefulDegradation.format_degradation_notice(
+                    timed_out_tools
+                )
+                if degradation:
+                    notice = f"\n\n{degradation}"
+                    yield StreamTextDelta(text=notice)
+                    final_text += notice
+
+                await self._maybe_persist_turn(
+                    session_id, user_message, final_text
+                )
+
+                yield StreamFinal(
+                    response=LLMResponse(
+                        text=final_text,
+                        tool_calls=iter_response.tool_calls,
+                        stop_reason=iter_response.stop_reason,
+                        input_tokens=iter_response.input_tokens,
+                        output_tokens=iter_response.output_tokens,
+                    )
+                )
+                return
+
+            # Tool dispatch (non-streaming). Same shape as
+            # :meth:`_turn_inner` including the tool-phase timeout +
+            # partial-result fallback.
+            batch_start = time.perf_counter()
+            try:
+                async with asyncio.timeout(self._timeout_policy.tool_phase):
+                    batch_results = await self._dispatch_batch(
+                        ctx,
+                        list(iter_response.tool_calls),
+                        trace,
+                        timed_out_tools,
+                    )
+            except TimeoutError:
+                batch_results = []
+                for call in iter_response.tool_calls:
+                    if call.name not in timed_out_tools:
+                        timed_out_tools.append(call.name)
+                    self._record_tool_call(
+                        trace,
+                        tool_name=call.name,
+                        status="tool_phase_timeout",
+                        latency_ms=_elapsed_ms(batch_start),
+                        cache_hit=False,
+                        args_hash=self._hash_args(call.input),
+                        result_hash=None,
+                    )
+                    batch_results.append(
+                        (
+                            json.dumps(
+                                {
+                                    "error": "tool_phase_timeout",
+                                    "tool": call.name,
+                                }
+                            ),
+                            None,
+                        )
+                    )
+            self._record_parallel_batch(
+                trace,
+                batch_size=len(iter_response.tool_calls),
+                batch_duration_ms=_elapsed_ms(batch_start),
+            )
+            for call, (content_json, result) in zip(
+                iter_response.tool_calls, batch_results, strict=True
+            ):
+                if result is not None:
+                    tool_results[call.name] = result
+                messages.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=call.id,
+                        content=content_json,
+                    )
+                )
+
+        # Max-iterations exhausted without a non-tool-use response.
+        # Mirror :meth:`_turn_inner`'s degenerate-error message but in
+        # streaming shape.
+        max_iter_text = (
+            "(orchestrator hit max tool iterations without a final answer)"
+        )
+        yield StreamTextDelta(text=max_iter_text)
+        yield StreamFinal(
+            response=LLMResponse(
+                text=max_iter_text,
+                tool_calls=[],
+                stop_reason="max_iterations",
+                input_tokens=0,
+                output_tokens=0,
+            )
+        )
+
     async def _verify_response(
         self,
         text: str,
@@ -1044,18 +1382,34 @@ class Orchestrator:
     ) -> str:
         """Append data-quality warnings to ``text`` and emit telemetry.
 
+        Thin wrapper over :meth:`_data_quality_suffix` that concatenates
+        the warnings block onto ``text``. Streaming callers (Task #10)
+        prefer :meth:`_data_quality_suffix` directly so they can yield
+        the suffix as a separate SSE delta after the model's text has
+        already streamed.
+        """
+        suffix = self._data_quality_suffix(tool_results, trace)
+        return text + suffix if suffix else text
+
+    def _data_quality_suffix(
+        self,
+        tool_results: dict[str, ToolResult[Any]],
+        trace: TraceHandle | None,
+    ) -> str:
+        """Compute the data-quality warnings block (or ``""``).
+
         Runs the stale-lab heuristic over ``get_recent_labs`` results
         and the problem/note conflict heuristic when both
         ``get_active_problems`` and ``get_recent_notes`` were
         collected. Counts are reported on the trace; the warnings
-        themselves land inline at the bottom of the response under a
-        compact header.
+        themselves are returned as a block prefixed by a blank line +
+        ``Data quality notes:`` header.
 
-        No-op when the checker isn't configured or no relevant tool
-        results are present.
+        Returns ``""`` when the checker isn't configured or no
+        warnings fire.
         """
         if self._data_quality is None:
-            return text
+            return ""
 
         warnings: list[str] = []
         stale_count = 0
@@ -1091,14 +1445,14 @@ class Orchestrator:
         )
 
         if not warnings:
-            return text
+            return ""
 
         # Compact header so the warnings are visually distinct from
         # the main answer without taking over the response. The header
         # text is identical regardless of warning category — the
         # individual lines explain themselves.
         body = "\n".join(f"- {w}" for w in warnings)
-        return f"{text}\n\nData quality notes:\n{body}"
+        return f"\n\nData quality notes:\n{body}"
 
     async def _maybe_persist_turn(
         self,
