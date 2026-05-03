@@ -236,11 +236,9 @@ class Orchestrator:
             )
 
         # Planner runs ONCE per turn, before the tool loop. The agent
-        # loop below still does its own tool selection — subtask 4.3
-        # only makes the call so 4.4 can attach use_case to the trace
-        # and #5 can consume ``plan.parallel_batches`` to seed
-        # dispatch. The return value is intentionally discarded for
-        # this commit; 4.4 reintroduces the binding when it uses it.
+        # loop below still does its own tool selection — the plan's
+        # use_case rides on the trace (this subtask) and #5 will
+        # consume ``plan.parallel_batches`` to seed dispatch.
         # Skipped entirely when no planner is wired (the legacy path
         # the test suite was originally written against).
         #
@@ -251,8 +249,7 @@ class Orchestrator:
         # (small system prompt + 1024-cap output, ~$0.005 per turn
         # with claude-sonnet-4-5). Address before #20 enables the
         # planner by default — otherwise dashboards understate cost.
-        if self._planner is not None:
-            await self._planner.plan(user_message)
+        plan = await self._planner.plan(user_message) if self._planner else None
 
         messages: list[Message] = []
         if self._memory is not None and session_id is not None:
@@ -292,6 +289,18 @@ class Orchestrator:
         timed_out_tools: list[str] = []
 
         trace = self._open_trace(ctx)
+        # Planner ran above; surface its classification on the trace so
+        # cohort filters in Langfuse can split metrics by use_case
+        # (admit_synthesis vs contraindication etc) without mining
+        # turn payloads. tool_count + batch_count describe dispatch
+        # shape only — no PHI leaves this call.
+        if plan is not None:
+            self._record_planner_decision(
+                trace,
+                use_case=plan.use_case.value,
+                tool_count=len(plan.tool_calls),
+                batch_count=len(plan.parallel_batches),
+            )
 
         for _ in range(MAX_TOOL_ITERATIONS):
             llm_start = time.perf_counter()
@@ -677,6 +686,23 @@ class Orchestrator:
             cache_hit=cache_hit,
             args_hash=args_hash,
             result_hash=result_hash,
+        )
+
+    def _record_planner_decision(
+        self,
+        trace: TraceHandle | None,
+        *,
+        use_case: str,
+        tool_count: int,
+        batch_count: int,
+    ) -> None:
+        if self._langfuse is None or trace is None:
+            return
+        self._langfuse.record_planner_decision(
+            trace,
+            use_case=use_case,
+            tool_count=tool_count,
+            batch_count=batch_count,
         )
 
     def _record_verifier_decision(

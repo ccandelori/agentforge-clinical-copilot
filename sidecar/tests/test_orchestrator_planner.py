@@ -83,6 +83,8 @@ def _build_orchestrator(
     *,
     planner: Planner | MagicMock | None = None,
     llm: AsyncMock | None = None,
+    langfuse: MagicMock | None = None,
+    hmac_key: bytes | None = b"test-key",
 ) -> Orchestrator:
     """Construct an Orchestrator with all-mock fetchers.
 
@@ -106,7 +108,20 @@ def _build_orchestrator(
         immunizations_fetcher=AsyncMock(),
         procedures_fetcher=AsyncMock(),
         planner=planner,  # type: ignore[arg-type]
+        langfuse=langfuse,
+        hmac_key=hmac_key,
     )
+
+
+def _make_langfuse_mock() -> MagicMock:
+    """LangfuseClient mock satisfying the protocol surface ``turn()``
+    touches. Mirror of ``test_orchestrator_tracing._make_langfuse_mock``
+    so failures here line up with the existing tracing assertions.
+    """
+    mock = MagicMock()
+    mock.trace_turn.return_value = MagicMock(trace_id="trace-test-1")
+    mock.aclose = AsyncMock()
+    return mock
 
 
 class TestPlannerWiring:
@@ -219,6 +234,62 @@ class TestPlannerCallSite:
         result = await orch.turn(_ctx(), "Hello.")
 
         assert result == "hello world"
+
+
+class TestPlannerTraceRecording:
+    """Subtask 4.4 — plan.use_case + counts ride on the trace."""
+
+    async def test_planner_decision_recorded_on_trace_with_use_case(
+        self,
+    ) -> None:
+        """When a planner runs, the orchestrator must record an
+        evaluator-style 'planner' span carrying the closed-enum
+        use_case plus the dispatch shape (tool_count, batch_count).
+        Mirrors how the verifier already logs its decision counts.
+        Use the .value of the StrEnum so consumers (Langfuse UI,
+        cost report CLI in #15) can string-match without importing
+        the enum module.
+        """
+        plan = Plan(
+            use_case=UseCase.CONTRAINDICATION,
+            tool_calls=(
+                PlannedToolCall(name="get_active_problems"),
+                PlannedToolCall(name="get_active_medications"),
+                PlannedToolCall(name="get_active_allergies"),
+            ),
+            parallel_batches=(
+                ("get_active_problems", "get_active_medications"),
+                ("get_active_allergies",),
+            ),
+        )
+        planner = _stub_planner(plan)
+        langfuse = _make_langfuse_mock()
+        llm = _llm_returning("ok")
+
+        orch = _build_orchestrator(planner=planner, llm=llm, langfuse=langfuse)
+        await orch.turn(_ctx(), "Is it safe to start ibuprofen?")
+
+        langfuse.record_planner_decision.assert_called_once()
+        kwargs = langfuse.record_planner_decision.call_args.kwargs
+        assert kwargs["use_case"] == "contraindication"
+        assert kwargs["tool_count"] == 3
+        assert kwargs["batch_count"] == 2
+
+    async def test_no_planner_decision_recorded_when_planner_absent(
+        self,
+    ) -> None:
+        """The legacy no-planner path must not emit a planner span.
+        Recording the absence keeps Langfuse dashboards clean — a
+        zero-tools/zero-batches span with use_case='unknown' would
+        muddy the cohort filter that downstream cost reports use.
+        """
+        langfuse = _make_langfuse_mock()
+        llm = _llm_returning("ok")
+
+        orch = _build_orchestrator(planner=None, llm=llm, langfuse=langfuse)
+        await orch.turn(_ctx(), "Hello.")
+
+        langfuse.record_planner_decision.assert_not_called()
 
 
 # Marker — keeps the import set quiet against ruff's
