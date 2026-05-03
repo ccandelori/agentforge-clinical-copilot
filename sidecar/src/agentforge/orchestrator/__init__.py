@@ -35,6 +35,7 @@ from agentforge.observability.cost import calculate_cost
 from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
+from agentforge.orchestrator.planner import Planner
 from agentforge.prompts import load_prompt
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.timeouts import (
@@ -165,6 +166,7 @@ class Orchestrator:
         retry_policy: RetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         breakglass_audit: BreakglassAuditTool | None = None,
+        planner: Planner | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -190,6 +192,11 @@ class Orchestrator:
         self._retry_policy = retry_policy or RetryPolicy()
         self._sleep = sleep
         self._breakglass_audit = breakglass_audit
+        # Optional planner. When set, ``turn()`` (subtask 4.3) calls
+        # ``planner.plan(user_message)`` before the tool loop and uses
+        # the resulting ``Plan`` to seed dispatch. ``None`` keeps the
+        # legacy "let the model pick tools as it goes" path intact.
+        self._planner = planner
 
     async def turn(
         self,
