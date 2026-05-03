@@ -21,8 +21,12 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from agentforge.config import get_settings
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.llm.types import LLMResponse
+from agentforge.main import create_app
 from agentforge.orchestrator import Orchestrator
 from agentforge.orchestrator.planner import (
     Plan,
@@ -290,6 +294,68 @@ class TestPlannerTraceRecording:
         await orch.turn(_ctx(), "Hello.")
 
         langfuse.record_planner_decision.assert_not_called()
+
+
+def _build_redis_mock() -> AsyncMock:
+    """Minimal redis surface for create_app() to boot.
+
+    Mirrors ``test_main_cost_header._build_redis_mock``; create_app
+    drives the policy loader + visibility check + storage, all of
+    which need at least these methods to not raise.
+    """
+    redis_mock = AsyncMock()
+    redis_mock.get = AsyncMock(return_value=None)
+    redis_mock.set = AsyncMock(return_value=True)
+    redis_mock.delete = AsyncMock(return_value=0)
+    redis_mock.keys = AsyncMock(return_value=[])
+    redis_mock.smembers = AsyncMock(return_value=set())
+    return redis_mock
+
+
+def _set_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set the env vars create_app() requires to boot."""
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret")
+    monkeypatch.setenv("HMAC_KEY", "test-hmac-key-32-bytes-aaaaaaaaaaaaa")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    get_settings.cache_clear()
+
+
+class TestCreateAppPlannerWiring:
+    """Subtask 4.5 — create_app constructs the Planner and passes it through."""
+
+    def test_create_app_constructs_default_planner(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no planner is injected, ``create_app()`` must
+        instantiate a real :class:`Planner` and pass it to the
+        orchestrator. This is the production path — once #20 enables
+        the planner via config, the default-on construction here is
+        what makes the integration land on the droplet.
+        """
+        _set_required_env(monkeypatch)
+
+        app = create_app(redis_client=_build_redis_mock())
+
+        orchestrator = app.state.orchestrator
+        assert isinstance(orchestrator, Orchestrator)
+        assert isinstance(orchestrator._planner, Planner)
+
+    def test_create_app_accepts_injected_planner(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tests must be able to swap in a stub planner without
+        going through the LLM client. Mirrors how every other
+        collaborator (fetchers, langfuse, redis) is injectable.
+        """
+        _set_required_env(monkeypatch)
+
+        injected = Planner(llm=AsyncMock())
+        app = create_app(
+            redis_client=_build_redis_mock(),
+            planner=injected,
+        )
+
+        assert app.state.orchestrator._planner is injected
 
 
 # Marker — keeps the import set quiet against ruff's
