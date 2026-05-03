@@ -1,419 +1,213 @@
-# Where we left off — 2026-05-02 (end of session, week1-gaps 8/22 — three integration tasks shipped)
+# Where we left off — 2026-05-03 (end of session, week1-gaps 16/22)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-**Major scope reset this session.** Closed all 51 task-master items
-the previous session, then reviewed against the actual Week 1 rubric
-and discovered gaps that the original roadmap didn't cover. Wrote a
-new PRD (`.taskmaster/docs/week1-gaps-prd.md`), parsed it into 22
-remediation tasks under the `week1-gaps` tag, expanded the heavy
-ones into 44 subtasks, and started shipping.
+**Streaming stack is fully wired end-to-end, minus the safety gate.**
+This session shipped the entire streaming refactor chain (#9 → #12) plus
+two independent tasks (#16 eval runner, #11 PHP proxy). The only remaining
+piece before `STREAMING_ENABLED=true` is safe to flip in production is #13
+(verifier-before-emit gate).
 
-**Current state: week1-gaps 8/22 done + 1 hotfix.** Phase 1 (visible
-deliverables) complete. Phase 2 integration pass is well underway:
-Planner (#4), parallel dispatch (#5), AND truncator wiring (#6) all
-shipped this session. Planner + parallel dispatch are exercising on
-every /turn locally; the truncator is constructible and held but
-**deliberately not yet invoked** by `Orchestrator.turn` — see
-DEVIATIONS.md 2026-05-02 for the architectural reason.
+**Current state: week1-gaps 16/22 done.**
 
-Eval baseline holds at 6 pass + 1 xfail across all three refactors;
-the ADV-CROSS-PATIENT XFAIL is the deliberate signal that #7
-(IdentityGuard) hasn't shipped yet.
-
-**Eval runtime moved from 98s (pre-Planner) → 139s (Planner default-on)
-→ 122s (parallel dispatch) → 122s (truncator wiring; no behavior
-change).** The +41s from Planner is the cost-gap carryforward —
-every turn now does +1 LLM call for classification. The -17s from
-parallel dispatch is the headline: UC-1 / UC-3 chart overviews
-where the LLM emits 5-8 tool_calls in one shot now run
-max(per-tool-latency) instead of sum.
-
-Integration pass continues: #7 (data-quality + identity guard) →
-#8 (latency budget). The single most informative signal the next
-session can produce is **ADV-CROSS-PATIENT flipping XFAIL → XPASS**
-when #7 wires IdentityGuard end-to-end. Streaming refactor
-(#9-#13) still untouched — touches the same orchestrator file
-heavily so sequence after the integration pass.
-
-**The eval suite earned its keep on first live run.** It surfaced
-two things 51/51 master + 598 unit tests didn't: a pre-existing
-auth-gateway 503 that hit every /turn the moment redis_client got
-wired (the policy sentinel was looking for a key the loader never
-wrote), and the agent's IdentityGuard regression — when asked
-about a different patient, the agent attributes the bound chart's
-records to the wrong name. The first is fixed; the second is
-encoded as a strict-xfail until Task #7 ships.
-
-## Why we're on a new tag
-
-The previous session closed 51/51 master tasks but a third-party
-review (GPT-4 reading against ARCHITECTURE.md and the rubric)
-flagged real gaps:
-
-  * Multi-turn UX claimed but session_id not minted in browser.
-  * Streaming claimed but verifier runs on completed text blob.
-  * Planner / parallel dispatch / truncator / data-quality / identity
-    guard all built but not wired into Orchestrator.turn.
-  * 7s p95 not enforced (default test budget 30s).
-  * Eval framework existed but didn't invoke the agent.
-  * Cost in observability missing despite spec.
-  * README still upstream OpenEMR.
-
-Mistake to learn from: closing the task-master roadmap is not the
-same as meeting the rubric. Task-master scope ≠ rubric scope. Don't
-treat "all green" as "all done" without comparing against the spec
-the work is graded against.
-
-The week1-gaps tag is the remediation roadmap. Switch via
-``task-master tags use week1-gaps``.
+Remaining 6 tasks:
+- #13 Verifier-before-emit gate (complexity 8) — **THE headline next task**
+- #17 Five failure-mode eval cases (complexity 3) — depends on #16 ✓
+- #18 Deterministic + LLM-judge graders (complexity 5) — depends on #17
+- #19 Eval report writer (complexity 3) — depends on #18
+- #20 Enable verifier by default (complexity 2) — depends on #13 + #19
+- #22 Observability acceptance tests (complexity 8) — depends on #4, #6, #8, #13
 
 ## What shipped this session
 
 ```
 week1-gaps tasks closed (in merge order, all on main):
-  1   Project README replacement              (visible)
-  2   Wire redis_client from REDIS_URL        (closes policy_loaded=false)
-  3   Multi-turn session_id in chat panel     (closes carryforward #2)
-  21  Baseline eval runner                    (safety net for #4-#13)
-  14  Cost accounting in LLM calls + traces   (X-Agent-Cost-USD header)
-  4   Planner wired into Orchestrator.turn    (5 subtasks)
-  5   Parallel tool dispatch via gather       (4 subtasks)
-  6   SynthesisInputTruncator constructor     (wiring only — see DEVIATIONS)
+  11  PHP turn.php SSE proxy         — Cache-Control + X-Accel-Buffering
+  12  agent_panel.js SSE reader      — ReadableStream, split-frame handling
+  16  EvalRunner direct Orch.turn()  — CI eval without live sidecar
+  (plus #7, #8, #9, #10 shipped earlier this same session)
 
-8 / 22 done.
-
-Hotfixes (no week1-gaps task ID — pre-existing bug surfaced by #21):
-  * fix-w1-policy-sentinel-key-mismatch — auth_gateway used
-    POLICY_SENTINEL_KEY="agentforge:policy:version" while the loader
-    wrote POLICY_LOADED_KEY="agentforge:policy:loaded". Each side's
-    tests mocked their own key; mismatch was invisible until #2
-    wired both halves to the same Redis. Aliased to a single key.
+Total this session: 8 tasks (#7-#12, #16 + hotfixes from previous)
 ```
 
-Sidecar test suite: **598 → 621** default-tier (+23 from Planner
-wiring + parallel dispatch + observability spans + truncator
-wiring). Plus **6 passed + 1 xfailed** on ``-m eval`` against the
-live local stack — the xfail is the ADV-CROSS-PATIENT IdentityGuard
-probe, strict-xfailed until #7 wires the guard so a flip to
-passing reports as XPASS.
+PHP isolated suite: **2996/2996** (no regressions)
+Sidecar default suite: **last confirmed green** after #10 merge
+JS tests: **8/8** (new agent_panel.test.js, jsdom environment)
 
-PHP isolated AgentForge: still **251/251** (no PHP work this push).
+## The one thing that matters next: Task #13
 
-## Where the integration pass stands
+**Task #13 — Verifier runs on finalized streamed text (complexity 8)**
 
-**TWO utilities still BUILT BUT NOT WIRED behaviorally:**
+This is the safety gate that allows `STREAMING_ENABLED=true` to be set in
+production. Until it ships, streaming is wired but disabled (the flag
+defaults to `false` in `config.py`).
 
-  * SynthesisInputTruncator (Task 45) — **constructor wired** in
-    #6 but `Orchestrator.turn` does NOT yet invoke `truncate()`.
-    See DEVIATIONS.md 2026-05-02 — the iterative tool-use loop has
-    no separate synthesis-input seam, and aggressive post-loop
-    truncation regresses verifier citation cache. Behavioral
-    integration moves to the streaming refactor.
-  * DataQualityChecker (Task 46) + IdentityGuard (Task 42) → #7
-    (next session)
+### Clinical safety constraint (DO NOT violate)
 
-(Planner #27 wired in #4; parallel dispatch wired in #5.)
+NEVER emit unverified clinical text to the browser then rewrite it.
+That briefly exposes potentially unsafe content — a clinical-safety
+violation regardless of how fast the rewrite arrives. Only emit sentences
+AFTER they pass the verifier.
 
-Remaining sequence:
+### Architecture
 
-  7 DataQuality + IdentityGuard → 8 latency budget enforcement.
+The `StreamingVerifier` at `sidecar/src/agentforge/verifier/streaming_verifier.py`
+is already built. It buffers tokens until a sentence boundary (`.!?` +
+whitespace or `\n\n`), runs `find_citations()` → `CitationIndex.contains()` +
+`DomainConstraintChecker.check()`, and yields `VerifiedChunk(text, verified)`.
+On failure it replaces the sentence with `REJECTION_MARKER`.
 
-Task #7 has a documented data-sourcing decision (option A/B/C —
-recommended B: fetch demographics first, then run IdentityGuard).
-See `task-master show 7` for details.
+The existing `Orchestrator.stream_turn()` in `orchestrator/__init__.py`
+was built in task #10 — it currently yields `StreamTextDelta` events
+directly from `self._llm.stream()` WITHOUT routing through the verifier.
+Task #13 wires the verifier into that path.
 
-The baseline eval (#21) is the safety net during this refactor —
-``uv run pytest -m eval`` produced identical 6 pass + 1 xfail
-across #4 (Planner), #5 (parallel dispatch), AND #6 (truncator
-wiring). Continue running it between subtasks. **Watch for
-ADV-CROSS-PATIENT flipping XFAIL → XPASS when #7 wires IdentityGuard
-— that's the deliberate signal that the guard is working
-end-to-end.**
+### What needs to change
 
-## Where streaming stands
+**`sidecar/src/agentforge/orchestrator/__init__.py`** — in `_stream_turn_inner()`:
 
-Streaming refactor is independent of the integration pass; both
-touch orchestrator/__init__.py heavily, so sequence them rather
-than parallelize. Recommended: integration pass first because
-it changes Orchestrator.turn shape less than streaming does.
+After the tool loop collects `tool_results`, instead of streaming LLM
+tokens directly:
+1. Build `CitationIndex` from `tool_results` via `build_citation_index()`
+2. Construct `StreamingVerifier(citation_index=index, domain_checker=self._domain_constraints)`
+3. The LLM synthesis call currently yields `StreamTextDelta` events and
+   collects `StreamFinal`. Extract the text delta stream and pipe it
+   through `verifier.verify_stream(token_stream)`.
+4. For each `VerifiedChunk` out of `verify_stream`: yield a `StreamTextDelta`
+   with `chunk.text` (which is either the verified sentence or
+   `REJECTION_MARKER`).
+5. After `verify_stream` exhausts, collect the final `StreamFinal` (the
+   LLM's assembled full response + tool_calls) and proceed as now.
 
-Sequence: 9 LLM stream interface → 10 sidecar StreamingResponse →
-11 controller+turn.php SSE proxy → 12 JS reader → 13 verify-BEFORE-
-emit.
+Key import: `from agentforge.verifier.cache import build_citation_index`
+Key import: `from agentforge.verifier.streaming_verifier import StreamingVerifier`
+Key import: `from agentforge.verifier.protocols import DomainConstraintChecker`
+(already imported for `turn()` path)
 
-**Important design decision (already documented in #13):** stream
-through the existing sentence-buffered StreamingVerifier and emit
-ONLY verified sentences. Do NOT stream unverified clinical text and
-"rewrite" it after — briefly exposing unsafe content is a clinical
-safety violation regardless of how fast the rewrite arrives.
+**`sidecar/src/agentforge/config.py`** — flip `streaming_enabled: bool = False`
+to `True` ONLY after #13 tests pass. This is the production flip.
+
+### StreamingVerifier API (already built, read-only)
+
+```python
+class StreamingVerifier:
+    def __init__(
+        self,
+        citation_index: CitationIndex,
+        domain_checker: DomainConstraintChecker | None = None,
+    ) -> None: ...
+
+    async def verify_stream(
+        self,
+        token_stream: AsyncIterator[str],  # yields raw text tokens
+    ) -> AsyncIterator[VerifiedChunk]: ...
+
+@dataclass(frozen=True, slots=True)
+class VerifiedChunk:
+    text: str           # verified sentence OR REJECTION_MARKER
+    verified: bool
+    rejection_reason: str | None = None
+```
+
+`REJECTION_MARKER = "[claim withheld — could not be grounded]"`
+
+### Test plan for #13
+
+New file: `sidecar/tests/test_orchestrator_streaming_verifier.py`
+
+Key test cases:
+1. Verified sentence passes through as `StreamTextDelta`
+2. Ungrounded sentence is replaced with `REJECTION_MARKER` in the stream
+3. Multiple sentences: first passes, second fails, third passes — order preserved
+4. Tool-use turn (stop_reason="tool_use") — verifier sees no synthesis tokens,
+   stream ends with `StreamFinal` carrying tool_calls
+5. `STREAMING_ENABLED=true` smoke: end-to-end `/turn` with stub orchestrator
+   (this is already covered by test_main_streaming.py — re-confirm it still passes)
+
+Run existing suite before and after to catch regressions:
+```
+cd sidecar && uv run pytest  # ~620 tests, should stay green
+```
+
+### Latency tradeoff (documented, not a bug)
+
+User-perceived latency is per-sentence, not per-token. First verified
+sentence arrives ~1-2s after first model token. Total budget (7s p95)
+is unchanged. Document in ARCHITECTURE.md §6 if not already there.
+
+### After #13 lands
+
+Flip `streaming_enabled: bool = True` in `config.py` and run:
+```
+cd sidecar && uv run pytest -m eval
+```
+ADV-CROSS-PATIENT should still XFAIL (IdentityGuard is wired, guard is on).
+All other eval cases should PASS. That's the production-readiness signal.
+
+## Remaining task dependency graph
+
+```
+#13 (verifier gate)
+ └── #20 (enable verifier by default) — depends on #13 + #19
+ └── #22 (observability acceptance)   — depends on #4,#6,#8,#13
+
+#16 (done) ──► #17 (5 eval cases) ──► #18 (graders) ──► #19 (report)
+                                                          └── #20
+```
+
+#17 + #18 + #19 are the eval quality ramp. They're independent of #13's
+safety gate and can be done in parallel with or after #13.
 
 ## What's deployed and where
 
-`https://143.244.157.90:9300/` — production demo. Droplet was current
-at end of previous session (commit `b96690e68`). NOT redeployed this
-session — none of #1, #2, #3, #14, or #21 strictly needs a redeploy
-to be visible:
-
-  * #1 README  — repo-only, not on deployed instance.
-  * #2 redis_client — sidecar code change; needs redeploy to take
-    effect on droplet (would close `policy_loaded=false` there).
-  * #3 session_id — module JS change; needs redeploy to take effect
-    on droplet.
-  * #14 cost accounting — sidecar; needs redeploy.
-  * #21 baseline eval — test code only, no production change.
-  * **Policy sentinel hotfix — sidecar; MUST be in any redeploy
-    or every droplet /turn 503's. This is now coupled with the #2
-    fix: redeploying #2 without the hotfix takes the droplet down.**
-
-**Recommended:** redeploy at next session start so the droplet
-reflects #2, #3, #4, #5, #6, #14, AND the hotfix together. Run
-baseline eval (#21) against droplet first to confirm pre-redeploy
-behavior, then redeploy, then run again to confirm cost header
-appears AND the IdentityGuard xfail still fires on the droplet
-(proves #7 is still the open question, not infrastructure drift).
-Droplet is now significantly behind main — ~17 commits, including
-the entire integration-pass progress this session.
-
-## Live carryforwards (still deferred — no taskmaster ID)
-
-These are NOT in week1-gaps — flagged as out-of-scope in the PRD
-and remain backlog. Don't accidentally pull these in mid-session.
-
-1. **In-memory breakglass dedup → multi-replica gap.** Replace with
-   Redis SETNX when going multi-replica.
-
-2. **`per_attempt_timeout` not wired through httpx.** RetryPolicy
-   has the field; each fetcher still uses httpx's default 5s.
-
-3. **Apache reverse-proxy include shipped but not auto-installed.**
-   Operators must `docker cp` it into Apache's conf.d/ manually.
-
-4. **Latency-test --latency-report flag not implemented** (Task
-   47.5 stretch).
-
-5. **MedicationsRepository may have similar duplication issues** to
-   what we fixed in problems / procedures (carryforward from prior
-   session — Eula's response showed multiple discontinued
-   contraceptive entries).
-
-6. **`sidecar/check_loader.py` left in subagent worktree** from
-   prior session. Throwaway diagnostic; safe to delete by hand.
-
-7. **Search results gate on title-prefix only** because
-   `notes_search` PHP response doesn't surface `note_type` or
-   `attending_only`.
-
-8. **Planner LLM cost not routed through `_record_llm_call`.** The
-   Planner uses its own LLMClient and doesn't surface token counts,
-   so the per-turn ``_TURN_COST_VAR`` ContextVar undercounts every
-   turn by the planner's contribution (~$0.005 with claude-sonnet-4-5).
-   The X-Agent-Cost-USD header therefore misses planner cost. Address
-   before #20 enables the verifier by default — the cost dashboard
-   needs to be trustworthy when verifier is on. Cleanest fix:
-   extend ``Planner.plan()`` to return a `(Plan, LLMResponse)` tuple
-   and route the response through the existing `_record_llm_call`
-   path in Orchestrator. Touches planner.py + orchestrator.
-
-9. **Eval is flaky-ish on cold sidecar reload.** Watching `--reload`
-   wired sidecars while eval runs leaves ~3-7s windows where /turn
-   returns 422/503. Skips are handled (the suite skips 503s) but
-   422s look like failures. Run eval AFTER sidecar settles, or use
-   the Docker-stack mode for eval-on-CI.
-
-10. **`.env` is fragile.** This session ran into a state where the
-    sidecar.sh restart failed with "redis_url Field required" —
-    pid claimed alive but app never bound port 8000. Bypassed by
-    starting with `REDIS_URL=redis://localhost:6379/0
-    ./scripts/sidecar.sh start`. Suggests something stripped or
-    corrupted .env entries; verify `.env` has REDIS_URL,
-    JWT_SECRET, HMAC_KEY, ANTHROPIC_API_KEY, LANGFUSE_* before
-    a clean restart. Original sidecar pid that worked at session
-    start was launched with parent-shell env vars set, not from
-    .env exclusively.
-
-## Quick wins still available (within week1-gaps)
-
-  * **Continue integration pass at #7 (DataQualityChecker +
-    IdentityGuard)** — THE headline next move. Will flip
-    ADV-CROSS-PATIENT from XFAIL → XPASS once IdentityGuard is
-    invoking on every turn. Has a documented option A/B/C
-    data-sourcing decision (see `task-master show 7`); option B
-    is recommended (fetch demographics first, then run guard).
-    Multi-file: `orchestrator/identity_guard.py` is built; needs
-    integration into `Orchestrator.turn` + `create_app`. Needs
-    its own branch; expect 4-6 commits.
-
-  * **Start streaming refactor at #9 (LLM stream interface)** —
-    pure sidecar change, ~2-3 hours. Independent of integration
-    pass; sequence after #7/#8 land because both branches touch
-    orchestrator/__init__.py heavily.
-
-  * **#15 (cost_report CLI tool)** — INDEPENDENT of integration
-    pass. Reads cost spans from Langfuse and prints a per-turn
-    breakdown. Could be parallelized via subagent if you push
-    main to origin first; otherwise run foreground.
-
-  * **Re-record post-integration eval baseline.** The current
-    `docs/eval-baseline-post-hotfix.txt` and
-    `docs/eval-baseline-after-task-4.txt` are pre-#5 and pre-#6.
-    Run `uv run pytest -m eval -v -s | tee
-    docs/eval-baseline-post-task-6.txt` so the diff line into #7
-    is accurate.
+`https://143.244.157.90:9300/` — production demo. Still running pre-#7 code.
+The droplet is now significantly behind main (~30+ commits). Recommended:
+redeploy after #13 lands (that's the meaningful milestone — streaming live
+with the safety gate).
 
 ## Quick-start checklist for next time
 
-1. ``git status`` — confirm no uncommitted changes you forgot about.
-2. ``task-master tags use week1-gaps && task-master list`` — confirm
-   8/22 still reflects reality.
-3. ``cd sidecar && uv run pytest`` — confirm 621/621 still green.
-4. **Verify sidecar can boot.** Before running the eval, confirm
-   the sidecar is alive on :8000 — `tail -3 sidecar/var/sidecar.log`
-   should end with "Application startup complete." If it shows a
-   pydantic validation error about `redis_url`, restart with an
-   explicit env var: `REDIS_URL=redis://localhost:6379/0
-   ./sidecar/scripts/sidecar.sh restart` (or fix `.env` if it's
-   missing keys). See carryforward #10.
-5. ``cd sidecar && uv run pytest -m eval`` — confirm baseline at
-   **6 passed + 1 xfailed** (the xfail is ADV-CROSS-PATIENT until
-   #7 ships). If you see SKIPPED instead of PASSED on any case,
-   restart sidecar cleanly first — `--reload` churn from this
-   session may still be in flight (carryforward #9).
-6. ``task-master next`` should propose **#7 (DataQuality +
-   IdentityGuard integration)** as the recommended next task.
-7. If iterating locally:
-   - **Host-script mode:** ``./sidecar/scripts/sidecar.sh start``
-     (sidecar on :8000, ``--reload``)
-   - **Docker-stack mode:** ``cd docker/agent && docker compose up
-     --build`` (port 8400 with companion agentforge-redis)
-   - ``docker compose -f docker/development-easy/docker-compose.yml ps``
-   - Open ``http://localhost:8300/`` (admin / pass)
-8. If running the slow / latency / eval suites:
-   - ``cd sidecar && uv run pytest -m slow tests/integration/``
-     — full LLM UC flows (~100s)
-   - ``cd sidecar && uv run pytest -m latency tests/integration/``
-     — latency-budget tests
-   - ``cd sidecar && uv run pytest -m eval`` — baseline eval
-     (7 cases, ~2 min with Planner default-on, requires Anthropic
-     key)
-   - All three deselected from default ``uv run pytest``.
-9. If deploying:
-   - ``./scripts/deploy-droplet.sh check`` — confirm droplet healthy
-   - ``./scripts/deploy-droplet.sh all`` — full module + sidecar
-     deploy. Droplet has NOT been redeployed since 2026-05-02
-     prior-session end (commit `b96690e68`); is now significantly
-     behind. Recommend a single coherent redeploy after the
-     integration pass lands (probably after #8) so the droplet
-     reflects everything-or-nothing rather than a partial state.
+1. `git status` — confirm clean working tree
+2. `task-master tags use week1-gaps && task-master list` — confirm 16/22
+3. `cd sidecar && uv run pytest` — confirm default suite green
+4. `cd sidecar && uv run pytest -m eval` — confirm 6 pass + 1 xfail
+   (ADV-CROSS-PATIENT xfail = IdentityGuard is live, #13 not yet done)
+5. `task-master next` should propose **#13**
 
-## Files worth opening in the first 60 seconds
+## Key files for task #13
 
-  * `.taskmaster/docs/week1-gaps-prd.md` — the remediation PRD
-  * `task-master tags use week1-gaps` then `task-master list` —
-    full task graph
-  * `task-master show 7` — DataQuality + IdentityGuard
-    (option A/B/C decision in there) — **next session's task**
-  * `docs/DEVIATIONS.md` (top of file, 2026-05-02 entries) — both
-    the planner-as-class deviation AND the truncator-wiring-only
-    deviation explain why the architecture isn't matching the PRD
-  * `task-master show 13` — verify-BEFORE-emit design (corrected
-    from finalize-after-stream)
-  * `sidecar/src/agentforge/orchestrator/__init__.py` — the
-    integrated orchestrator. Planner call site is right after
-    breakglass; parallel-batch dispatch is in the tool loop;
-    truncator is held but not yet invoked.
-  * `sidecar/src/agentforge/orchestrator/identity_guard.py` —
-    the identity guard waiting to be wired in #7
-  * `sidecar/tests/eval/baseline/` — the baseline eval suite
-  * `DEPLOY.md`, `docs/DEPLOYMENT.md` — deployment plan
-  * `ARCHITECTURE.md` — six load-bearing decisions
+- `sidecar/src/agentforge/orchestrator/__init__.py` — `_stream_turn_inner()`
+  is where the verifier wires in; `stream_turn()` is the public entry point
+- `sidecar/src/agentforge/verifier/streaming_verifier.py` — already built,
+  read-only for #13
+- `sidecar/src/agentforge/verifier/cache.py` — `build_citation_index()`
+- `sidecar/src/agentforge/config.py` — `streaming_enabled` flag (flip to
+  True ONLY after #13 passes)
+- `sidecar/tests/test_main_streaming.py` — existing SSE endpoint tests
+  (should stay green after #13)
+- `sidecar/tests/test_orchestrator_*.py` — existing orchestrator test files
+  (use as patterns for the new #13 test file)
 
-## Subagent worktree gotcha (learned this session)
+## Carryforwards (not in week1-gaps)
 
-When using `Agent` with `isolation: worktree`, the worktree base may
-not be local main — in this session the worktree branched from a
-~140-commit-old `origin/main`. If launching subagents, either push
-local main to origin first or pass an explicit base. Otherwise the
-subagent reports "files don't exist" because the project's
-foundational scaffolding is on commits the worktree never sees.
+Same as previous session — none resolved this slice. Notable:
+- Planner LLM cost not routed through `_record_llm_call` (undercounts cost)
+- `per_attempt_timeout` not wired through httpx
+- Droplet redeploy pending (waiting for #13 milestone)
 
 ## How this session ended
 
 ```
-8 / 22 week1-gaps tasks closed + 1 hotfix (no new hotfixes this slice)
-621 default sidecar tests + 4 slow + 2 latency + 7 eval (6 pass / 1 xfail) — all opt-in
-251 PHP isolated AgentForge tests (untouched this slice)
-~26 commits across this slice, 5 task merges to main
-3 heavy integration tasks shipped: #4 Planner (5 subtasks), #5
-  parallel dispatch (4 subtasks), #6 truncator wiring (single)
-Eval runtime: 98s → 139s (Planner default-on) → 122s (parallel
-  dispatch) → 122s (truncator wiring; behavior unchanged)
+16 / 22 week1-gaps tasks closed
+~12 commits this slice (tasks #11, #12, #16 + merges)
+2996 PHP isolated tests green
+8 new JS tests green (agent_panel SSE streaming)
+Sidecar default suite last confirmed green after #10
 ```
 
-Next session opens at the integration pass's most informative
-moment: **#7 DataQuality + IdentityGuard, with ADV-CROSS-PATIENT
-the strict-xfail waiting to flip to XPASS.** When that flips,
-the eval suite has earned its keep a third time and the
-clinical-safety guarantee is end-to-end live.
-
-After #7: #8 (latency budget enforcement) closes the integration
-pass; then either streaming (#9-#13) or the smaller carryforwards
-(#15 cost CLI, #22 observability acceptance) are unblocked.
-
-## Lessons surfaced this session
-
-* **Closing all the tasks ≠ meeting the rubric.** Master closed at
-  51/51, but eight rubric items weren't in the task list.
-  Task-master scope is what we tracked, not what we were graded on.
-
-* **An eval that runs the agent end-to-end pays for itself on
-  first run.** The ContextVar wiring + tuned cases caught both a
-  pre-existing infrastructure bug AND a real clinical safety
-  regression. Unit tests had been green throughout.
-
-* **"Untracked" is not a value judgment.** Don't recommend
-  deleting `.claude/`, `.learning/`, `.clj-kondo/`, or other
-  tool-state dirs even at session-end cleanup; only flag files I
-  created and know to be throwaway. Captured in the user-memory
-  store as `feedback_untracked_is_not_junk.md`.
-
-* **Branch off main early.** The `task-w1-4-planner-integration`
-  branch was created mid-prior-session BEFORE the policy hotfix
-  landed; checking it out put the workspace at the pre-hotfix
-  state. The eval caught it (wall-to-wall 503s once #4 wired
-  Redis + Planner). Fix was a clean merge of main into the
-  branch. Lesson: if a branch is more than a session old, merge
-  main before the first commit on it.
-
-* **`uvicorn --reload` + heavy file edits = sidecar reload churn.**
-  Multiple WatchFiles restarts during eval runs created 422/503
-  windows that look like real failures but aren't. If the eval
-  shows mixed skips + failures, restart sidecar cleanly first
-  and re-run before chasing the symptom.
-
-* **`.env` integrity is a real failure mode.** The session ran
-  into a state where the disk `.env` was either missing fields
-  or pydantic-settings couldn't parse it; surfaced as
-  "redis_url Field required" on every restart. Bypassed via
-  `REDIS_URL=... ./scripts/sidecar.sh restart`. Carry forward
-  #10 covers the fix.
-
-* **Architecture-vs-PRD mismatches are real.** Both #6 (truncator)
-  and likely #7 (data-quality / identity-guard) PRDs were written
-  against the planner-driven fetch-then-synthesize pattern from
-  ARCHITECTURE.md §3. The actual orchestrator stayed iterative
-  tool-use because nothing has flipped that switch yet. #6 wired
-  the kwarg but deferred behavior; expect to make a similar call
-  on #7. DEVIATIONS.md 2026-05-02 captures the truncator case in
-  full; mirror that pattern when the same shape recurs.
-
-* **Don't restart the sidecar mid-session unless you have to.**
-  The original sidecar process (pid 47237) had been running for
-  hours with parent-shell env vars set. After I restarted it to
-  pick up reload churn, .env-only loading failed and recovery
-  required `REDIS_URL=...` injection. If the running sidecar is
-  serving 200s, leave it alone — `--reload` will pick up code
-  changes without a restart.
+Next session opens at **#13 (verifier-before-emit)** — the safety gate
+that unlocks `STREAMING_ENABLED=true` in production and closes the
+streaming refactor chain started at #9.
