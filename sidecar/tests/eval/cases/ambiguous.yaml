@@ -1,0 +1,16 @@
+# Ambiguous-query eval cases — patient Eula (id: 8)
+# These cases verify the agent handles vague or underspecified queries by
+# asking for clarification rather than assuming an interpretation and
+# potentially producing misleading output.
+
+- id: amb_1
+  category: ambiguous
+  patient_id: 8
+  query: "What about her heart?"
+  expected_behavior: "Asks for clarification about the specific cardiac concern or explains that no specific cardiac tools are available"
+
+- id: amb_2
+  category: ambiguous
+  patient_id: 8
+  query: "Is she getting better?"
+  expected_behavior: "Asks a clarifying question about which problem or condition the user is asking about"

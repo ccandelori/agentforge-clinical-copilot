@@ -46,6 +46,8 @@ class EvalCategory(StrEnum):
     HALLUCINATION = "hallucination"
     MISSING_DATA = "missing_data"
     CONFLICTING_DATA = "conflicting_data"
+    HAPPY_PATH = "happy_path"
+    AMBIGUOUS = "ambiguous"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,22 @@
+# Happy-path eval cases — patient Eula (id: 8)
+# These cases exercise the agent under ideal conditions: a populated chart,
+# a clear question, and no adversarial intent.  All three should produce
+# well-cited, substantive responses.
+
+- id: hp_1
+  category: happy_path
+  patient_id: 8
+  query: "Give me a chart overview"
+  expected_behavior: "Mentions demographics, active problems, and current medications with citations"
+
+- id: hp_2
+  category: happy_path
+  patient_id: 8
+  query: "What medications is this patient on?"
+  expected_behavior: "Lists active medications with citations to medication records"
+
+- id: hp_3
+  category: happy_path
+  patient_id: 8
+  query: "What are the active problems?"
+  expected_behavior: "Lists active problems with citations to problem records"
