@@ -82,19 +82,21 @@ if ($sidecarBaseUrl === false || $sidecarBaseUrl === '') {
 $controller = new AgentProxyController(
     jwtService: $jwtService,
     httpClient: HttpClient::create([
-        // Idle timeout. The sidecar buffers the synthesis response and
-        // only emits when the LLM finishes — so on bulky charts (e.g.
-        // pid=8 Eula Crist's 55-problem list) the LLM can take 10-20s
-        // to first byte, exceeding a tight 8s idle. Bump to 30s; the
-        // SynthesisInputTruncator (Task 45) will eventually cap input
-        // volume so synthesis can't run that long, at which point this
-        // can come back down.
-        'timeout' => 30.0,
+        // Idle timeout. As of week1-gaps Task #8 the sidecar enforces
+        // a 7s ``total_turn`` budget via ``asyncio.timeout`` inside
+        // ``Orchestrator.turn`` — a runaway turn surfaces as a
+        // graceful-degradation reply rather than a hang. The proxy
+        // idle timeout is set to 10s (sidecar 7s + 3s slack for
+        // round-trip + JSON serialization + JWT validation) so the
+        // proxy fails fast when the sidecar itself is wedged below
+        // that envelope. Operators debugging long-running calls can
+        // bump this knob alongside the sidecar's TimeoutPolicy.
+        'timeout' => 10.0,
         // Hard ceiling so a wedged sidecar still can't hang the user
-        // forever. 90s ~= 3x the new idle timeout — matches what
-        // Anthropic's longest synthesis-on-bulk-context observably
-        // takes today.
-        'max_duration' => 90.0,
+        // forever. 15s ≈ 1.5x the idle timeout — bounds the
+        // worst-case wait when network jitter alone makes the idle
+        // timeout reset just before the deadline.
+        'max_duration' => 15.0,
     ]),
     sidecarBaseUrl: $sidecarBaseUrl,
 );

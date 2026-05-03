@@ -271,14 +271,17 @@ async def test_uc1_total_turn_p95_under_budget(
         "issue, not a latency one."
     )
 
-    # Budget split: production target is 7s p95 (ARCHITECTURE.md §3,
-    # measured on the droplet). Dev-laptop reality is 12-25s because
-    # the host sidecar single-threads the LLM and Claude API
-    # cumulative-call cost dominates. Default 30s here is lenient
-    # for dev; AGENTFORGE_INT_UC1_P95_BUDGET_MS=7000 in CI / staging
-    # asserts the real production target.
+    # Budget: production target is 7s p95 (ARCHITECTURE.md §3,
+    # measured on the droplet). As of week1-gaps Task #8 the
+    # ``total_turn`` budget is enforced inside ``Orchestrator.turn``
+    # via ``asyncio.timeout`` — the test default matches that
+    # enforcement so a regression here surfaces locally rather than
+    # only in staging. Dev-laptop runs that legitimately need slack
+    # (cold sidecar, slow Anthropic round-trip) can override via
+    # ``AGENTFORGE_INT_UC1_P95_BUDGET_MS`` — set higher to skip the
+    # production-tight assertion while still measuring p95.
     budget_ms_raw = os.environ.get(
-        "AGENTFORGE_INT_UC1_P95_BUDGET_MS", "30000"
+        "AGENTFORGE_INT_UC1_P95_BUDGET_MS", "7000"
     )
     try:
         budget_ms = float(budget_ms_raw)
