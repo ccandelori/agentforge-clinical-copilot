@@ -23,6 +23,9 @@ dependencies = [
     "tiktoken>=0.7",
 ]
 
+[project.scripts]
+cost-report = "agentforge.observability.cost_report:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
