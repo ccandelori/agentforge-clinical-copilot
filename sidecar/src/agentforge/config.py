@@ -83,13 +83,10 @@ class Settings(BaseSettings):
 
     # Streaming /turn (week1-gaps Task #10). When True, the /turn
     # endpoint returns ``fastapi.responses.StreamingResponse`` over
-    # SSE instead of the buffered ``TurnResponse``. Off by default
-    # until the verify-BEFORE-emit gate ships in #13 — streaming
-    # unverified clinical text and "rewriting" it after would be a
-    # clinical-safety violation regardless of how fast the rewrite
-    # arrives. The wire path lands in #10-#12; the safety gate is
-    # what flips this flag in production.
-    streaming_enabled: bool = False
+    # SSE instead of the buffered ``TurnResponse``. Enabled once the
+    # verify-BEFORE-emit gate shipped in #13 — only verified sentences
+    # reach the wire, so streaming is now safe in production.
+    streaming_enabled: bool = True
 
 
 @lru_cache
