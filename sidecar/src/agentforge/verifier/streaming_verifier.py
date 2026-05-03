@@ -94,6 +94,13 @@ class StreamingVerifier:
             # Citation-fabrication is still blocked below.
             return VerifiedChunk(text=claim, verified=True, rejection_reason=None)
 
+        # Demo-debug
+        import sys
+        print(
+            f"[verifier] claim={claim[:200]!r} cites={[(c.record_type, c.record_id) for c in citations]} idx={self._index.size}",
+            file=sys.stderr, flush=True,
+        )
+
 
         # MVP rule: a claim passes only if all of its citations resolve.
         # Models occasionally emit two citations in one sentence (one

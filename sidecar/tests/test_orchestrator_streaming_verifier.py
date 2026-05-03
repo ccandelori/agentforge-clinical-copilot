@@ -223,9 +223,11 @@ class TestStreamingVerifierGate:
         assert "[problem #1]" in text
         assert REJECTION_MARKER not in text
 
-    async def test_ungrounded_sentence_dropped_from_stream(self) -> None:
-        # Synthesis text cites a record not in tool_results → dropped silently.
-        # The trace records the rejection; the user wire stays clean.
+    async def test_ungrounded_sentence_dropped_with_fallback(self) -> None:
+        # Synthesis text cites a record not in tool_results → dropped.
+        # When EVERY sentence is dropped, an empty-bubble guard kicks
+        # in with a graceful fallback so the user never sees silence.
+        # The fabricated citation still doesn't reach the wire.
         llm = _make_streaming_llm(
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
             _synthesis_events("Patient has hypertension [problem #999]. "),
@@ -234,11 +236,14 @@ class TestStreamingVerifierGate:
         orch = _build_orchestrator(llm=llm, problems=problems)
 
         deltas, _ = await _collect_stream(orch)
+        text = "".join(deltas)
 
-        # The rejected sentence does not reach the wire.
-        assert "".join(deltas) == ""
-        assert REJECTION_MARKER not in "".join(deltas)
-        assert "[problem #999]" not in "".join(deltas)
+        # Fabricated citation is gone; rejection marker is gone.
+        assert REJECTION_MARKER not in text
+        assert "[problem #999]" not in text
+        assert "hypertension" not in text
+        # Fallback message reached the user instead of an empty bubble.
+        assert "could not produce a verified answer" in text
 
     async def test_verified_sentences_pass_rejected_dropped(self) -> None:
         # Three sentences: two verified, one with fake citation.

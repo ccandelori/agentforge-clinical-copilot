@@ -743,6 +743,11 @@ class Orchestrator:
             PROCEDURES_TOOL_SPEC,
         ]
         timed_out_tools: list[str] = []
+        # Track whether any visible text reached the consumer across all
+        # iterations. If the verifier rejected every cited sentence (or
+        # the LLM produced no text at all), we emit a graceful fallback
+        # at the final iteration so the user never sees an empty bubble.
+        any_visible_emit = False
 
         for _ in range(MAX_TOOL_ITERATIONS):
             llm_start = time.perf_counter()
@@ -803,6 +808,7 @@ class Orchestrator:
                             ] += 1
                             continue
                         _verified_parts.append(_chunk.text)
+                        any_visible_emit = True
                         yield StreamTextDelta(text=_chunk.text)
                     self._record_verifier_span(
                         trace,
@@ -830,6 +836,7 @@ class Orchestrator:
                     ):
                         if isinstance(event, StreamTextDelta):
                             iter_text_buffer.append(event.text)
+                            any_visible_emit = True
                             yield event
                         elif isinstance(event, StreamFinal):
                             iter_response = event.response
@@ -875,6 +882,24 @@ class Orchestrator:
                 # graceful-degradation notice as additional deltas so
                 # the consumer sees the full assistant text inline.
                 final_text = iter_response.text
+
+                # Empty-bubble guard. If nothing visible reached the
+                # consumer (LLM produced no text, OR every cited
+                # sentence was dropped by the verifier), emit a
+                # graceful fallback so the user never sees a silent
+                # empty response. This preserves the safety property
+                # (we never emit fabricated citations) while keeping
+                # the UX honest about why no answer is shown.
+                if not any_visible_emit:
+                    fallback = (
+                        "I could not produce a verified answer to that "
+                        "question against this patient's chart. Try "
+                        "rephrasing as a more specific question, or "
+                        "check the chart sections directly."
+                    )
+                    yield StreamTextDelta(text=fallback)
+                    final_text = fallback
+                    any_visible_emit = True
 
                 dq_suffix = self._data_quality_suffix(tool_results, trace)
                 if dq_suffix:
