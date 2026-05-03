@@ -470,7 +470,7 @@ class Orchestrator:
                     system=SYSTEM_PROMPT,
                     messages=messages,
                     tools=tools,
-                    max_tokens=1024,
+                    max_tokens=4096,
                 )
             self._record_llm_call(
                 trace,
@@ -770,7 +770,7 @@ class Orchestrator:
                             system=SYSTEM_PROMPT,
                             messages=messages,
                             tools=tools,
-                            max_tokens=1024,
+                            max_tokens=4096,
                         ):
                             if isinstance(event, StreamTextDelta):
                                 iter_text_buffer.append(event.text)
@@ -826,7 +826,7 @@ class Orchestrator:
                         system=SYSTEM_PROMPT,
                         messages=messages,
                         tools=tools,
-                        max_tokens=1024,
+                        max_tokens=4096,
                     ):
                         if isinstance(event, StreamTextDelta):
                             iter_text_buffer.append(event.text)
@@ -1567,11 +1567,23 @@ class Orchestrator:
         if not warnings:
             return ""
 
+        # Dedupe identical warnings — every stale lab from the same
+        # date emits the same string, so without dedup a chart with
+        # dozens of labs from one collection date floods the response
+        # with copies of one notice. Preserve insertion order.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for warning in warnings:
+            if warning in seen:
+                continue
+            seen.add(warning)
+            deduped.append(warning)
+
         # Compact header so the warnings are visually distinct from
         # the main answer without taking over the response. The header
         # text is identical regardless of warning category — the
         # individual lines explain themselves.
-        body = "\n".join(f"- {w}" for w in warnings)
+        body = "\n".join(f"- {w}" for w in deduped)
         return f"\n\nData quality notes:\n{body}"
 
     async def _maybe_persist_turn(
