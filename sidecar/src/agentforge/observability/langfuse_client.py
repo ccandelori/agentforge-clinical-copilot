@@ -180,6 +180,7 @@ class AgentLangfuse:
         use_case: str,
         tool_count: int,
         batch_count: int,
+        latency_ms: int = 0,
     ) -> None:
         """Emit an evaluator-style span describing the planner output.
 
@@ -199,6 +200,7 @@ class AgentLangfuse:
                 "use_case": use_case,
                 "tool_count": tool_count,
                 "batch_count": batch_count,
+                "latency_ms": latency_ms,
             },
         )
         span.end()
@@ -243,6 +245,7 @@ class AgentLangfuse:
         claims_emitted: int,
         claims_rejected: int,
         by_category: dict[str, int],
+        latency_ms: int = 0,
     ) -> None:
         parent = self._parent_span(trace)
         if parent is None:
@@ -255,6 +258,7 @@ class AgentLangfuse:
                 "claims_emitted": claims_emitted,
                 "claims_rejected": claims_rejected,
                 "by_category": dict(by_category),
+                "latency_ms": latency_ms,
             },
         )
         span.end()
@@ -265,6 +269,7 @@ class AgentLangfuse:
         *,
         is_valid: bool,
         matched_pattern: str | None,
+        latency_ms: int = 0,
     ) -> None:
         """Emit a span describing the IdentityGuard verdict for this turn.
 
@@ -285,6 +290,76 @@ class AgentLangfuse:
             metadata={
                 "is_valid": is_valid,
                 "matched_pattern": matched_pattern,
+                "latency_ms": latency_ms,
+            },
+        )
+        span.end()
+
+    def record_verifier_span(
+        self,
+        trace: TraceHandle,
+        *,
+        latency_ms: int,
+        claims_emitted: int,
+        claims_rejected: int,
+        by_category: dict[str, int],
+    ) -> None:
+        """Emit a richer verifier span for the streaming verification path.
+
+        Carries the same counts as ``record_verifier_decision`` but is
+        structured as a ``span`` (not ``evaluator``) so streaming-path
+        traces remain visually distinct in the Langfuse UI. The
+        ``latency_ms`` here reflects wall-clock time of the full verifier
+        pass, not just the last chunk.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="verifier_stream",
+            as_type="span",
+            metadata={
+                "latency_ms": latency_ms,
+                "claims_emitted": claims_emitted,
+                "claims_rejected": claims_rejected,
+                "by_category": dict(by_category),
+            },
+        )
+        span.end()
+
+    def record_tool_failure_detail(
+        self,
+        trace: TraceHandle,
+        *,
+        tool_name: str,
+        error_type: str,
+        retry_attempts: int,
+        final_outcome: str,
+        latency_ms: int,
+    ) -> None:
+        """Emit a detail span for a tool call that failed after retries.
+
+        Supplements the generic ``record_tool_call`` error span with
+        richer diagnostic context (error classification, retry count,
+        final outcome label) so dashboards can bucket failures by type
+        and measure retry overhead without parsing raw exception text.
+        All fields here are PHI-safe: no raw exception message, no
+        patient data.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name=f"tool_failure:{tool_name}",
+            as_type="span",
+            metadata={
+                "tool_name": tool_name,
+                "error_type": error_type,
+                "retry_attempts": retry_attempts,
+                "final_outcome": final_outcome,
+                "latency_ms": latency_ms,
             },
         )
         span.end()

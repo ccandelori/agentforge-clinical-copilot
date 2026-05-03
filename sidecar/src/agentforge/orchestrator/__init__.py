@@ -149,6 +149,15 @@ _TURN_COST_VAR: ContextVar[float] = ContextVar(
     "agentforge_turn_cost_usd", default=0.0
 )
 
+# Per-turn Langfuse trace ID. Set in ``_open_trace`` when a real trace
+# is opened; ``None`` when running against NullLangfuseClient. Read by
+# the /turn endpoint to emit ``X-Trace-Id`` so the PHP proxy and
+# browser can correlate an HTTP request to its Langfuse trace. Same
+# ContextVar isolation pattern as ``_TURN_COST_VAR``.
+_LAST_TRACE_ID_VAR: ContextVar[str | None] = ContextVar(
+    "agentforge_last_trace_id", default=None
+)
+
 
 def get_turn_cost_usd() -> float:
     """Return the accumulated LLM cost for the current asyncio task.
@@ -159,6 +168,16 @@ def get_turn_cost_usd() -> float:
     in the same task.
     """
     return _TURN_COST_VAR.get()
+
+
+def get_last_trace_id() -> str | None:
+    """Return the Langfuse trace ID for the most recent turn on this task.
+
+    ``None`` when Langfuse is not configured (NullLangfuseClient) or
+    when the turn has not yet opened a trace. Read AFTER
+    :meth:`Orchestrator.turn` returns and within the same asyncio task.
+    """
+    return _LAST_TRACE_ID_VAR.get()
 
 
 class Orchestrator:
@@ -275,6 +294,9 @@ class Orchestrator:
         # turn that ran on the same asyncio task. Set unconditionally
         # — refusals (HARD_CAP, etc) cost zero by default.
         _TURN_COST_VAR.set(0.0)
+        # Reset the per-turn trace ID so a failed/null turn never
+        # exposes the previous turn's trace ID via X-Trace-Id.
+        _LAST_TRACE_ID_VAR.set(None)
 
         # Total-turn budget enforcement (week1-gaps Task #8). We use
         # ``asyncio.timeout`` (Python 3.11+) rather than wrapping
@@ -592,6 +614,7 @@ class Orchestrator:
         # cost zero by default. Done OUTSIDE the timeout block so the
         # zero shows even when the body raises immediately.
         _TURN_COST_VAR.set(0.0)
+        _LAST_TRACE_ID_VAR.set(None)
 
         try:
             async with asyncio.timeout(self._timeout_policy.total_turn):
@@ -761,9 +784,26 @@ class Orchestrator:
                         domain_checker=self._domain_constraints,
                     )
                     _verified_parts: list[str] = []
+                    _verifier_emitted = 0
+                    _verifier_rejected = 0
+                    _verifier_by_category: Counter[str] = Counter()
+                    _verifier_start = time.perf_counter()
                     async for _chunk in _verifier.verify_stream(_token_source()):
                         _verified_parts.append(_chunk.text)
+                        _verifier_emitted += 1
+                        if not _chunk.verified:
+                            _verifier_rejected += 1
+                            _verifier_by_category[
+                                _chunk.rejection_reason or "unknown"
+                            ] += 1
                         yield StreamTextDelta(text=_chunk.text)
+                    self._record_verifier_span(
+                        trace,
+                        latency_ms=_elapsed_ms(_verifier_start),
+                        claims_emitted=_verifier_emitted,
+                        claims_rejected=_verifier_rejected,
+                        by_category=dict(_verifier_by_category),
+                    )
 
                     if _final_holder:
                         _raw = _final_holder[0]
@@ -1230,12 +1270,17 @@ class Orchestrator:
     def _open_trace(self, ctx: RequestContext) -> TraceHandle | None:
         if self._langfuse is None:
             return None
-        return self._langfuse.trace_turn(
+        handle = self._langfuse.trace_turn(
             user_id=ctx.user_id,
             patient_id=ctx.patient_id,
             breakglass_flag=ctx.breakglass_flag,
             role=ctx.role,
         )
+        # Stash trace_id in the ContextVar so the /turn endpoint can
+        # emit it as X-Trace-Id without reaching into the trace handle.
+        if handle.trace_id is not None:
+            _LAST_TRACE_ID_VAR.set(handle.trace_id)
+        return handle
 
     def _record_llm_call(
         self,
@@ -1332,6 +1377,34 @@ class Orchestrator:
             return
         self._langfuse.record_verifier_decision(
             trace,
+            claims_emitted=claims_emitted,
+            claims_rejected=claims_rejected,
+            by_category=by_category,
+        )
+
+    def _record_verifier_span(
+        self,
+        trace: TraceHandle | None,
+        *,
+        latency_ms: int,
+        claims_emitted: int,
+        claims_rejected: int,
+        by_category: dict[str, int],
+    ) -> None:
+        """Emit the richer streaming-path verifier span.
+
+        Mirrors :meth:`_record_verifier_decision` but calls
+        ``record_verifier_span`` which is structured as a ``span``
+        (not ``evaluator``) and carries explicit ``latency_ms``. Used
+        by the streaming verification path in
+        :meth:`_stream_turn_inner` where wall-clock time is measured
+        with :func:`time.perf_counter`.
+        """
+        if self._langfuse is None or trace is None:
+            return
+        self._langfuse.record_verifier_span(
+            trace,
+            latency_ms=latency_ms,
             claims_emitted=claims_emitted,
             claims_rejected=claims_rejected,
             by_category=by_category,

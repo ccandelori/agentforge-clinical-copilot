@@ -125,7 +125,7 @@ class AgentProxyController
             );
         }
 
-        return $this->streamSidecarResponse($sidecarResponse);
+        return $this->streamSidecarResponse($sidecarResponse, $userId, $patientId);
     }
 
     /**
@@ -146,9 +146,17 @@ class AgentProxyController
      * (see ``main.py:_sse_stream``); the JS reader extracts it from there.
      * No attempt is made to re-emit it as an HTTP header because response
      * headers cannot be set after the stream body has started.
+     *
+     * ``X-Trace-Id`` is forwarded from the sidecar when Langfuse is
+     * configured so operators can correlate an HTTP request to a Langfuse
+     * trace. It is also logged via ``error_log`` alongside the user and
+     * patient IDs to support log-based correlation queries.
      */
-    private function streamSidecarResponse(ResponseInterface $sidecarResponse): StreamedResponse
-    {
+    private function streamSidecarResponse(
+        ResponseInterface $sidecarResponse,
+        int $userId,
+        int $patientId,
+    ): StreamedResponse {
         $client = $this->httpClient;
 
         // Inspect headers before opening the streaming callback — once the
@@ -156,6 +164,18 @@ class AgentProxyController
         $sidecarHeaders = $sidecarResponse->getHeaders(throw: false);
         $contentType = $sidecarHeaders['content-type'][0] ?? '';
         $isSse = str_starts_with($contentType, 'text/event-stream');
+        $traceId = $sidecarHeaders['x-trace-id'][0] ?? '';
+
+        // Log the trace correlation record so operators can join HTTP
+        // access logs to Langfuse traces without browser-side tooling.
+        if ($traceId !== '') {
+            error_log(sprintf(
+                'agentforge trace_id=%s user_id=%d patient_id=%d',
+                $traceId,
+                $userId,
+                $patientId,
+            ));
+        }
 
         $streamed = new StreamedResponse(function () use ($client, $sidecarResponse): void {
             foreach ($client->stream($sidecarResponse) as $chunk) {
@@ -170,6 +190,12 @@ class AgentProxyController
         // all reach the browser correctly.
         if ($contentType !== '') {
             $streamed->headers->set('Content-Type', $contentType);
+        }
+
+        // Forward X-Trace-Id so the browser-side panel can surface the
+        // trace link for debugging without a server-log lookup.
+        if ($traceId !== '') {
+            $streamed->headers->set('X-Trace-Id', $traceId);
         }
 
         if ($isSse) {
