@@ -1529,3 +1529,47 @@ against the current dispatch shape, not the target one.
 [`sidecar/src/agentforge/orchestrator/truncation.py`](../sidecar/src/agentforge/orchestrator/truncation.py).
 
 ---
+
+## 2026-05-02 — DataQuality warnings appended after final text, not "before final LLM call"
+
+**Plan:** week1-gaps Task #7 said "Append quality warnings to synthesis
+context (before final LLM call or verifier)" — meaning inject the
+DataQualityChecker output INTO the messages array so the LLM
+incorporates the warnings into the response it generates.
+
+**Deviation:** The orchestrator runs `_apply_data_quality` AFTER the
+final assistant text is produced (and after the verifier, when
+enabled), appending warnings under a "Data quality notes:" header
+similar to how `_append_degradation_notice` works.
+
+**Why:** Same shape constraint as the truncator deferral: the
+iterative tool-use loop has no separate synthesis-input seam. We
+don't know which LLM call will be the FINAL call in advance —
+each iteration is "ask the model, dispatch any tool calls it
+returned, repeat." Injecting warnings as a system reminder mid-loop
+risks destabilizing the model's tool-selection behavior on later
+iterations. Appending post-final-text matches the orchestrator's
+actual control flow and ships the user-visible signal without
+that risk.
+
+This means the model itself doesn't see the warnings on the turn
+they fire — it can't proactively address a "Hypertension resolved"
+conflict in its own answer. The user does see the warnings inline,
+which is the load-bearing requirement (clinician sees the data
+quality flag next to the citation).
+
+**What we learned:** The "before final LLM call" placement assumes
+the planner-driven fetch-then-synthesize architecture from
+ARCHITECTURE.md §3. Mirror of the #6 truncator deviation — every
+integration task in week1-gaps written against that target shape
+needs a sanity check against the current iterative dispatch shape.
+Behavioral tightening to the "model sees the warnings" placement
+lands with the streaming refactor (#9-#13) when synthesis splits
+from the tool loop.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py)
+(`_apply_data_quality` runs in the loop's success exit, not
+mid-iteration).
+
+---
