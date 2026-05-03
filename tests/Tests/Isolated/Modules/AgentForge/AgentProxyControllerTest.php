@@ -231,6 +231,83 @@ final class AgentProxyControllerTest extends TestCase
         self::assertSame(503, $response->getStatusCode());
     }
 
+    #[Test]
+    public function turnSetsCacheControlNoCacheWhenSidecarReturnsEventStream(): void
+    {
+        $sseBody = "data: {\"text\": \"Hello\"}\n\ndata: [DONE]\n\n";
+        $httpClient = new MockHttpClient(
+            new MockResponse($sseBody, [
+                'http_code' => 200,
+                'response_headers' => ['Content-Type: text/event-stream'],
+            ])
+        );
+
+        $controller = $this->makeController(httpClient: $httpClient);
+        $response = $controller->turn($this->makeAuthenticatedRequest());
+
+        self::assertInstanceOf(StreamedResponse::class, $response);
+        self::assertStringContainsString('no-cache', (string) $response->headers->get('Cache-Control'));
+    }
+
+    #[Test]
+    public function turnSetsXAccelBufferingNoWhenSidecarReturnsEventStream(): void
+    {
+        $sseBody = "data: {\"text\": \"Hello\"}\n\ndata: [DONE]\n\n";
+        $httpClient = new MockHttpClient(
+            new MockResponse($sseBody, [
+                'http_code' => 200,
+                'response_headers' => ['Content-Type: text/event-stream'],
+            ])
+        );
+
+        $controller = $this->makeController(httpClient: $httpClient);
+        $response = $controller->turn($this->makeAuthenticatedRequest());
+
+        self::assertInstanceOf(StreamedResponse::class, $response);
+        self::assertSame('no', $response->headers->get('X-Accel-Buffering'));
+    }
+
+    #[Test]
+    public function turnStreamsSseBodyThroughToClient(): void
+    {
+        $sseBody = "data: {\"text\": \"Hello, \"}\n\ndata: {\"text\": \"Susan!\"}\n\ndata: [DONE]\n\n";
+        $httpClient = new MockHttpClient(
+            new MockResponse($sseBody, [
+                'http_code' => 200,
+                'response_headers' => ['Content-Type: text/event-stream'],
+            ])
+        );
+
+        $controller = $this->makeController(httpClient: $httpClient);
+        $response = $controller->turn($this->makeAuthenticatedRequest());
+
+        self::assertInstanceOf(StreamedResponse::class, $response);
+        ob_start();
+        $response->sendContent();
+        $output = (string) ob_get_clean();
+        self::assertSame($sseBody, $output);
+    }
+
+    #[Test]
+    public function turnForwardsEventStreamContentTypeHeader(): void
+    {
+        $httpClient = new MockHttpClient(
+            new MockResponse('data: [DONE]\n\n', [
+                'http_code' => 200,
+                'response_headers' => ['Content-Type: text/event-stream'],
+            ])
+        );
+
+        $controller = $this->makeController(httpClient: $httpClient);
+        $response = $controller->turn($this->makeAuthenticatedRequest());
+
+        self::assertInstanceOf(StreamedResponse::class, $response);
+        self::assertStringStartsWith(
+            'text/event-stream',
+            (string) $response->headers->get('Content-Type')
+        );
+    }
+
     private function makeController(
         ?AgentJwtService $jwtService = null,
         ?HttpClientInterface $httpClient = null,
