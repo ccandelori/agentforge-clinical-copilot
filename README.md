@@ -1,79 +1,90 @@
-[![Syntax Status](https://github.com/openemr/openemr/actions/workflows/syntax.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/syntax.yml)
-[![Styling Status](https://github.com/openemr/openemr/actions/workflows/styling.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/styling.yml)
-[![Testing Status](https://github.com/openemr/openemr/actions/workflows/test.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/test.yml)
-[![JS Unit Testing Status](https://github.com/openemr/openemr/actions/workflows/js-test.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/js-test.yml)
-[![PHPStan](https://github.com/openemr/openemr/actions/workflows/phpstan.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/phpstan.yml)
-[![Rector](https://github.com/openemr/openemr/actions/workflows/rector.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/rector.yml)
-[![ShellCheck](https://github.com/openemr/openemr/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/shellcheck.yml)
-[![Docker Compose Linting](https://github.com/openemr/openemr/actions/workflows/docker-compose-lint.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/docker-compose-lint.yml)
-[![Dockerfile Linting](https://github.com/openemr/openemr/actions/workflows/hadolint.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/hadolint.yml)
-[![Isolated Tests](https://github.com/openemr/openemr/actions/workflows/isolated-tests.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/isolated-tests.yml)
-[![Inferno Certification Test](https://github.com/openemr/openemr/actions/workflows/inferno-test.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/inferno-test.yml)
-[![Composer Checks](https://github.com/openemr/openemr/actions/workflows/composer.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/composer.yml)
-[![Composer Require Checker](https://github.com/openemr/openemr/actions/workflows/composer-require-checker.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/composer-require-checker.yml)
-[![API Docs Freshness Checks](https://github.com/openemr/openemr/actions/workflows/api-docs.yml/badge.svg)](https://github.com/openemr/openemr/actions/workflows/api-docs.yml)
-[![codecov](https://codecov.io/gh/openemr/openemr/graph/badge.svg?token=7Eu3U1Ozdq)](https://codecov.io/gh/openemr/openemr)
+# AgentForge — Clinical Co-Pilot for OpenEMR
 
-[![Backers on Open Collective](https://opencollective.com/openemr/backers/badge.svg)](#backers) [![Sponsors on Open Collective](https://opencollective.com/openemr/sponsors/badge.svg)](#sponsors)
+A chart-aware AI agent embedded in [OpenEMR](https://open-emr.org) as a
+custom module, with orchestration and LLM calls delegated to a Python
+sidecar. Built for the user story in [USERS.md](USERS.md): a hospitalist
+needs to walk into a 2 AM admit knowing what matters about a patient she
+has never met, without reading 14 months of notes herself. Every claim
+the agent surfaces traces back to a specific record in this patient's
+chart; out-of-context launches are refused; cross-patient references
+are caught before they reach the screen.
 
-# OpenEMR
+## Live demo
 
-[OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
+| URL | Notes |
+| --- | --- |
+| [`https://143.244.157.90:9300/`](https://143.244.157.90:9300/) | OpenEMR over HTTPS — **self-signed cert**, browser will warn (click through) |
+| [`http://143.244.157.90:8300/`](http://143.244.157.90:8300/) | OpenEMR over plain HTTP if HTTPS is blocked |
 
-### Contributing
+Login: `admin` / `pass`. Recommended demo patient: **Eula Crist** (a
+complex chronic patient with CKD stage 3, hypertension, hyperlipidemia,
+multiple medications, and recent labs). Open her chart, find the
+"AgentForge" panel in the patient summary, and ask:
 
-OpenEMR is a leader in healthcare open source software and comprises a large and diverse community of software developers, medical providers and educators with a very healthy mix of both volunteers and professionals. [Join us and learn how to start contributing today!](https://open-emr.org/wiki/index.php/FAQ#How_do_I_begin_to_volunteer_for_the_OpenEMR_project.3F)
+- *"Give me a chart overview."* — exercises the admit-synthesis path.
+- *"Is it safe to start her on ibuprofen?"* — exercises the
+  contraindication path against her CKD.
+- *"What's changed in the last 90 days?"* — exercises the delta path.
 
-> Already comfortable with git? Check out [CONTRIBUTING.md](CONTRIBUTING.md) for quick setup instructions and requirements for contributing to OpenEMR by resolving a bug or adding an awesome feature 😊.
+## Architecture in five lines
 
-### Support
+1. **OpenEMR custom module** (`interface/modules/custom_modules/oe-module-agentforge/`) renders the chat panel inside the patient summary and mints a per-turn JWT scoped to the open patient.
+2. **Python sidecar** (`sidecar/`, FastAPI + LangGraph) receives the JWT, fans out to a typed tool catalog (problems, medications, labs, vitals, allergies, immunizations, procedures, notes, search, encounters, demographics), synthesizes a response, and runs a streaming verifier over each claim.
+3. **Citations are enforced**: every clinical fact in the response carries `[type #id]` markers parseable back to a row in OpenEMR.
+4. **Session memory** (Redis) supports multi-turn conversation; **Langfuse** captures non-PHI traces; **sensitivity policy** gates record visibility before tool dispatch.
+5. **Eval suite** seeds a known-state demo DB and runs the real orchestrator end-to-end against happy-path, missing-data, ambiguous, unauthorized, and hallucination probes — results live in `docs/eval-report-*.md`.
 
-Community and Professional support can be found [here](https://open-emr.org/wiki/index.php/OpenEMR_Support_Guide).
+Read deeper:
 
-Extensive documentation and forums can be found on the [OpenEMR website](https://open-emr.org) that can help you to become more familiar about the project 📖.
+- [`AUDIT.md`](AUDIT.md) — OpenEMR codebase audit and the gaps this project closes.
+- [`USERS.md`](USERS.md) — User research, persona (Dr. Aisha Patel), use cases, success metrics.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — Six load-bearing decisions, three explicit tradeoffs, full system design.
+- [`DEPLOY.md`](DEPLOY.md) — Pre-deploy gates, deploy steps, rollback plan, post-deploy validation.
 
-### Reporting Issues and Bugs
+## 60-second local quickstart
 
-Report these on the [Issue Tracker](https://github.com/openemr/openemr/issues). If you are unsure if it is an issue/bug, then always feel free to use the [Forum](https://community.open-emr.org/) and [Chat](https://www.open-emr.org/chat/) to discuss about the issue 🪲.
+```bash
+# 1. Clone and bring up OpenEMR + MySQL stack (5-10 min on first run)
+git clone <this-repo> openemr && cd openemr
+cd docker/development-easy && docker compose up --detach --wait
 
-### Reporting Security Vulnerabilities
+# 2. Bring up the sidecar
+cd ../agent && docker compose up --build --detach
 
-Check out [SECURITY.md](.github/SECURITY.md)
-
-### API
-
-Check out [API_README.md](API_README.md)
-
-### Docker
-
-Check out [DOCKER_README.md](DOCKER_README.md)
-
-### FHIR
-
-Check out [FHIR_README.md](FHIR_README.md)
-
-### For Developers
-
-If using OpenEMR directly from the code repository, then the following commands will build OpenEMR (Node.js version 24.* is required) :
-
-```shell
-composer install --no-dev
-npm install
-npm run build
-composer dump-autoload -o
+# 3. Open the app, log in, pick a patient
+open http://localhost:8300/      # admin / pass
 ```
 
-### Contributors
+The AgentForge panel appears in the patient summary view. See
+[`docker/agent/README.md`](docker/agent/README.md) for the
+host-script alternative (`./sidecar/scripts/sidecar.sh start`),
+environment variables, and Anthropic API key configuration.
 
-This project exists thanks to all the people who have contributed. [[Contribute]](CONTRIBUTING.md).
-<a href="https://github.com/openemr/openemr/graphs/contributors"><img src="https://opencollective.com/openemr/contributors.svg?width=890" /></a>
+For full developer setup including PHPUnit, Jest, PHPStan, prek
+hooks, and the eval suite, see [`CLAUDE.md`](CLAUDE.md) and
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+## What's in the repository
 
-### Sponsors
+```
+interface/modules/custom_modules/
+  oe-module-agentforge/      # PHP module: panel, JWT mint, proxy controller
+sidecar/                     # Python sidecar: orchestrator, tools, verifier, eval
+prompts/                     # Versioned prompt library (synthesizer, planner)
+docker/agent/                # Sidecar dev compose stack
+docker/development-easy/     # OpenEMR dev stack (upstream)
+docs/                        # ADRs, deployment notes, eval reports, deviations
+.taskmaster/                 # TaskMaster roadmap (master + week1-gaps tags)
+```
 
-Thanks to our [ONC Certification Major Sponsors](https://www.open-emr.org/wiki/index.php/OpenEMR_Certification_Stage_III_Meaningful_Use#Major_sponsors)!
+## About this fork
 
+This repository is a fork of [openemr/openemr](https://github.com/openemr/openemr).
+The upstream OpenEMR README — describing OpenEMR itself, its community,
+support resources, and acknowledgments — is preserved verbatim at
+[`README.upstream.md`](README.upstream.md). All upstream documentation
+(`API_README.md`, `FHIR_README.md`, `DOCKER_README.md`, `CONTRIBUTING.md`,
+etc.) is unchanged from origin.
 
-### License
-
-[GNU GPL](LICENSE)
+The AgentForge additions are licensed under the same
+[GPL-3.0](LICENSE) as upstream OpenEMR.
