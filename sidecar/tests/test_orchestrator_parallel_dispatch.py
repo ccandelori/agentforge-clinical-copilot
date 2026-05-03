@@ -254,6 +254,102 @@ class TestTurnUsesDispatchBatch:
         }
 
 
+class TestConcurrentDispatchSafety:
+    """Subtask 5.3 — concurrent _dispatch is race-free.
+
+    The mutable state crossing the gather boundary:
+
+      * ``timed_out_tools: list[str]`` — appended when a retry exhausts.
+        ``list.append`` is GIL-protected so concurrent appends are
+        atomic; the ORDER becomes non-deterministic but no append is
+        lost. Verified below by intentionally tripping all N tools.
+      * ``tool_results: dict`` — NOT touched inside _dispatch; it's
+        populated AFTER the batch returns in ``turn()``. No race.
+      * ``_TURN_COST_VAR`` ContextVar — only mutated by
+        ``_record_llm_call``, which is NOT called from _dispatch.
+        No race.
+    """
+
+    async def test_concurrent_timed_out_tools_appends_are_lossless(
+        self, monkeypatch: Any
+    ) -> None:
+        """Trip a timeout on every tool in a 10-call batch and assert
+        all 10 names land in ``timed_out_tools``. A non-atomic append
+        here would lose entries under contention; CPython's GIL makes
+        that impossible, but the test pins the contract so a future
+        rewrite (e.g. trio, multi-process) catches a regression.
+        """
+        orch = _build_orchestrator()
+
+        async def trip_timeout(
+            ctx: RequestContext,
+            call: ToolCall,
+            trace: Any,
+            timed_out_tools: list[str],
+        ) -> tuple[str, Any]:
+            del ctx, trace
+            # Simulate the retry-exhaustion path: append the tool name
+            # to the shared list and return a structured error tuple.
+            timed_out_tools.append(call.name)
+            await asyncio.sleep(0)  # force a yield
+            return f'{{"error":"timeout","tool":"{call.name}"}}', None
+
+        monkeypatch.setattr(orch, "_dispatch", trip_timeout)
+
+        calls = [_tool_call(f"tool_{i}", f"id_{i}") for i in range(10)]
+        timed_out: list[str] = []
+        await orch._dispatch_batch(_ctx(), calls, None, timed_out)
+
+        assert len(timed_out) == 10, (
+            f"expected 10 timed-out names, got {len(timed_out)}: "
+            f"{timed_out}"
+        )
+        expected_names = {f"tool_{i}" for i in range(10)}
+        assert expected_names == set(timed_out), (
+            "timed_out_tools missing names: "
+            f"{expected_names - set(timed_out)}"
+        )
+
+    async def test_dispatch_batch_propagates_per_call_results(
+        self, monkeypatch: Any
+    ) -> None:
+        """Each call's result tuple lines up with its input position
+        even when calls finish out of order. Pins the contract that
+        ``zip(response.tool_calls, batch_results)`` in turn() is
+        always one-to-one regardless of completion timing.
+        """
+        orch = _build_orchestrator()
+
+        # Inverse-order completion: first call sleeps the longest.
+        async def staggered(
+            ctx: RequestContext,
+            call: ToolCall,
+            trace: Any,
+            timed_out_tools: list[str],
+        ) -> tuple[str, Any]:
+            del ctx, trace, timed_out_tools
+            # call IDs id_0..id_4 — sleep proportional to (5 - i)
+            sleep_ms = (5 - int(call.id.split("_")[1])) * 10
+            await asyncio.sleep(sleep_ms / 1000.0)
+            return f'{{"order":"{call.id}"}}', None
+
+        monkeypatch.setattr(orch, "_dispatch", staggered)
+
+        calls = [_tool_call(f"tool_{i}", f"id_{i}") for i in range(5)]
+        results = await orch._dispatch_batch(_ctx(), calls, None, [])
+
+        # Result list must align with input positions. id_0 took
+        # longest yet still sits at index 0.
+        order = [r[0] for r in results]
+        assert order == [
+            '{"order":"id_0"}',
+            '{"order":"id_1"}',
+            '{"order":"id_2"}',
+            '{"order":"id_3"}',
+            '{"order":"id_4"}',
+        ], f"results out of input order: {order}"
+
+
 # Marker — keeps the import set quiet against ruff's
 # unused-import warning when test classes get reshuffled.
 _ = (MagicMock,)
