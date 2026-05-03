@@ -82,21 +82,18 @@ if ($sidecarBaseUrl === false || $sidecarBaseUrl === '') {
 $controller = new AgentProxyController(
     jwtService: $jwtService,
     httpClient: HttpClient::create([
-        // Idle timeout. As of week1-gaps Task #8 the sidecar enforces
-        // a 7s ``total_turn`` budget via ``asyncio.timeout`` inside
-        // ``Orchestrator.turn`` — a runaway turn surfaces as a
-        // graceful-degradation reply rather than a hang. The proxy
-        // idle timeout is set to 10s (sidecar 7s + 3s slack for
-        // round-trip + JSON serialization + JWT validation) so the
-        // proxy fails fast when the sidecar itself is wedged below
-        // that envelope. Operators debugging long-running calls can
-        // bump this knob alongside the sidecar's TimeoutPolicy.
-        'timeout' => 10.0,
-        // Hard ceiling so a wedged sidecar still can't hang the user
-        // forever. 15s ≈ 1.5x the idle timeout — bounds the
-        // worst-case wait when network jitter alone makes the idle
-        // timeout reset just before the deadline.
-        'max_duration' => 15.0,
+        // Idle timeout — must comfortably exceed the sidecar's longest
+        // single-stream gap. The sidecar's TimeoutPolicy was bumped to
+        // 60s total_turn / 30s synthesis_phase for live demos, and the
+        // gap between SSE chunks during the planner+tool phase can run
+        // 10-15s before the first synthesis token arrives. 90s here
+        // gives generous slack so the proxy doesn't abort streams that
+        // are still actively progressing on the sidecar side.
+        'timeout' => 90.0,
+        // Hard ceiling. 120s ≈ 2x sidecar total_turn — bounds the
+        // worst-case wait when network jitter prevents the idle
+        // timeout from resetting before the deadline.
+        'max_duration' => 120.0,
     ]),
     sidecarBaseUrl: $sidecarBaseUrl,
 );
