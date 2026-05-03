@@ -65,6 +65,8 @@ class EvalCase:
     patient_id: int
     query: str
     expected_behavior: str
+    expected_terms: tuple[str, ...] = ()
+    forbidden_terms: tuple[str, ...] = ()
     grounding_check: Callable[[str], bool] | None = None
 
 

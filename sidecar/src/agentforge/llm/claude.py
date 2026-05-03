@@ -71,6 +71,7 @@ class ClaudeClient:
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
         max_tokens: int = 1024,
+        temperature: float = 1.0,
     ) -> LLMResponse:
         """Issue one Messages API call and normalize the response."""
         api_messages = [self._to_anthropic_message(m) for m in messages]
@@ -84,6 +85,7 @@ class ClaudeClient:
             messages=api_messages,
             tools=api_tools,
             max_tokens=max_tokens,
+            temperature=temperature,
         )
         return self._from_anthropic_response(response)
 

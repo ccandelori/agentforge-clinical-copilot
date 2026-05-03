@@ -27,6 +27,7 @@ class LLMClient(Protocol):
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
         max_tokens: int = 1024,
+        temperature: float = 1.0,
     ) -> LLMResponse:
         """Issue one completion request and return the parsed response."""
         ...
