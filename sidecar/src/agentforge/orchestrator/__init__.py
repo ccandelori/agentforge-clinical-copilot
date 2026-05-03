@@ -36,6 +36,7 @@ from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
 from agentforge.orchestrator.planner import Planner
+from agentforge.orchestrator.truncation import SynthesisInputTruncator
 from agentforge.prompts import load_prompt
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.timeouts import (
@@ -167,6 +168,7 @@ class Orchestrator:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         breakglass_audit: BreakglassAuditTool | None = None,
         planner: Planner | None = None,
+        truncator: SynthesisInputTruncator | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -197,6 +199,15 @@ class Orchestrator:
         # the resulting ``Plan`` to seed dispatch. ``None`` keeps the
         # legacy "let the model pick tools as it goes" path intact.
         self._planner = planner
+
+        # Optional synthesis-input truncator. Wired here so
+        # collaborators can inject one (week1-gaps #6); behavioral
+        # integration is intentionally deferred — the iterative
+        # tool-use loop has no separate "synthesis input" boundary
+        # for the truncator to gate. Behavioral effect comes online
+        # with the streaming refactor (#11/#13) where the synthesis
+        # call separates from the tool loop. See DEVIATIONS.md.
+        self._truncator = truncator
 
     async def turn(
         self,
