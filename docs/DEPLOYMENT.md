@@ -102,7 +102,7 @@ Two `.env` files, never committed to git, dropped via SSH:
 | Path | Owner of secrets |
 |---|---|
 | `/opt/agentforge/module/.env` (also `docker cp`'d into container at the module path) | `AGENTFORGE_JWT_SECRET`, `AGENTFORGE_SIDECAR_URL` |
-| `/opt/agentforge/sidecar/.env` (read by container via `docker run --env-file`) | `JWT_SECRET` (must match), `HMAC_KEY`, `ANTHROPIC_API_KEY`, `OPENEMR_BASE_URL` |
+| `/opt/agentforge/sidecar/.env` (read by container via `docker run --env-file`) | `JWT_SECRET` (must match), `HMAC_KEY`, `ANTHROPIC_API_KEY`, `OPENEMR_BASE_URL`, `VERIFIER_ENABLED=true` |
 
 The sidecar's `JWT_SECRET` and the module's `AGENTFORGE_JWT_SECRET` **must be
 byte-identical** — that's how the sidecar verifies tokens minted by the PHP
@@ -221,6 +221,7 @@ there from a fresh droplet:
    HMAC_KEY=<the HMAC_KEY from step 3>
    ANTHROPIC_API_KEY=$KEY
    OPENEMR_BASE_URL=http://openemr:80
+   VERIFIER_ENABLED=true
    EOF
    ssh root@143.244.157.90 'chmod 600 /opt/agentforge/sidecar/.env'
    unset KEY

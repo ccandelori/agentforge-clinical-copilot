@@ -75,11 +75,12 @@ class Settings(BaseSettings):
     )
     sensitivity_policy_required: bool = True
 
-    # Streaming verifier on the user-visible reply (Task 28). Off by
-    # default to preserve the legacy MVP behavior; production deployments
-    # set VERIFIER_ENABLED=true so every assistant sentence is gated
-    # against the per-turn citation cache before the user sees it.
-    verifier_enabled: bool = False
+    # Streaming verifier on the user-visible reply (Task 28). On by
+    # default — the verify-before-emit gate shipped in week1-gaps #13,
+    # so every assistant sentence is now gated against the per-turn
+    # citation cache before the user sees it. Set VERIFIER_ENABLED=false
+    # only to restore legacy pass-through for debugging.
+    verifier_enabled: bool = True
 
     # Streaming /turn (week1-gaps Task #10). When True, the /turn
     # endpoint returns ``fastapi.responses.StreamingResponse`` over
