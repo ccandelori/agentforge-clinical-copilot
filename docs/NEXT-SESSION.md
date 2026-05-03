@@ -1,4 +1,4 @@
-# Where we left off — 2026-05-02 (mid-session, week1-gaps 7/22 — Planner + parallel dispatch shipped)
+# Where we left off — 2026-05-02 (mid-session, week1-gaps 8/22 — Planner + parallel dispatch + truncator wiring shipped)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
