@@ -18,6 +18,7 @@ Anthropic-specific quirks worth flagging:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 from anthropic import AsyncAnthropic
@@ -34,7 +35,15 @@ from anthropic.types import (
     ToolUseBlockParam,
 )
 
-from agentforge.llm.types import LLMResponse, Message, ToolCall, ToolSpec
+from agentforge.llm.types import (
+    LLMResponse,
+    Message,
+    StreamEvent,
+    StreamFinal,
+    StreamTextDelta,
+    ToolCall,
+    ToolSpec,
+)
 
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
@@ -77,6 +86,47 @@ class ClaudeClient:
             max_tokens=max_tokens,
         )
         return self._from_anthropic_response(response)
+
+    async def stream(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+        max_tokens: int = 1024,
+    ) -> AsyncIterator[StreamEvent]:
+        """Issue one streaming Messages API call.
+
+        Yields a :class:`StreamTextDelta` per text chunk the SDK emits,
+        then a single terminal :class:`StreamFinal` carrying the
+        fully-assembled :class:`LLMResponse` (text concatenated,
+        tool_use blocks parsed, token counts populated).
+
+        Tool calls are NOT streamed token-by-token — the SDK assembles
+        them internally and we surface them on the final event. This
+        matches the verifier's contract: substance checks need the full
+        tool_calls list to be meaningful, so streaming partial tool
+        invocations would just create noise without an earlier signal.
+        """
+        api_messages = [self._to_anthropic_message(m) for m in messages]
+        api_tools = [self._to_anthropic_tool(t) for t in (tools or [])]
+
+        async with self._client.messages.stream(
+            model=self._model,
+            system=system,
+            messages=api_messages,
+            tools=api_tools,
+            max_tokens=max_tokens,
+        ) as stream_handle:
+            async for delta_text in stream_handle.text_stream:
+                yield StreamTextDelta(text=delta_text)
+
+            # ``get_final_message`` returns a ParsedMessage whose
+            # content blocks match the non-streaming shape — same
+            # walker handles both. Awaiting AFTER text_stream is
+            # exhausted is the SDK's intended pattern; calling earlier
+            # would block until the stream completes anyway.
+            final_message = await stream_handle.get_final_message()
+            yield StreamFinal(response=self._from_anthropic_response(final_message))
 
     async def health_check(self) -> None:
         """Cheapest possible round-trip that exercises auth + reachability.

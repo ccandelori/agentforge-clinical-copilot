@@ -9,7 +9,7 @@ of every call site. See ARCHITECTURE.md §5.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -68,3 +68,45 @@ class LLMResponse(BaseModel):
     stop_reason: str
     input_tokens: int
     output_tokens: int
+
+
+class StreamTextDelta(BaseModel):
+    """Incremental text emitted by a streaming LLM call.
+
+    Each delta carries only the new characters since the last delta —
+    consumers concatenate them to reconstruct the full response. The
+    SDK guarantees deltas arrive in order; we don't re-order or
+    deduplicate at this layer.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["text_delta"] = "text_delta"
+    text: str
+
+
+class StreamFinal(BaseModel):
+    """Terminal event from a streaming LLM call.
+
+    Always the LAST event yielded by ``LLMClient.stream``. Carries the
+    fully-assembled :class:`LLMResponse` so callers can read
+    ``tool_calls``, ``stop_reason``, and token counts after the text
+    deltas have all arrived. The verifier (Task #13) gates on this
+    event before emitting any text — streaming unverified clinical
+    content would be a clinical-safety violation.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["final"] = "final"
+    response: LLMResponse
+
+
+# Discriminated union over the two concrete event types. Pydantic's
+# `discriminator="kind"` makes round-tripping through model_validate
+# select the right subclass without an explicit isinstance dance.
+# Internal consumers pattern-match on `event.kind` or `isinstance`.
+StreamEvent = Annotated[
+    StreamTextDelta | StreamFinal,
+    Field(discriminator="kind"),
+]

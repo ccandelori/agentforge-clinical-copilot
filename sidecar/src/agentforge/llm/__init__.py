@@ -14,7 +14,15 @@ from agentforge.llm.health import (
     LLMHealthMonitor,
     LLMProviderStatus,
 )
-from agentforge.llm.types import LLMResponse, Message, ToolCall, ToolSpec
+from agentforge.llm.types import (
+    LLMResponse,
+    Message,
+    StreamEvent,
+    StreamFinal,
+    StreamTextDelta,
+    ToolCall,
+    ToolSpec,
+)
 
 __all__ = [
     "DEFAULT_MODEL",
@@ -26,6 +34,9 @@ __all__ = [
     "LLMProviderStatus",
     "LLMResponse",
     "Message",
+    "StreamEvent",
+    "StreamFinal",
+    "StreamTextDelta",
     "ToolCall",
     "ToolSpec",
 ]
