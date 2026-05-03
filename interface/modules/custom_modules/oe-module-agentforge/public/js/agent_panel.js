@@ -104,11 +104,35 @@
         return msg;
     }
 
+    /**
+     * Mint a session id for a fresh conversation. Server-side conversation
+     * memory is keyed on this value (sidecar TurnRequest.session_id, see
+     * orchestrator/memory.py). Without it every turn is independent and
+     * the agent has no recollection of previous messages in the chat.
+     *
+     * crypto.randomUUID is available on every modern browser (Safari 15.4+,
+     * Chrome 92+, Firefox 95+) and only requires a secure context, which
+     * the OpenEMR module always runs in. Fall back to timestamp+random if
+     * the page is somehow served over insecure http.
+     */
+    function generateSessionId() {
+        if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        return 'sid-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 10);
+    }
+
     function send(panel, message) {
         var url = panel.getAttribute('data-turn-url') || '';
         var messagesEl = $(panel, 'messages');
         appendMessage(messagesEl, 'user', message);
         setBusy(panel, true);
+
+        var sessionId = panel.dataset.sessionId || '';
+        var body = { message: message };
+        if (sessionId !== '') {
+            body.session_id = sessionId;
+        }
 
         fetch(url, {
             method: 'POST',
@@ -117,7 +141,7 @@
                 'Content-Type': 'application/json',
                 'Accept': 'application/json, text/plain;q=0.9, */*;q=0.5'
             },
-            body: JSON.stringify({ message: message })
+            body: JSON.stringify(body)
         }).then(function (response) {
             return response.text().then(function (body) {
                 if (!response.ok) {
@@ -134,11 +158,33 @@
         });
     }
 
+    function resetConversation(panel) {
+        var messagesEl = $(panel, 'messages');
+        // Mint a fresh session id; sidecar treats this as a brand-new
+        // conversation with no memory of prior turns.
+        panel.dataset.sessionId = generateSessionId();
+        // Wipe rendered history but keep the empty-state hint so the
+        // surface looks identical to first mount.
+        while (messagesEl.firstChild) {
+            messagesEl.removeChild(messagesEl.firstChild);
+        }
+        var emptyState = document.createElement('div');
+        emptyState.className = 'text-muted small';
+        emptyState.setAttribute('data-role', 'empty-state');
+        emptyState.textContent = 'Ask the Co-Pilot a question about this patient.';
+        messagesEl.appendChild(emptyState);
+    }
+
     function bind(panel) {
         if (panel.dataset.agentforgeBound === '1') {
             return;
         }
         panel.dataset.agentforgeBound = '1';
+
+        // Mint once on mount; reused across every turn until the user
+        // clicks "New conversation". Persisted on the panel dataset so
+        // it survives any DOM re-rendering of the messages list.
+        panel.dataset.sessionId = generateSessionId();
 
         var form = $(panel, 'form');
         var input = $(panel, 'input');
@@ -155,6 +201,14 @@
             input.value = '';
             send(panel, text);
         });
+
+        var resetBtn = $(panel, 'new-conversation');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function (event) {
+                event.preventDefault();
+                resetConversation(panel);
+            });
+        }
     }
 
     function init() {
