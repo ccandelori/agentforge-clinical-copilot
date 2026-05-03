@@ -146,10 +146,20 @@ class AgentLangfuse:
         prompt_tokens: int,
         completion_tokens: int,
         latency_ms: int,
+        cost_usd: float | None = None,
     ) -> None:
         parent = self._parent_span(trace)
         if parent is None:
             return
+
+        # Cost lives in span metadata (not usage_details) because the
+        # Langfuse SDK reserves usage_details for raw token counts —
+        # cost aggregation in the UI uses its own pricing math when
+        # not passed in directly. Omit the key entirely when callers
+        # don't supply it so legacy traces stay visually clean.
+        metadata: dict[str, float | int] = {"latency_ms": latency_ms}
+        if cost_usd is not None:
+            metadata["cost_usd"] = cost_usd
 
         span = parent.start_observation(
             name=f"llm:{model}",
@@ -159,7 +169,7 @@ class AgentLangfuse:
                 "input": prompt_tokens,
                 "output": completion_tokens,
             },
-            metadata={"latency_ms": latency_ms},
+            metadata=metadata,
         )
         span.end()
 

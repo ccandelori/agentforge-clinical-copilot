@@ -75,8 +75,9 @@ class NullLangfuseClient:
         prompt_tokens: int,
         completion_tokens: int,
         latency_ms: int,
+        cost_usd: float | None = None,
     ) -> None:
-        del trace, model, prompt_tokens, completion_tokens, latency_ms
+        del trace, model, prompt_tokens, completion_tokens, latency_ms, cost_usd
 
     def record_verifier_decision(
         self,
