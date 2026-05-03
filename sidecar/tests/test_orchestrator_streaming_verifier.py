@@ -223,8 +223,9 @@ class TestStreamingVerifierGate:
         assert "[problem #1]" in text
         assert REJECTION_MARKER not in text
 
-    async def test_ungrounded_sentence_replaced_with_rejection_marker(self) -> None:
-        # Synthesis text cites a record not in tool_results → redacted.
+    async def test_ungrounded_sentence_dropped_from_stream(self) -> None:
+        # Synthesis text cites a record not in tool_results → dropped silently.
+        # The trace records the rejection; the user wire stays clean.
         llm = _make_streaming_llm(
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
             _synthesis_events("Patient has hypertension [problem #999]. "),
@@ -234,10 +235,14 @@ class TestStreamingVerifierGate:
 
         deltas, _ = await _collect_stream(orch)
 
-        assert REJECTION_MARKER in "".join(deltas)
+        # The rejected sentence does not reach the wire.
+        assert "".join(deltas) == ""
+        assert REJECTION_MARKER not in "".join(deltas)
+        assert "[problem #999]" not in "".join(deltas)
 
-    async def test_multiple_sentences_order_preserved(self) -> None:
-        # Three sentences: first and third cite real records, second cites a fake one.
+    async def test_verified_sentences_pass_rejected_dropped(self) -> None:
+        # Three sentences: two verified, one with fake citation.
+        # The fake-citation sentence is dropped; the verified ones stream.
         llm = _make_streaming_llm(
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
             _synthesis_events(
@@ -252,10 +257,12 @@ class TestStreamingVerifierGate:
         deltas, _ = await _collect_stream(orch)
         text = "".join(deltas)
 
-        assert "[problem #5]" in text
-        assert REJECTION_MARKER in text
-        # Verified sentence appears before the rejection marker (order preserved).
-        assert text.index("[problem #5]") < text.index(REJECTION_MARKER)
+        # Both verified sentences arrive in order; the rejected one is gone.
+        assert "Known problem [problem #5]." in text
+        assert "Also on file [problem #5]." in text
+        assert "[problem #999]" not in text
+        assert REJECTION_MARKER not in text
+        assert text.index("Known problem") < text.index("Also on file")
 
     async def test_tool_use_iteration_then_verified_synthesis(self) -> None:
         # Multi-iteration turn: tool call first, then verified synthesis.
@@ -279,8 +286,8 @@ class TestStreamingVerifierGate:
         assert finals[0].response.stop_reason == "end_turn"
 
     async def test_stream_final_carries_verified_text(self) -> None:
-        # The terminal StreamFinal.response.text must match what the consumer
-        # received, not the raw unverified LLM output.
+        # The terminal StreamFinal.response.text matches what the consumer
+        # received — verified sentences only, rejected sentence dropped.
         llm = _make_streaming_llm(
             _tool_use_events([ToolCall(id="t1", name="get_active_problems", input={})]),
             _synthesis_events(
@@ -297,12 +304,12 @@ class TestStreamingVerifierGate:
         assert len(finals) == 1
         final_text = finals[0].response.text
 
-        # StreamFinal carries the verified text (contains REJECTION_MARKER for
-        # the unverified sentence, not the raw fabricated text).
-        assert REJECTION_MARKER in final_text
+        # StreamFinal carries only the verified sentence; rejected one dropped.
         assert "[problem #2]" in final_text
-        # The consumer deltas and the StreamFinal text should be consistent.
-        assert "".join(deltas) in final_text or final_text in "".join(deltas) or final_text == "".join(deltas)
+        assert "[problem #999]" not in final_text
+        assert REJECTION_MARKER not in final_text
+        # Consumer deltas and StreamFinal text are consistent.
+        assert final_text == "".join(deltas)
 
 
 # ---------------------------------------------------------------------------

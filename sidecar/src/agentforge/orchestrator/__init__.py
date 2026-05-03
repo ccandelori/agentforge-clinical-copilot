@@ -789,13 +789,20 @@ class Orchestrator:
                     _verifier_by_category: Counter[str] = Counter()
                     _verifier_start = time.perf_counter()
                     async for _chunk in _verifier.verify_stream(_token_source()):
-                        _verified_parts.append(_chunk.text)
                         _verifier_emitted += 1
                         if not _chunk.verified:
+                            # Rejected sentence: trace records it, but the
+                            # user sees nothing (clean wire). The verifier's
+                            # safety property is that ungrounded claims never
+                            # reach the user — silently dropping them is
+                            # equivalent to (and friendlier than) the visible
+                            # marker, since the trace span carries the audit.
                             _verifier_rejected += 1
                             _verifier_by_category[
                                 _chunk.rejection_reason or "unknown"
                             ] += 1
+                            continue
+                        _verified_parts.append(_chunk.text)
                         yield StreamTextDelta(text=_chunk.text)
                     self._record_verifier_span(
                         trace,
