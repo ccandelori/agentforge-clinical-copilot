@@ -39,10 +39,19 @@ _MIN_RETRY_BUDGET_SECONDS = 0.6
 
 @dataclass(frozen=True)
 class TimeoutPolicy:
-    """Per-turn budget hierarchy. Wider scopes contain narrower ones."""
+    """Per-turn budget hierarchy. Wider scopes contain narrower ones.
+
+    Layout: per_tool ≤ tool_phase ≤ total_turn. ``synthesis_phase`` is
+    a sibling of tool_phase capping each model completion call, so a
+    runaway LLM streaming response can't burn the whole turn budget on
+    a single iteration. ``synthesis_phase`` plus the worst-case
+    tool-phase batch should still fit under ``total_turn`` for the
+    common path.
+    """
 
     per_tool: float = 2.0
     tool_phase: float = 4.0
+    synthesis_phase: float = 5.0
     total_turn: float = 7.0
     max_steps: int = 7
     synthesis_input_cap: int = 12000

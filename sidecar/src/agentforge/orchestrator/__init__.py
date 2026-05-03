@@ -113,6 +113,17 @@ _SESSION_REFUSAL_TEXT: Final[str] = (
     "Please start a new chat session for further questions about this patient."
 )
 
+# Returned when the per-turn ``total_turn`` budget elapses (week1-gaps
+# Task #8). The reply is intentionally generic — a more diagnostic
+# message ("we got 3 of 5 tool results before the timer fired") could
+# leak which tools the orchestrator chose to dispatch, which is a
+# weak side channel onto the agent's planner. Better to keep the text
+# stable and rely on Langfuse traces for the per-tool postmortem.
+_TURN_BUDGET_EXCEEDED_TEXT: Final[str] = (
+    "This response is taking longer than expected. "
+    "Please try again or simplify your question."
+)
+
 # Loaded once from prompts/<active>/synthesizer.md. The body lives in
 # the versioned prompt library at the repo root so future edits land as
 # reviewable text diffs; see prompts/README.md.
@@ -258,6 +269,37 @@ class Orchestrator:
         # — refusals (HARD_CAP, etc) cost zero by default.
         _TURN_COST_VAR.set(0.0)
 
+        # Total-turn budget enforcement (week1-gaps Task #8). We use
+        # ``asyncio.timeout`` (Python 3.11+) rather than wrapping
+        # ``_turn_inner`` in ``asyncio.wait_for`` so the call runs in
+        # the SAME asyncio task — that keeps the per-turn cost
+        # ``ContextVar`` mutations visible to the /turn endpoint
+        # reading ``get_turn_cost_usd()`` after we return. Catching
+        # the TimeoutError here means a runaway turn surfaces as a
+        # generic graceful-degradation reply, never an unhandled
+        # cancellation back through FastAPI.
+        try:
+            async with asyncio.timeout(self._timeout_policy.total_turn):
+                return await self._turn_inner(
+                    ctx, user_message, session_id=session_id
+                )
+        except TimeoutError:
+            return _TURN_BUDGET_EXCEEDED_TEXT
+
+    async def _turn_inner(
+        self,
+        ctx: RequestContext,
+        user_message: str,
+        *,
+        session_id: str | None,
+    ) -> str:
+        """Body of :meth:`turn` minus the total-turn timeout wrapper.
+
+        Pulled out so the outer wrapper stays tight and so future
+        callers (e.g. a streaming variant) can reuse the same
+        per-turn machinery without re-implementing the timeout
+        envelope.
+        """
         # Reject up front when the session has already hit its hard cap;
         # we never call the model on a refused turn.
         if self._memory is not None and session_id is not None:
@@ -384,12 +426,23 @@ class Orchestrator:
 
         for _ in range(MAX_TOOL_ITERATIONS):
             llm_start = time.perf_counter()
-            response = await self._llm.complete(
-                system=SYSTEM_PROMPT,
-                messages=messages,
-                tools=tools,
-                max_tokens=1024,
-            )
+            # Synthesis-phase budget (week1-gaps Task #8). A runaway
+            # streaming response or a single very-large completion
+            # mustn't burn the whole total_turn budget on one
+            # iteration. On timeout we let the error propagate to the
+            # outer ``async with asyncio.timeout(total_turn)`` handler
+            # in ``turn()`` rather than handle it locally — the cost
+            # of an in-flight LLM call going past synthesis_phase is
+            # almost always close to total_turn anyway, and a generic
+            # "taking too long" reply is more honest than partial
+            # output.
+            async with asyncio.timeout(self._timeout_policy.synthesis_phase):
+                response = await self._llm.complete(
+                    system=SYSTEM_PROMPT,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=1024,
+                )
             self._record_llm_call(
                 trace,
                 latency_ms=_elapsed_ms(llm_start),
@@ -440,10 +493,44 @@ class Orchestrator:
             #
             # Result list comes back in input order (asyncio.gather
             # guarantee), so zipping with response.tool_calls is safe.
+            #
+            # Tool-phase budget (week1-gaps Task #8). On batch
+            # timeout, all in-flight per-tool calls are cancelled by
+            # the wrapping ``asyncio.timeout`` and we synthesize
+            # ``tool_phase_timeout`` error payloads in input order.
+            # Each tool name lands in ``timed_out_tools`` so the
+            # final reply carries a graceful-degradation notice.
             batch_start = time.perf_counter()
-            batch_results = await self._dispatch_batch(
-                ctx, list(response.tool_calls), trace, timed_out_tools
-            )
+            try:
+                async with asyncio.timeout(self._timeout_policy.tool_phase):
+                    batch_results = await self._dispatch_batch(
+                        ctx, list(response.tool_calls), trace, timed_out_tools
+                    )
+            except TimeoutError:
+                batch_results = []
+                for call in response.tool_calls:
+                    if call.name not in timed_out_tools:
+                        timed_out_tools.append(call.name)
+                    self._record_tool_call(
+                        trace,
+                        tool_name=call.name,
+                        status="tool_phase_timeout",
+                        latency_ms=_elapsed_ms(batch_start),
+                        cache_hit=False,
+                        args_hash=self._hash_args(call.input),
+                        result_hash=None,
+                    )
+                    batch_results.append(
+                        (
+                            json.dumps(
+                                {
+                                    "error": "tool_phase_timeout",
+                                    "tool": call.name,
+                                }
+                            ),
+                            None,
+                        )
+                    )
             self._record_parallel_batch(
                 trace,
                 batch_size=len(response.tool_calls),
