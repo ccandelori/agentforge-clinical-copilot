@@ -89,6 +89,14 @@ class LangfuseClient(Protocol):
         batch_count: int,
     ) -> None: ...
 
+    def record_parallel_batch(
+        self,
+        trace: TraceHandle,
+        *,
+        batch_size: int,
+        batch_duration_ms: int,
+    ) -> None: ...
+
     def record_verifier_decision(
         self,
         trace: TraceHandle,

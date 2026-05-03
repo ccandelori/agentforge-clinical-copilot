@@ -89,6 +89,15 @@ class NullLangfuseClient:
     ) -> None:
         del trace, use_case, tool_count, batch_count
 
+    def record_parallel_batch(
+        self,
+        trace: TraceHandle,
+        *,
+        batch_size: int,
+        batch_duration_ms: int,
+    ) -> None:
+        del trace, batch_size, batch_duration_ms
+
     def record_verifier_decision(
         self,
         trace: TraceHandle,

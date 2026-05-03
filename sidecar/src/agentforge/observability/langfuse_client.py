@@ -203,6 +203,39 @@ class AgentLangfuse:
         )
         span.end()
 
+    def record_parallel_batch(
+        self,
+        trace: TraceHandle,
+        *,
+        batch_size: int,
+        batch_duration_ms: int,
+    ) -> None:
+        """Emit a span describing one parallel-dispatch batch.
+
+        ``batch_size`` is the number of tool calls dispatched in
+        parallel and ``batch_duration_ms`` is the wall-clock time
+        the ``asyncio.gather`` call took (~max(per-tool-latency)).
+
+        Sequential-equivalent timing is intentionally NOT recorded
+        here — the per-tool ``record_tool_call`` spans already carry
+        each tool's latency, and the dashboard sums them to get the
+        sequential estimate. Savings = sum(per-tool latencies) -
+        batch_duration_ms.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="parallel_batch",
+            as_type="span",
+            metadata={
+                "batch_size": batch_size,
+                "batch_duration_ms": batch_duration_ms,
+            },
+        )
+        span.end()
+
     def record_verifier_decision(
         self,
         trace: TraceHandle,
