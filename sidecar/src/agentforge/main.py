@@ -18,8 +18,9 @@ import builtins
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, cast
 
+import redis.asyncio as redis_async
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
@@ -144,6 +145,20 @@ def create_app(
     --factory` is the production entry point.
     """
     settings = settings or get_settings()
+
+    # Production path (`uvicorn ... --factory`) calls this without a
+    # redis_client; the policy loader and AuthGateway visibility check
+    # both gate on `redis_client is not None`, so leaving it None silently
+    # disables sensitivity-policy enforcement on the droplet. Build one
+    # from settings here so production matches the test wiring shape.
+    # `redis.asyncio.Redis` satisfies both `_AppRedisProto` (this file)
+    # and `_RedisProto` (storage/redis_client.py), so the same connection
+    # pool can serve both consumers.
+    if redis_client is None:
+        redis_client = cast(
+            _AppRedisProto,
+            redis_async.from_url(settings.redis_url, decode_responses=False),
+        )
 
     storage = redis_storage or AgentRedisClient(redis_url=settings.redis_url)
 

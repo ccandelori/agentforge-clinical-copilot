@@ -126,3 +126,53 @@ def test_create_app_continues_when_policy_load_fails_and_not_required(
 
     assert response.status_code == 200
     assert response.json()["policy_loaded"] is False
+
+
+def test_create_app_auto_constructs_redis_client_from_settings(
+    monkeypatch: pytest.MonkeyPatch, policy_yaml: Path
+) -> None:
+    """When ``create_app()`` is called without a ``redis_client``
+    keyword (the production path through
+    ``uvicorn agentforge.main:create_app --factory``), the factory
+    must build one from ``settings.redis_url`` and route it into
+    the policy loader and the auth gateway. This closes the
+    Week 1 ``policy_loaded=false`` carryforward.
+
+    The test patches ``redis.asyncio.from_url`` to hand back the
+    same in-memory ``AsyncMock`` we use elsewhere, so the wiring
+    contract is exercised without a running Redis.
+    """
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret")
+    monkeypatch.setenv("HMAC_KEY", "test-hmac-key-32-bytes-aaaaaaaaaaaaa")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("SENSITIVITY_POLICY_PATH", str(policy_yaml))
+    get_settings.cache_clear()
+
+    redis_mock, _ = _make_redis()
+
+    # Patch BOTH places redis.asyncio.from_url is referenced in
+    # production: AgentRedisClient (storage) and the new factory
+    # path inside create_app(). Returning the same mock from each
+    # call keeps the policy load + visibility check + storage
+    # all pointed at one logical store, mirroring production.
+    import redis.asyncio
+
+    monkeypatch.setattr(
+        redis.asyncio,
+        "from_url",
+        lambda *_args, **_kwargs: redis_mock,
+    )
+
+    app = create_app()  # NO redis_client kwarg — production shape
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "healthy"
+    assert body["policy_loaded"] is True, (
+        "Auto-constructed redis_client did not flow into the policy "
+        "loader; policy_loaded stayed False. Production calls "
+        "create_app() with no redis_client kwarg, so this is the "
+        "real-world wiring contract."
+    )
