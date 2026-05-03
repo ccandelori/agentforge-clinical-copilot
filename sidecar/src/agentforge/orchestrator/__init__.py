@@ -34,6 +34,7 @@ from agentforge.llm.types import Message, ToolCall
 from agentforge.observability.cost import calculate_cost
 from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
+from agentforge.orchestrator.identity_guard import IdentityGuard
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
 from agentforge.orchestrator.planner import Planner
 from agentforge.orchestrator.truncation import SynthesisInputTruncator
@@ -96,6 +97,7 @@ from agentforge.verifier import (
     StreamingVerifier,
     build_citation_index,
 )
+from agentforge.verifier.data_quality import DataQualityChecker
 
 # The model name we report on Langfuse spans. The actual SDK model
 # string is decided by the LLMClient implementation; surfacing a
@@ -169,6 +171,8 @@ class Orchestrator:
         breakglass_audit: BreakglassAuditTool | None = None,
         planner: Planner | None = None,
         truncator: SynthesisInputTruncator | None = None,
+        data_quality: DataQualityChecker | None = None,
+        identity_guard_enabled: bool = False,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -208,6 +212,29 @@ class Orchestrator:
         # with the streaming refactor (#11/#13) where the synthesis
         # call separates from the tool loop. See DEVIATIONS.md.
         self._truncator = truncator
+
+        # Optional data-quality checker (week1-gaps #7). When set,
+        # ``turn()`` runs stale-lab + problem/note-conflict heuristics
+        # over the per-turn ``tool_results`` after the model's final
+        # response and appends compact warnings to the user-visible
+        # text. The orchestrator's iterative tool-use loop has no
+        # separate "synthesis input" seam, so the checks run
+        # post-final-text rather than the planner-driven "before final
+        # LLM call" placement in ARCHITECTURE.md §3 — see DEVIATIONS.md
+        # 2026-05-02 for the same reason the truncator deferred.
+        self._data_quality = data_quality
+
+        # IdentityGuard wiring toggle (week1-gaps #7). When True,
+        # ``turn()`` synchronously fetches demographics before the
+        # tool loop, constructs an :class:`IdentityGuard` bound to
+        # the chart owner's name + MRN-fallback, and checks the user
+        # message. A cross-patient reference short-circuits the turn
+        # with the guard's refusal text. The pre-fetched demographics
+        # are stashed in the per-turn cache so the model's first
+        # iteration sees a cache hit if it asks for the same tool.
+        # Disabled by default so the existing test fixtures (which
+        # don't stub demographics) keep working unchanged.
+        self._identity_guard_enabled = identity_guard_enabled
 
     async def turn(
         self,
@@ -262,6 +289,66 @@ class Orchestrator:
         # planner by default — otherwise dashboards understate cost.
         plan = await self._planner.plan(user_message) if self._planner else None
 
+        # Per-turn tool-result accumulator (declared here so the
+        # IdentityGuard pre-fetch below can pre-populate it before the
+        # main loop runs). Keyed by tool name; later iterations of the
+        # same tool overwrite — acceptable for MVP because the
+        # catalogue is idempotent reads.
+        tool_results: dict[str, ToolResult[Any]] = {}
+        trace = self._open_trace(ctx)
+
+        # Planner ran above; surface its classification on the trace so
+        # cohort filters in Langfuse can split metrics by use_case
+        # (admit_synthesis vs contraindication etc) without mining
+        # turn payloads. tool_count + batch_count describe dispatch
+        # shape only — no PHI leaves this call.
+        if plan is not None:
+            self._record_planner_decision(
+                trace,
+                use_case=plan.use_case.value,
+                tool_count=len(plan.tool_calls),
+                batch_count=len(plan.parallel_batches),
+            )
+
+        # IdentityGuard (week1-gaps #7). Demographics-first: fetch
+        # synchronously so we have the chart-owner's name to bind the
+        # guard to (Option B, see task spec). Fail-skip if demographics
+        # are unavailable — the real auth boundary is the tool layer
+        # (RequestContext.patient_id is bound), and IdentityGuard's
+        # own docstring positions it as a usability layer, not a
+        # security one.
+        if self._identity_guard_enabled:
+            demo_result = await self._safe_fetch_demographics(ctx)
+            if demo_result is not None:
+                # Stash the pre-fetch in per-turn tool_results so the
+                # verifier's citation index sees it AND prime the redis
+                # cache so a redundant model-issued get_demographics
+                # short-circuits to a cache hit.
+                tool_results["get_demographics"] = demo_result
+                await self._maybe_cache_set(
+                    ctx,
+                    "get_demographics",
+                    self._hash_args({}),
+                    demo_result,
+                )
+
+                guard = self._build_identity_guard(ctx, demo_result)
+                check = guard.check_message(user_message)
+                self._record_identity_guard_decision(
+                    trace,
+                    is_valid=check.is_valid,
+                    matched_pattern=check.matched_pattern,
+                )
+                if not check.is_valid:
+                    # check.refusal_reason is non-None when is_valid is
+                    # False; assert it explicitly for the type checker
+                    # rather than reaching for a cast.
+                    assert check.refusal_reason is not None
+                    await self._maybe_persist_turn(
+                        session_id, user_message, check.refusal_reason
+                    )
+                    return check.refusal_reason
+
         messages: list[Message] = []
         if self._memory is not None and session_id is not None:
             for entry in await self._memory.get_memory(session_id):
@@ -290,28 +377,10 @@ class Orchestrator:
             IMMUNIZATIONS_TOOL_SPEC,
             PROCEDURES_TOOL_SPEC,
         ]
-        # Per-turn tool-result accumulator. Keyed by tool name; later
-        # iterations of the same tool overwrite — acceptable for MVP
-        # because the catalogue is idempotent reads.
-        tool_results: dict[str, ToolResult[Any]] = {}
         # Names of tools whose retries all timed out this turn. Surface
         # at the end as a graceful-degradation notice so the user
         # knows the response is incomplete.
         timed_out_tools: list[str] = []
-
-        trace = self._open_trace(ctx)
-        # Planner ran above; surface its classification on the trace so
-        # cohort filters in Langfuse can split metrics by use_case
-        # (admit_synthesis vs contraindication etc) without mining
-        # turn payloads. tool_count + batch_count describe dispatch
-        # shape only — no PHI leaves this call.
-        if plan is not None:
-            self._record_planner_decision(
-                trace,
-                use_case=plan.use_case.value,
-                tool_count=len(plan.tool_calls),
-                batch_count=len(plan.parallel_batches),
-            )
 
         for _ in range(MAX_TOOL_ITERATIONS):
             llm_start = time.perf_counter()
@@ -345,6 +414,13 @@ class Orchestrator:
                     final_text = await self._verify_response(
                         response.text, tool_results, trace
                     )
+                # Data quality runs AFTER the verifier (when on) so its
+                # appended warnings aren't redacted for missing
+                # citations — the warnings are orchestrator-emitted
+                # meta-content, not model claims that need grounding.
+                final_text = self._apply_data_quality(
+                    final_text, tool_results, trace
+                )
                 final_text = self._append_degradation_notice(
                     final_text, timed_out_tools
                 )
@@ -795,6 +871,147 @@ class Orchestrator:
             claims_rejected=claims_rejected,
             by_category=by_category,
         )
+
+    def _record_identity_guard_decision(
+        self,
+        trace: TraceHandle | None,
+        *,
+        is_valid: bool,
+        matched_pattern: str | None,
+    ) -> None:
+        if self._langfuse is None or trace is None:
+            return
+        self._langfuse.record_identity_guard_decision(
+            trace,
+            is_valid=is_valid,
+            matched_pattern=matched_pattern,
+        )
+
+    def _record_data_quality_metrics(
+        self,
+        trace: TraceHandle | None,
+        *,
+        stale_labs_count: int,
+        conflict_count: int,
+    ) -> None:
+        if self._langfuse is None or trace is None:
+            return
+        self._langfuse.record_data_quality_metrics(
+            trace,
+            stale_labs_count=stale_labs_count,
+            conflict_count=conflict_count,
+        )
+
+    # ----------- IdentityGuard helpers -----------
+
+    async def _safe_fetch_demographics(
+        self, ctx: RequestContext
+    ) -> DemographicsResult | None:
+        """Fetch demographics for IdentityGuard, returning None on failure.
+
+        We need the chart-owner's name to bind the guard. If the
+        demographics endpoint is down or the JWT is rejected, log
+        nothing and skip the guard rather than refuse the turn — the
+        real auth boundary is the tool layer, and a 5xx on demographics
+        shouldn't black out the whole agent. The guard is a usability
+        layer, not a security one (see identity_guard.py docstring).
+        """
+        try:
+            return await self._demographics.fetch(
+                patient_id=ctx.patient_id, raw_token=ctx.raw_token
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _build_identity_guard(
+        ctx: RequestContext, demo_result: DemographicsResult
+    ) -> IdentityGuard:
+        """Construct an IdentityGuard from the chart owner's demographics.
+
+        ``DemographicsPayload`` doesn't currently include MRN, so we
+        fall back to ``patient_id`` for the MRN check (Option B per
+        the task spec). When :file:`demographics.php` is extended to
+        return ``pubpid``, the construction below switches over without
+        callers changing.
+        """
+        payload = demo_result.payload
+        patient_name = f"{payload.given_name} {payload.family_name}".strip()
+        # MRN fallback: patient_id-as-string until DemographicsPayload
+        # learns about pubpid. The IdentityGuard's MRN check is
+        # case-insensitive substring against this value, so the digits
+        # of patient_id work as a placeholder.
+        patient_mrn = str(ctx.patient_id)
+        return IdentityGuard(
+            current_patient_name=patient_name,
+            current_mrn=patient_mrn,
+        )
+
+    # ----------- DataQuality helpers -----------
+
+    def _apply_data_quality(
+        self,
+        text: str,
+        tool_results: dict[str, ToolResult[Any]],
+        trace: TraceHandle | None,
+    ) -> str:
+        """Append data-quality warnings to ``text`` and emit telemetry.
+
+        Runs the stale-lab heuristic over ``get_recent_labs`` results
+        and the problem/note conflict heuristic when both
+        ``get_active_problems`` and ``get_recent_notes`` were
+        collected. Counts are reported on the trace; the warnings
+        themselves land inline at the bottom of the response under a
+        compact header.
+
+        No-op when the checker isn't configured or no relevant tool
+        results are present.
+        """
+        if self._data_quality is None:
+            return text
+
+        warnings: list[str] = []
+        stale_count = 0
+        conflict_count = 0
+
+        labs_result = tool_results.get("get_recent_labs")
+        if labs_result is not None and hasattr(labs_result.payload, "labs"):
+            for lab in labs_result.payload.labs:
+                flag = self._data_quality.check_stale_labs(lab)
+                if flag is not None:
+                    warnings.append(flag)
+                    stale_count += 1
+
+        problems_result = tool_results.get("get_active_problems")
+        notes_result = tool_results.get("get_recent_notes")
+        if (
+            problems_result is not None
+            and notes_result is not None
+            and hasattr(problems_result.payload, "problems")
+            and hasattr(notes_result.payload, "notes")
+        ):
+            conflicts = self._data_quality.check_conflicting_sources(
+                problems_result.payload.problems,
+                notes_result.payload.notes,
+            )
+            warnings.extend(conflicts)
+            conflict_count = len(conflicts)
+
+        self._record_data_quality_metrics(
+            trace,
+            stale_labs_count=stale_count,
+            conflict_count=conflict_count,
+        )
+
+        if not warnings:
+            return text
+
+        # Compact header so the warnings are visually distinct from
+        # the main answer without taking over the response. The header
+        # text is identical regardless of warning category — the
+        # individual lines explain themselves.
+        body = "\n".join(f"- {w}" for w in warnings)
+        return f"{text}\n\nData quality notes:\n{body}"
 
     async def _maybe_persist_turn(
         self,

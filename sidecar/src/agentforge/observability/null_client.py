@@ -108,6 +108,24 @@ class NullLangfuseClient:
     ) -> None:
         del trace, claims_emitted, claims_rejected, by_category
 
+    def record_identity_guard_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        is_valid: bool,
+        matched_pattern: str | None,
+    ) -> None:
+        del trace, is_valid, matched_pattern
+
+    def record_data_quality_metrics(
+        self,
+        trace: TraceHandle,
+        *,
+        stale_labs_count: int,
+        conflict_count: int,
+    ) -> None:
+        del trace, stale_labs_count, conflict_count
+
     def flush(self) -> None:
         return None
 

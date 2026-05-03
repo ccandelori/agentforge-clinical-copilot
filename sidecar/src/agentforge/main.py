@@ -18,6 +18,7 @@ import builtins
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated, Protocol, cast
 
 import redis.asyncio as redis_async
@@ -56,6 +57,7 @@ from agentforge.tools.procedures import ProceduresFetcher
 from agentforge.tools.search_notes import SearchNotesFetcher
 from agentforge.tools.vitals import VitalsFetcher
 from agentforge.verifier import DomainConstraints
+from agentforge.verifier.data_quality import DataQualityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,7 @@ def create_app(
     redis_client: _AppRedisProto | None = None,
     planner: Planner | None = None,
     truncator: SynthesisInputTruncator | None = None,
+    data_quality: DataQualityChecker | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -258,6 +261,13 @@ def create_app(
     # instantiate per-request.
     truncator_instance = truncator or SynthesisInputTruncator()
 
+    # Default-on data-quality checker (week1-gaps #7). Stateless
+    # except for the injected clock; runs on every turn after the
+    # tool loop closes and before the response is persisted.
+    data_quality_instance = data_quality or DataQualityChecker(
+        now=lambda: datetime.now(UTC),
+    )
+
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
@@ -280,6 +290,8 @@ def create_app(
         memory=ConversationMemory(redis_storage=storage),
         planner=planner_instance,
         truncator=truncator_instance,
+        data_quality=data_quality_instance,
+        identity_guard_enabled=True,
     )
 
     app.state.auth_gateway = auth_gateway

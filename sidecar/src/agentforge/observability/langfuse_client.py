@@ -259,6 +259,64 @@ class AgentLangfuse:
         )
         span.end()
 
+    def record_identity_guard_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        is_valid: bool,
+        matched_pattern: str | None,
+    ) -> None:
+        """Emit a span describing the IdentityGuard verdict for this turn.
+
+        Logged on every turn where the guard ran (whether or not it
+        refused), so dashboards can show baseline traffic alongside
+        refusal rate. The values here are PHI-safe: ``matched_pattern``
+        is the closed three-element enum ("patient_name" | "mrn" |
+        "room") plus ``None`` for valid turns — no raw user message
+        content reaches the trace store.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="identity_guard",
+            as_type="evaluator",
+            metadata={
+                "is_valid": is_valid,
+                "matched_pattern": matched_pattern,
+            },
+        )
+        span.end()
+
+    def record_data_quality_metrics(
+        self,
+        trace: TraceHandle,
+        *,
+        stale_labs_count: int,
+        conflict_count: int,
+    ) -> None:
+        """Emit a span describing the DataQualityChecker findings.
+
+        Records counts only — the flag strings themselves include
+        condition names and dates and so do not leave the
+        orchestrator. Dashboards roll counts up by use_case via the
+        sibling ``planner`` span on the same trace.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="data_quality",
+            as_type="evaluator",
+            metadata={
+                "stale_labs_count": stale_labs_count,
+                "conflict_count": conflict_count,
+            },
+        )
+        span.end()
+
     def flush(self) -> None:
         self._langfuse.flush()
 
