@@ -40,7 +40,8 @@ Read deeper:
 - [`USERS.md`](USERS.md) — User research, persona (Dr. Aisha Patel), use cases, success metrics.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — Six load-bearing decisions, three explicit tradeoffs, full system design.
 - [`DEPLOY.md`](DEPLOY.md) — Pre-deploy gates, deploy steps, rollback plan, post-deploy validation.
-- [`docs/eval-report-2026-05-03.md`](docs/eval-report-2026-05-03.md) — Most recent eval report (does it work on hard cases?).
+- [`docs/eval-summary-2026-05-03.md`](docs/eval-summary-2026-05-03.md) — Eval narrative across baseline (6/7 live LLM pass), YAML failure-mode cases, and live demo session.
+- [`docs/cost-analysis-2026-05-03.md`](docs/cost-analysis-2026-05-03.md) — Per-turn cost (~$0.03), daily/monthly projections, ROI sketch.
 
 ## 60-second local quickstart
 
