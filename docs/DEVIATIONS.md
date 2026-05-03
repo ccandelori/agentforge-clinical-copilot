@@ -1483,3 +1483,49 @@ catalogue uses — without adopting a new framework.
 [`sidecar/tests/test_planner.py`](../sidecar/tests/test_planner.py).
 
 ---
+
+## 2026-05-02 — SynthesisInputTruncator wired but behavioral integration deferred
+
+**Plan:** week1-gaps Task #6 said "after all tool results are
+collected, before final LLM call, truncate ``tool_results`` to fit
+under ``synthesis_input_cap``" and update create_app to construct a
+default `SynthesisInputTruncator()`. The phrasing assumes a
+fetch-then-synthesize architecture: pre-fetch every tool the planner
+asked for, then call the LLM ONCE with synthesizer-prompt +
+results-as-context.
+
+**Deviation:** The orchestrator uses an iterative tool-use loop, not
+fetch-then-synthesize. The LLM picks tools in chunks across
+iterations and we feed each result back as a `tool` message in the
+running `messages` array. By the time `tool_results` is "complete"
+(loop exits with end_turn), the LLM has already seen the unredacted
+payloads. Truncating then is either a no-op
+(verifier_enabled=False; tool_results isn't read again after the
+loop) or a regression (verifier_enabled=True; the verifier's
+citation cache shrinks and valid claims start failing to ground).
+
+So #6 wires the kwarg + stashes the truncator on the orchestrator
+without invoking it. Default-on construction in create_app still
+ships — collaborators get a real truncator instance — but
+`Orchestrator.turn` doesn't call `truncator.truncate` yet.
+
+**Why:** Aggressive truncation in the iterative architecture causes
+either nothing or citation-cache regressions. The behavioral
+integration is structurally sound only after the streaming refactor
+(#11/#13) splits the synthesis call from the tool loop. At that
+point "before final LLM call" becomes a real seam to gate on. The
+wiring lands now so future subtasks can reach for `self._truncator`
+without re-touching the constructor.
+
+**What we learned:** The PRD wrote each integration task assuming
+the planner-driven architecture from ARCHITECTURE.md §3. The actual
+orchestrator has stayed iterative-tool-use because no task has
+flipped that switch yet. Every integration task needs a sanity check
+against the current dispatch shape, not the target one.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py)
+(constructor only — the truncator is held but unused),
+[`sidecar/src/agentforge/orchestrator/truncation.py`](../sidecar/src/agentforge/orchestrator/truncation.py).
+
+---

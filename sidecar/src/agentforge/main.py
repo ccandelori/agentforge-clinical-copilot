@@ -42,6 +42,7 @@ from agentforge.observability import (
 from agentforge.orchestrator import Orchestrator, get_turn_cost_usd
 from agentforge.orchestrator.memory import ConversationMemory
 from agentforge.orchestrator.planner import Planner
+from agentforge.orchestrator.truncation import SynthesisInputTruncator
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.demographics import DemographicsFetcher
@@ -139,6 +140,7 @@ def create_app(
     langfuse_client: LangfuseClient | None = None,
     redis_client: _AppRedisProto | None = None,
     planner: Planner | None = None,
+    truncator: SynthesisInputTruncator | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -249,6 +251,13 @@ def create_app(
     # inject a stub via the `planner=` kwarg to skip the real LLM.
     planner_instance = planner or Planner(llm=llm)
 
+    # Default-on synthesis-input truncator. Held but not yet invoked
+    # by the orchestrator (see DEVIATIONS.md 2026-05-02 — behavioral
+    # integration deferred to the streaming refactor). Constructed
+    # at startup because the tiktoken encoder is non-trivial to
+    # instantiate per-request.
+    truncator_instance = truncator or SynthesisInputTruncator()
+
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
@@ -270,6 +279,7 @@ def create_app(
         redis_storage=storage,
         memory=ConversationMemory(redis_storage=storage),
         planner=planner_instance,
+        truncator=truncator_instance,
     )
 
     app.state.auth_gateway = auth_gateway
