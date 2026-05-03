@@ -40,7 +40,10 @@ def make_redis_mock(
 ) -> AsyncMock:
     """Build an async Redis mock prepopulated with policy state.
 
-    `policy_loaded` controls the sentinel `agentforge:policy:version`.
+    `policy_loaded` controls the sentinel ``agentforge:policy:loaded``
+    (the canonical key the policy loader writes; historical callers
+    used ``agentforge:policy:version`` but that string was never set
+    by the loader — the mismatch is fixed in auth_gateway.py).
     `role_clearances` maps role names to the byte-encoded clearance set
     Redis would return.
     """
@@ -49,7 +52,7 @@ def make_redis_mock(
     async def get(key: str) -> bytes | None:
         if raise_on_get:
             raise redis.exceptions.ConnectionError("simulated outage")
-        if key == "agentforge:policy:version":
+        if key == "agentforge:policy:loaded":
             return b"1" if policy_loaded else None
         return None
 
