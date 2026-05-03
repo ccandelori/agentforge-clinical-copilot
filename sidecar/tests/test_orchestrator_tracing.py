@@ -325,3 +325,119 @@ class TestVerifierDecisionSpan:
         orch = _build(llm=llm, langfuse=langfuse, verifier_enabled=False)
         await orch.turn(_ctx(), "hi")
         langfuse.record_verifier_decision.assert_not_called()
+
+
+class TestCostAccounting:
+    """Per-turn LLM cost lands in the ContextVar AND on the Langfuse
+    generation span (Week 1 Task #14). Calculated from token counts +
+    the static pricing table; aggregated across all LLM calls in the
+    turn so the /turn endpoint can surface a single X-Agent-Cost-USD
+    header per response."""
+
+    async def test_single_call_cost_lands_in_contextvar(self) -> None:
+        from agentforge.observability.cost import calculate_cost
+        from agentforge.orchestrator import _TRACE_MODEL, get_turn_cost_usd
+
+        llm = _llm_with(
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=1000,
+                output_tokens=500,
+            )
+        )
+        orch = _build(llm=llm, langfuse=None)
+        await orch.turn(_ctx(), "hi")
+
+        expected = calculate_cost(_TRACE_MODEL, 1000, 500)
+        assert get_turn_cost_usd() == expected
+
+    async def test_tool_use_loop_accumulates_cost(self) -> None:
+        from agentforge.observability.cost import calculate_cost
+        from agentforge.orchestrator import _TRACE_MODEL, get_turn_cost_usd
+
+        llm = _llm_with(
+            LLMResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="get_demographics", input={})],
+                stop_reason="tool_use",
+                input_tokens=100,
+                output_tokens=50,
+            ),
+            LLMResponse(
+                text="Patient is Jane Doe.",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=200,
+                output_tokens=80,
+            ),
+        )
+        orch = _build(
+            llm=llm,
+            langfuse=None,
+            demographics=_fetcher(_demographics()),
+        )
+        await orch.turn(_ctx(), "name?")
+
+        expected = (
+            calculate_cost(_TRACE_MODEL, 100, 50)
+            + calculate_cost(_TRACE_MODEL, 200, 80)
+        )
+        assert get_turn_cost_usd() == expected
+
+    async def test_cost_resets_between_turns(self) -> None:
+        """A second turn on the same orchestrator must not inherit
+        accumulated cost from the prior turn — turn() resets the
+        ContextVar before running anything."""
+        from agentforge.observability.cost import calculate_cost
+        from agentforge.orchestrator import _TRACE_MODEL, get_turn_cost_usd
+
+        llm1 = _llm_with(
+            LLMResponse(
+                text="first",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=100,
+                output_tokens=20,
+            )
+        )
+        orch1 = _build(llm=llm1, langfuse=None)
+        await orch1.turn(_ctx(), "hi")
+
+        llm2 = _llm_with(
+            LLMResponse(
+                text="second",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=300,
+                output_tokens=60,
+            )
+        )
+        orch2 = _build(llm=llm2, langfuse=None)
+        await orch2.turn(_ctx(), "again")
+
+        # Second turn's accumulator only reflects the second call,
+        # not the first — proves the reset at turn() entry works.
+        assert get_turn_cost_usd() == calculate_cost(_TRACE_MODEL, 300, 60)
+
+    async def test_record_llm_call_passes_cost_to_langfuse(self) -> None:
+        """Cost is forwarded to the Langfuse generation span so the
+        trace store gets per-call dollar metadata, not just tokens."""
+        llm = _llm_with(
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=1000,
+                output_tokens=500,
+            )
+        )
+        langfuse = _make_langfuse_mock()
+        orch = _build(llm=llm, langfuse=langfuse)
+        await orch.turn(_ctx(), "hi")
+
+        langfuse.record_llm_call.assert_called_once()
+        kwargs = langfuse.record_llm_call.call_args.kwargs
+        assert "cost_usd" in kwargs
+        assert kwargs["cost_usd"] > 0.0

@@ -8,6 +8,7 @@ See ARCHITECTURE.md S7.
 
 from __future__ import annotations
 
+from agentforge.observability.cost import PRICING, CallCost, calculate_cost
 from agentforge.observability.hmac_hash import (
     PSEUDONYM_HEX_LENGTH,
     hash_payload,
@@ -18,11 +19,14 @@ from agentforge.observability.null_client import NullLangfuseClient
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 
 __all__ = [
+    "PRICING",
     "PSEUDONYM_HEX_LENGTH",
     "AgentLangfuse",
+    "CallCost",
     "LangfuseClient",
     "NullLangfuseClient",
     "TraceHandle",
+    "calculate_cost",
     "hash_payload",
     "pseudonymize",
 ]

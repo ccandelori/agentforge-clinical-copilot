@@ -77,6 +77,7 @@ class LangfuseClient(Protocol):
         prompt_tokens: int,
         completion_tokens: int,
         latency_ms: int,
+        cost_usd: float | None = None,
     ) -> None: ...
 
     def record_verifier_decision(

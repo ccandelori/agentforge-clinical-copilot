@@ -24,12 +24,14 @@ import json
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any, Final
 
 from agentforge.breakglass import BreakglassAuditTool
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.llm.client import LLMClient
 from agentforge.llm.types import Message, ToolCall
+from agentforge.observability.cost import calculate_cost
 from agentforge.observability.hmac_hash import hash_payload
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
@@ -114,6 +116,28 @@ SYSTEM_PROMPT: Final[str] = load_prompt("synthesizer")
 
 MAX_TOOL_ITERATIONS: Final[int] = 4
 
+# Per-turn USD cost accumulator. Populated by ``_record_llm_call`` and
+# read by the /turn endpoint to set the X-Agent-Cost-USD response
+# header. Stored as a :class:`contextvars.ContextVar` so concurrent
+# /turn requests on the same orchestrator instance don't clobber each
+# other's totals — each asyncio task gets its own value via PEP 567
+# context propagation. ``Orchestrator.turn`` resets to 0.0 at the
+# start of every call.
+_TURN_COST_VAR: ContextVar[float] = ContextVar(
+    "agentforge_turn_cost_usd", default=0.0
+)
+
+
+def get_turn_cost_usd() -> float:
+    """Return the accumulated LLM cost for the current asyncio task.
+
+    Resets to 0.0 at the start of each :meth:`Orchestrator.turn`
+    invocation, so callers should read this AFTER ``turn`` returns
+    and BEFORE awaiting any other code that might issue a new turn
+    in the same task.
+    """
+    return _TURN_COST_VAR.get()
+
 
 class Orchestrator:
     def __init__(
@@ -182,6 +206,13 @@ class Orchestrator:
         model finishes. The hard cap from memory.py becomes a refusal
         before the model is invoked at all.
         """
+        # Reset the per-turn cost accumulator so callers reading
+        # ``get_turn_cost_usd()`` after this turn returns see only the
+        # USD spent in THIS turn, not lingering value from a prior
+        # turn that ran on the same asyncio task. Set unconditionally
+        # — refusals (HARD_CAP, etc) cost zero by default.
+        _TURN_COST_VAR.set(0.0)
+
         # Reject up front when the session has already hit its hard cap;
         # we never call the model on a refused turn.
         if self._memory is not None and session_id is not None:
@@ -579,6 +610,15 @@ class Orchestrator:
         prompt_tokens: int,
         completion_tokens: int,
     ) -> None:
+        # Accumulate USD cost on the per-turn ContextVar regardless of
+        # whether Langfuse is wired — the /turn endpoint reads this to
+        # set the X-Agent-Cost-USD header and operators want that
+        # signal even when traces are off (e.g. Null client in dev).
+        cost = calculate_cost(
+            _TRACE_MODEL, prompt_tokens, completion_tokens
+        )
+        _TURN_COST_VAR.set(_TURN_COST_VAR.get() + cost)
+
         if self._langfuse is None or trace is None:
             return
         self._langfuse.record_llm_call(
@@ -587,6 +627,7 @@ class Orchestrator:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
+            cost_usd=cost,
         )
 
     def _record_tool_call(

@@ -205,6 +205,53 @@ def test_record_llm_call_emits_generation_span_with_token_counts() -> None:
     assert kwargs["usage_details"] == {"input": 500, "output": 120}
 
 
+def test_record_llm_call_attaches_cost_usd_to_metadata() -> None:
+    """When the orchestrator passes a calculated cost, the generation
+    span carries it in metadata so Langfuse aggregates dollar spend
+    per trace / per session. ARCHITECTURE.md §7 lists $/turn as a
+    required observability signal; this is where the wire crosses
+    into the trace store."""
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_llm_call(
+        handle,
+        model="claude-sonnet-4-5",
+        prompt_tokens=1000,
+        completion_tokens=500,
+        latency_ms=2000,
+        cost_usd=0.0105,
+    )
+
+    kwargs = parent_span.start_observation.call_args.kwargs
+    metadata = kwargs["metadata"]
+    assert metadata.get("cost_usd") == pytest.approx(0.0105, rel=1e-9)
+    # Latency must still be there — adding cost mustn't drop existing fields.
+    assert metadata.get("latency_ms") == 2000
+
+
+def test_record_llm_call_omits_cost_when_not_provided() -> None:
+    """Backwards compat: callers that don't pass cost_usd produce
+    a span with no cost metadata key (rather than ``cost_usd=None``)
+    so legacy traces remain visually clean in the UI."""
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_llm_call(
+        handle,
+        model="claude-sonnet-4-5",
+        prompt_tokens=100,
+        completion_tokens=50,
+        latency_ms=500,
+    )
+
+    kwargs = parent_span.start_observation.call_args.kwargs
+    metadata = kwargs["metadata"]
+    assert "cost_usd" not in metadata
+
+
 # ---------- record_verifier_decision ----------
 
 
