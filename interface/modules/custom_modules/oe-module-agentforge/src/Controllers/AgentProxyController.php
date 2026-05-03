@@ -133,10 +133,29 @@ class AgentProxyController
      * through to the client without buffering the full body. The
      * httpClient is captured by reference inside the streaming callback
      * so streaming continues across the closure boundary.
+     *
+     * When the sidecar returns ``text/event-stream`` (SSE streaming path,
+     * week1-gaps Task #11), two extra headers suppress proxy and PHP-layer
+     * buffering so each SSE frame reaches the browser as it is emitted:
+     *   - ``Cache-Control: no-cache`` — prevents the browser / CDN from
+     *     buffering the SSE stream across reconnects.
+     *   - ``X-Accel-Buffering: no`` — nginx-specific knob; disables proxy
+     *     buffering so deltas are not held until the connection closes.
+     *
+     * Cost is carried inside the SSE ``final`` frame emitted by the sidecar
+     * (see ``main.py:_sse_stream``); the JS reader extracts it from there.
+     * No attempt is made to re-emit it as an HTTP header because response
+     * headers cannot be set after the stream body has started.
      */
     private function streamSidecarResponse(ResponseInterface $sidecarResponse): StreamedResponse
     {
         $client = $this->httpClient;
+
+        // Inspect headers before opening the streaming callback — once the
+        // callback starts writing, headers are already sent.
+        $sidecarHeaders = $sidecarResponse->getHeaders(throw: false);
+        $contentType = $sidecarHeaders['content-type'][0] ?? '';
+        $isSse = str_starts_with($contentType, 'text/event-stream');
 
         $streamed = new StreamedResponse(function () use ($client, $sidecarResponse): void {
             foreach ($client->stream($sidecarResponse) as $chunk) {
@@ -149,9 +168,13 @@ class AgentProxyController
 
         // Forward Content-Type from sidecar so JSON / SSE / plain text
         // all reach the browser correctly.
-        $sidecarHeaders = $sidecarResponse->getHeaders(throw: false);
-        if (isset($sidecarHeaders['content-type'][0])) {
-            $streamed->headers->set('Content-Type', $sidecarHeaders['content-type'][0]);
+        if ($contentType !== '') {
+            $streamed->headers->set('Content-Type', $contentType);
+        }
+
+        if ($isSse) {
+            $streamed->headers->set('Cache-Control', 'no-cache');
+            $streamed->headers->set('X-Accel-Buffering', 'no');
         }
 
         return $streamed;
