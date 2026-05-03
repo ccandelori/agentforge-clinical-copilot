@@ -1,268 +1,230 @@
-# Where we left off — 2026-05-02 (end of session, 51/51 complete)
+# Where we left off — 2026-05-02 (mid-session, week1-gaps 5/22)
 
-Read me first when picking the project back up. Update or delete me when
-the state captured here goes stale.
+Read me first when picking the project back up. Update or delete me
+when the state captured here goes stale.
 
 ## Headline
 
-**TaskMaster: 51/51 done (100%).** Every parent task in the original
-roadmap (and the two added today, 50 and 51) is closed. The remaining
-work is in the carryforward section below — items intentionally
-deferred, never tracked by task-master, or follow-ups created during
-implementation that don't warrant a new top-level task.
+**Major scope reset this session.** Closed all 51 task-master items
+the previous session, then reviewed against the actual Week 1 rubric
+and discovered gaps that the original roadmap didn't cover. Wrote a
+new PRD (`.taskmaster/docs/week1-gaps-prd.md`), parsed it into 22
+remediation tasks under the `week1-gaps` tag, expanded the heavy
+ones into 44 subtasks, and started shipping.
 
-## What shipped this session (single very long day)
+**Current state: week1-gaps 5/22 done.** Phase 1 (visible
+deliverables) is complete; baseline eval is in place; cost
+accounting is wired. Integration pass (#4-#7) and streaming refactor
+(#9-#13) are now unblocked but neither has been started — both are
+multi-file refactors that warrant fresh context.
+
+## Why we're on a new tag
+
+The previous session closed 51/51 master tasks but a third-party
+review (GPT-4 reading against ARCHITECTURE.md and the rubric)
+flagged real gaps:
+
+  * Multi-turn UX claimed but session_id not minted in browser.
+  * Streaming claimed but verifier runs on completed text blob.
+  * Planner / parallel dispatch / truncator / data-quality / identity
+    guard all built but not wired into Orchestrator.turn.
+  * 7s p95 not enforced (default test budget 30s).
+  * Eval framework existed but didn't invoke the agent.
+  * Cost in observability missing despite spec.
+  * README still upstream OpenEMR.
+
+Mistake to learn from: closing the task-master roadmap is not the
+same as meeting the rubric. Task-master scope ≠ rubric scope. Don't
+treat "all green" as "all done" without comparing against the spec
+the work is graded against.
+
+The week1-gaps tag is the remediation roadmap. Switch via
+``task-master tags use week1-gaps``.
+
+## What shipped this session
 
 ```
-Tasks closed today (parent-level, in merge order):
-  50  Synthea seed pipeline (added during session)
-  45  Synthesis input truncator
-  27  Planner agent
-  51  Tool catalog gaps + output refinement (added during session)
-        51.1  get_immunizations end-to-end
-        51.2  get_procedures end-to-end
-        51.3  Output refinement (canonical headers, citation types,
-              demographic weaving) + closed verifier _KNOWN_TOOLS
-              gap for notes/search_notes
-        51.4  Out-of-scope guardrail regression locks
-  35  docker/agent compose stack
-  36  Apache reverse-proxy + access control include
-  46  DataQualityChecker (subagent)
-  48  DEPLOY.md deployment checklist (subagent)
-  42  IdentityGuard for cross-patient references (subagent)
-  49  Drop redundant idx_procedure_report_date (subagent)
-  43  Prompt Library externalization (subagent)
-  47  E2E integration test suite
-        47.1  Auth + session fixtures
-        47.2  Patient context fixtures
-        47.3  UC-1..UC-4 LLM flows
-        47.4  Auth/error boundary tests
-        47.5  Latency-budget tests
+week1-gaps tasks closed (in merge order, all on main):
+  1   Project README replacement              (visible)
+  2   Wire redis_client from REDIS_URL        (closes policy_loaded=false)
+  3   Multi-turn session_id in chat panel     (closes carryforward #2)
+  21  Baseline eval runner                    (safety net for #4-#13)
+  14  Cost accounting in LLM calls + traces   (X-Agent-Cost-USD header)
 
-Polish + carryforward closures done alongside:
-  *  citation parser multi-id expansion (defense-in-depth — was a
-     carryforward from 51.3)
-  *  Vitals fixture-roundtrip fix (251/251 PHP isolated AgentForge
-     fully green for the first time)
-  *  Sensitivity policy YAML now copied into the Docker image
-  *  Prompt library Dockerfile + named build context wiring (so
-     droplet deploys don't crash on load_prompt at module import)
-
-Memories saved this session (carry into future sessions):
-  *  feedback_no_rm_rf.md
-  *  project_droplet_containers.md
-  *  project_synthea_location.md
+5 / 22 done. 44 subtasks expanded across the 7 heavy parents
+(#4, #7, #11, #13, #14, #21, #22).
 ```
 
-Sidecar test suite: **460/460 -> 582/582** (+122 across the day).
-Plus the opt-in marker tiers:
-  - `slow` (real LLM): 4 UC-flow tests in tests/integration/test_use_cases.py
-  - `latency` (latency-budget): 2 tests in tests/integration/test_latency.py
+Sidecar test suite: **583 → 598** (+15 from cost accounting and
+related observability tests).
 
-PHP isolated AgentForge: **214/214 -> 251/251** (+37, **fully green
-for the first time** — Vitals carryforward closed). mypy + ruff
-clean modulo one pre-existing N812 in labs.py (unrelated).
+PHP isolated AgentForge: still **251/251** (no PHP work this push).
+
+## Where the integration pass stands
+
+**FOUR utilities still BUILT BUT NOT WIRED:**
+
+  * SynthesisInputTruncator (Task 45) — token cap + drop/shrink
+  * Planner (Task 27) — UseCase classification + structured Plan
+  * DataQualityChecker (Task 46) — stale-lab + conflict flags
+  * IdentityGuard (Task 42) — cross-patient reference detection
+
+The integration pass is the headline next move. Sequence:
+
+  4 Planner → 5 parallel dispatch → 6 truncator → 7 DataQuality +
+  IdentityGuard → 8 latency budget enforcement.
+
+Task #7 has a documented data-sourcing decision (option A/B/C —
+recommended B: fetch demographics first, then run IdentityGuard).
+See `task-master show 7` for details.
+
+The baseline eval (#21) is the safety net during this refactor —
+``uv run pytest -m eval`` should produce identical pass/fail per
+case before and after the integration pass lands. Run it as the
+regression check between subtasks.
+
+## Where streaming stands
+
+Streaming refactor is independent of the integration pass; both
+touch orchestrator/__init__.py heavily, so sequence them rather
+than parallelize. Recommended: integration pass first because
+it changes Orchestrator.turn shape less than streaming does.
+
+Sequence: 9 LLM stream interface → 10 sidecar StreamingResponse →
+11 controller+turn.php SSE proxy → 12 JS reader → 13 verify-BEFORE-
+emit.
+
+**Important design decision (already documented in #13):** stream
+through the existing sentence-buffered StreamingVerifier and emit
+ONLY verified sentences. Do NOT stream unverified clinical text and
+"rewrite" it after — briefly exposing unsafe content is a clinical
+safety violation regardless of how fast the rewrite arrives.
 
 ## What's deployed and where
 
-`https://143.244.157.90:9300/` — production demo. The droplet
-ran end-of-session through `./scripts/deploy-droplet.sh sidecar`
-after the citation-parser polish landed; module + sidecar are
-current with main. Five containers: openemr, mysql, phpmyadmin,
-agentforge-sidecar, agentforge-redis.
+`https://143.244.157.90:9300/` — production demo. Droplet was current
+at end of previous session (commit `b96690e68`). NOT redeployed this
+session — none of #1, #2, #3, #14, or #21 strictly needs a redeploy
+to be visible:
 
-Live smoke test results (from earlier in the session, after
-51.x and the seeded cohort were on the droplet):
-  - get_active_problems       25 distinct conditions, no admin noise
-  - get_active_medications    cited cleanly
-  - get_active_allergies      11 allergens
-  - get_immunizations         vaccine_name resolved via codes table
-  - get_procedures            18 deduped from 328 raw
-  - Out-of-scope queries      "I don't have a tool to retrieve X"
-  - Citation grammar          Canonical headers, demographics woven in
+  * #1 README  — repo-only, not on deployed instance.
+  * #2 redis_client — sidecar code change; needs redeploy to take
+    effect on droplet (would close `policy_loaded=false` there).
+  * #3 session_id — module JS change; needs redeploy to take effect
+    on droplet.
+  * #14 cost accounting — sidecar; needs redeploy.
+  * #21 baseline eval — test code only, no production change.
 
-Local dev now has TWO ways to run the sidecar:
-  1. `./sidecar/scripts/sidecar.sh start` (host-mode, --reload, port 8000)
-  2. `cd docker/agent && docker compose up --build` (docker stack,
-     port 8400, with companion agentforge-redis)
-Module .env's `AGENTFORGE_SIDECAR_URL` controls which one is wired.
-
-## Architecture state
-
-Tool catalog: **11 tools.** demographics, problems, medications,
-allergies, labs, vitals, notes, search_notes, encounters,
-immunizations, procedures.
-
-Reliability primitives — **FOUR are still BUILT BUT NOT WIRED into
-the orchestrator**. The integration pass remains the single
-highest-leverage pure-code beat available. Tracked in carryforwards
-below.
-
-  - **`SynthesisInputTruncator`** (Task 45) — token cap + drop/shrink
-  - **`Planner`** (Task 27) — UseCase classification + structured Plan
-  - **`DataQualityChecker`** (Task 46) — stale-lab + conflict flags
-  - **`IdentityGuard`** (Task 42) — cross-patient reference detection
-  - **TimeoutPolicy phase + total_turn budgets** (Task 41) — only
-    `per_tool=2s` is enforced
-
-What's wired and active:
-
-  - 11 tool fetchers, all reachable through Orchestrator.turn()
-  - Tool-result cache (Redis, 60s TTL)
-  - StreamingVerifier with 5-constraint DomainConstraints (off in
-    dev, `VERIFIER_ENABLED=true` on droplet); _KNOWN_TOOLS now
-    covers all 11 tools (notes/search_notes gap closed in 51.3)
-  - Citation parser handles multi-id forms — `[problem #293, #294]`
-    expands to two grounded citations
-  - Langfuse traces (Null when LANGFUSE_HOST unset; off on droplet)
-  - Session memory (opt-in via `session_id`, soft cap 6 / hard 8)
-  - Sensitivity policy + record visibility check — partially loaded
-    (see carryforward #1)
-  - Breakglass audit (in-memory dedup; single-replica)
-  - Per-tool retry + 2s timeout (`retry_with_policy` wraps every
-    fetcher; transient 5xx/timeout/network with backoff up to 3)
-  - Versioned prompt library at `prompts/v1/` (Task 43)
-    — synthesizer.md + planner.md, loaded via load_prompt()
+**Recommended:** redeploy at next session start so the droplet
+reflects #2, #3, #14. Run baseline eval (#21) against droplet first
+to confirm pre-redeploy behavior, then redeploy, then run again to
+confirm cost header appears.
 
 ## Live carryforwards (still deferred — no taskmaster ID)
 
-These are the items intentionally not yet shipped. None block the
-demo today, but each is a real backlog item.
+These are NOT in week1-gaps — flagged as out-of-scope in the PRD
+and remain backlog. Don't accidentally pull these in mid-session.
 
-1. **Sensitivity policy: YAML loads but `policy_loaded=false`.**
-   Today's Dockerfile fix ensures the YAML is at /app/config/
-   sensitivity_policy.yaml in production. BUT: the lifespan-time
-   policy loader gates on `redis_client is not None`, and
-   production `create_app()` is invoked without that param — so
-   the loader never runs even with the YAML present. The fix is
-   to construct a redis_client from REDIS_URL automatically in
-   create_app() (touches the AgentRedisClient vs _AppRedisProto
-   split). 30-60 min of careful work; touched briefly today
-   and left as a carryforward rather than rushed.
+1. **In-memory breakglass dedup → multi-replica gap.** Replace with
+   Redis SETNX when going multi-replica.
 
-2. **Frontend doesn't mint or send `session_id`.** Multi-turn
-   memory is fully wired server-side, but `chat-panel.js`
-   posts only `{message: ...}`. Until the JS mints a session id
-   each conversation, every turn is independent.
-
-3. **In-memory breakglass dedup -> multi-replica gap.** Replace
-   with Redis SETNX when going multi-replica.
-
-4. **Four orchestrator utilities built but not wired** —
-   SynthesisInputTruncator (45), Planner (27), DataQualityChecker
-   (46), IdentityGuard (42), and the phase/total_turn budgets in
-   TimeoutPolicy (41). The integration pass would wire them all
-   into `Orchestrator.turn()` and back out the temporary 30s proxy
-   timeout that was raised in 51.x.
-
-5. **`per_attempt_timeout` not wired through httpx.** RetryPolicy
+2. **`per_attempt_timeout` not wired through httpx.** RetryPolicy
    has the field; each fetcher still uses httpx's default 5s.
 
-6. **Eval framework caveats:** fixtures hand-authored (not captured
-   from a real demo DB SHA), no LLM-as-judge, regression-locks pin
-   canonical agent-style strings (not model behavior end-to-end).
+3. **Apache reverse-proxy include shipped but not auto-installed.**
+   Operators must `docker cp` it into Apache's conf.d/ manually.
+
+4. **Latency-test --latency-report flag not implemented** (Task
+   47.5 stretch).
+
+5. **MedicationsRepository may have similar duplication issues** to
+   what we fixed in problems / procedures (carryforward from prior
+   session — Eula's response showed multiple discontinued
+   contraceptive entries).
+
+6. **`sidecar/check_loader.py` left in subagent worktree** from
+   prior session. Throwaway diagnostic; safe to delete by hand.
 
 7. **Search results gate on title-prefix only** because
    `notes_search` PHP response doesn't surface `note_type` or
    `attending_only`.
 
-8. **Apache reverse-proxy include is shipped but not auto-installed.**
-   Operators must `docker cp` it into Apache's conf.d/ manually.
-   Future revision of `scripts/deploy-droplet.sh` could push it
-   automatically.
+## Quick wins still available (within week1-gaps)
 
-9. **Latency-test --latency-report flag not implemented.** Task
-   47.5 spec called for CSV/JSON metric export; for MVP the
-   per-test print-summary is sufficient. Operator-readable
-   p50/p95/p99 lines plus pytest's standard verbose output cover
-   the same need.
+  * **Start integration pass at #4 (Planner)** — ~2-4 hour focused
+    branch on orchestrator/__init__.py. Has 5 subtasks expanded.
+    BLOCKED by no further deps after #2 + #21 landed.
 
-10. **MedicationsRepository may have similar duplication issues
-    to what we fixed in ProblemsRepository / ProceduresRepository.**
-    Eula's response showed multiple discontinued contraceptive
-    entries — Synthea generates per-fill rows. Less clear-cut than
-    problems / procedures (real meds legitimately have multiple
-    courses) but worth a closer look.
+  * **Start streaming refactor at #9 (LLM stream interface)** —
+    pure sidecar change, ~2-3 hours. Independent of integration
+    pass; sequence after if both happen one after another.
 
-11. **`sidecar/check_loader.py` left in subagent worktree.** Throwaway
-    diagnostic from Task 43 subagent, not copied to main worktree.
-    `rm` is blocked at the permission layer; safe to delete by hand.
-
-## Quick wins still available
-
-- **Wire redis_client from REDIS_URL in main.py** (~30-60 min,
-  closes carryforward #1, lights up policy_loaded=true on droplet)
-- **Mint `session_id` in chat-panel.js** (~30 min, lights up
-  multi-turn memory)
-- **Bring proxy timeout back down** once the integration pass
-  is done (one-line change in turn.php)
-- **Add a `--latency-report=path` pytest flag** to test_latency.py
-  for proper CSV/JSON metric export (~30 min)
+  * **Run baseline eval against current main** to lock in the
+    pre-refactor pass/fail line. Requires sidecar up + an
+    Anthropic API key. ~1-3 minute run.
 
 ## Quick-start checklist for next time
 
-1. `git status` — confirm no uncommitted changes you forgot about.
-2. `task-master list` — confirm 51/51 still reflects reality.
-3. `cd sidecar && uv run pytest` — confirm 582/582 still green.
-4. If iterating locally:
-   - **Host-script mode:** `./sidecar/scripts/sidecar.sh start`
-     (sidecar on :8000, `--reload`)
-   - **Docker-stack mode:** `cd docker/agent && docker compose up
-     --build` (port 8400 with companion agentforge-redis)
-   - `docker compose -f docker/development-easy/docker-compose.yml ps`
-   - Open `http://localhost:8300/` (admin / pass)
-5. If running the slow / latency suites:
-   - `cd sidecar && uv run pytest -m slow tests/integration/`
+1. ``git status`` — confirm no uncommitted changes you forgot about.
+2. ``task-master tags use week1-gaps && task-master list`` — confirm
+   5/22 still reflects reality.
+3. ``cd sidecar && uv run pytest`` — confirm 598/598 still green.
+4. ``task-master next`` should propose **#4 Planner integration**
+   as the recommended next task.
+5. If iterating locally:
+   - **Host-script mode:** ``./sidecar/scripts/sidecar.sh start``
+     (sidecar on :8000, ``--reload``)
+   - **Docker-stack mode:** ``cd docker/agent && docker compose up
+     --build`` (port 8400 with companion agentforge-redis)
+   - ``docker compose -f docker/development-easy/docker-compose.yml ps``
+   - Open ``http://localhost:8300/`` (admin / pass)
+6. If running the slow / latency / eval suites:
+   - ``cd sidecar && uv run pytest -m slow tests/integration/``
      — full LLM UC flows (~100s)
-   - `cd sidecar && uv run pytest -m latency tests/integration/`
+   - ``cd sidecar && uv run pytest -m latency tests/integration/``
      — latency-budget tests
-   - Both deselected from default `uv run pytest`.
-6. If deploying:
-   - `./scripts/deploy-droplet.sh check` — confirm droplet healthy
-   - `./scripts/deploy-droplet.sh all` — full module + sidecar deploy
-   - Module + sidecar were synced end-of-session today; only redeploy
-     when there's a code change.
+   - ``cd sidecar && uv run pytest -m eval`` — baseline eval
+     (NEW, 7 cases, ~1-3 min, requires Anthropic key)
+   - All three deselected from default ``uv run pytest``.
+7. If deploying:
+   - ``./scripts/deploy-droplet.sh check`` — confirm droplet healthy
+   - ``./scripts/deploy-droplet.sh all`` — full module + sidecar
+     deploy. End-of-session droplet was at `b96690e68`, ahead by
+     several commits now (recommend redeploy at next start).
 
 ## Files worth opening in the first 60 seconds
 
-- `DEPLOY.md` — deployment checklist (act-of-deploying)
-- `docs/DEPLOYMENT.md` — droplet snapshot + 5-container layout
-- `docs/DEVIATIONS.md` — design decisions vs original plan
-- `docs/CHALLENGES.md` — retrospective on the project's hard parts
-- `docker/agent/README.md` — local docker stack walkthrough
-- `interface/modules/custom_modules/oe-module-agentforge/deploy/README.md`
-  — apache include install instructions
-- `prompts/README.md` — versioned prompt library layout
-- `ARCHITECTURE.md` — original plan, still authoritative
-- `.taskmaster/tasks/tasks.json` — 51/51 done; no pending
-- `sidecar/src/agentforge/orchestrator/__init__.py` — orchestrator,
-  4 utilities still unwired (carryforward #4)
-- `sidecar/src/agentforge/prompts.py` — prompt loader
-- `sidecar/tests/integration/` — auth + patient context + error
-  boundary + UC flows + latency, all live-validated against
-  dev-easy (auth/error/context fast; UC + latency opt-in)
-- `sidecar/tests/eval/regression_locks.py` — 9 locks pinning the
-  eval framework's primitives (canonical-style + out-of-scope
-  guardrail among them)
+  * `.taskmaster/docs/week1-gaps-prd.md` — the remediation PRD
+  * `task-master tags use week1-gaps` then `task-master list` —
+    full task graph
+  * `task-master show 4` — Planner integration, 5 subtasks
+  * `task-master show 7` — DataQuality + IdentityGuard
+    (option A/B/C decision in there)
+  * `task-master show 13` — verify-BEFORE-emit design (corrected
+    from finalize-after-stream)
+  * `sidecar/tests/eval/baseline/` — the new baseline eval suite
+  * `DEPLOY.md`, `docs/DEPLOYMENT.md` — deployment plan
+  * `ARCHITECTURE.md` — six load-bearing decisions
+
+## Subagent worktree gotcha (learned this session)
+
+When using `Agent` with `isolation: worktree`, the worktree base may
+not be local main — in this session the worktree branched from a
+~140-commit-old `origin/main`. If launching subagents, either push
+local main to origin first or pass an explicit base. Otherwise the
+subagent reports "files don't exist" because the project's
+foundational scaffolding is on commits the worktree never sees.
 
 ## How this session ended
 
 ```
-51/51 tasks closed.
-582 sidecar tests + 4 slow-tier + 2 latency-tier (all opt-in).
-251 PHP isolated AgentForge tests, 0 failures.
-~30 commits today, 5 successful subagent worktrees, 3 droplet deploys.
+5 / 22 week1-gaps tasks closed
+598 sidecar tests + 4 slow-tier + 2 latency-tier + 7 eval-tier (all opt-in)
+251 PHP isolated AgentForge tests (untouched this push)
+~10 commits, 5 merges to main, 1 subagent attempt (failed cleanly)
 ```
 
-Next session is open territory. The unblocked next moves are
-(highest leverage first):
-
-  1. **Integration pass** — wire the 4 deferred utilities into
-     Orchestrator.turn(). No taskmaster ID; create one or just
-     start. Touches __init__.py heavily; do as one focused
-     branch.
-  2. **Wire redis_client from REDIS_URL in main.py** — closes the
-     policy_loaded=false carryforward (#1 above).
-  3. **Mint session_id in chat-panel.js** — lights up multi-turn
-     memory end-to-end.
-  4. **Other carryforwards** as opportunity strikes.
+Next session is aimed at the integration pass: wire Planner +
+parallel dispatch + truncator + data-quality + identity-guard
+into Orchestrator.turn. Use the baseline eval (#21) as the
+regression check between subtasks.
