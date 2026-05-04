@@ -221,7 +221,7 @@ services:
       retries: 5
   langfuse:
     restart: unless-stopped
-    image: langfuse/langfuse:2
+    image: langfuse/langfuse:3
     ports:
     - "127.0.0.1:${WT_LANGFUSE_PORT:-3000}:3000"
     environment:
