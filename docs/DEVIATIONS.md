@@ -1573,3 +1573,59 @@ from the tool loop.
 mid-iteration).
 
 ---
+
+## 2026-05-05 — Task 13 keeps persistence outside the extraction module
+
+**Plan:** Taskmaster Task 13 subtasks 13.4 ("Implement persist_intake()
+method calling persist_questionnaire_response.php") and 13.5
+("Implement _extract_and_persist_intake pipeline returning
+ExtractionResult with suggested_updates") imagined a tool-class
+orchestrator that combined extract + persist + ExtractionResult
+shaping inside the same module as the vision extractor.
+
+**Deviation:** The `attach_and_extract` module produces a validated
+`IntakeFormExtraction` and stops there. Persistence is a separate
+concern: the demo script reads bytes from disk and prints the
+extraction; the future LangGraph orchestrator (Task 1 / Task 15)
+will POST the extraction to `persist_questionnaire_response.php`.
+No `persist_intake()` or `_extract_and_persist_intake` method was
+added.
+
+**Why:** Task 11's docstring made the call explicit — "The
+persistence step lives outside this module so the extraction stays
+unit-testable without spinning up Apache." Task 13 inherits the
+same constraint: bringing persistence into the module would couple
+the extractor's tests to either Apache or an HTTP-fixture mock and
+trade the existing 30-test offline suite for something slower and
+less load-bearing. The split is also the right architectural seam
+for Task 14 (PHI redaction at LangfuseClient): the extractor emits
+to a logger boundary, the orchestrator sits at the network boundary
+where redaction is wired in. Keeping them collapsed would force
+Task 14 to thread through both responsibilities.
+
+**Sub-deviation:** Task 13's prep notes also surfaced two layout
+options for handling the second vision flow — "extract a
+`_VisionExtractorBase` and subclass" vs "parameterize the existing
+extractor over a contract." We picked the latter: a frozen
+`VisionContract[T: BaseModel]` bundling the four pieces that
+differ (tool name, tool spec, system prompt, schema class), plus
+module-level `LAB_CONTRACT` and `INTAKE_CONTRACT` constants.
+Cleaner DI surface, no abstract-base ceremony, and the contract
+literal is easier to introspect in tests for drift-vs-Pydantic
+guards.
+
+**What we learned:** Taskmaster's subtask graph occasionally bakes
+in an architectural assumption (here: extract-and-persist as one
+module) that conflicts with a decision we already locked in on a
+predecessor task. The split is correct; the spec should be treated
+as guidance, not law. Future tasks that mention "in the same
+module" should be sanity-checked against the existing module's
+docstring contract.
+
+**Artifacts:**
+[`sidecar/src/agentforge/tools/attach_and_extract.py`](../sidecar/src/agentforge/tools/attach_and_extract.py)
+(VisionContract + INTAKE_CONTRACT, no persist hooks),
+[`sidecar/scripts/intake_extraction_demo.py`](../sidecar/scripts/intake_extraction_demo.py)
+(extraction-only, persistence absent by design).
+
+---
