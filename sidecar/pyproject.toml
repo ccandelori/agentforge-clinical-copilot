@@ -21,6 +21,10 @@ dependencies = [
     "anthropic>=0.30",
     "pyyaml>=6.0",
     "tiktoken>=0.7",
+    # W2 Task 11: PDF rendering for the attach_and_extract vision tool.
+    # PyMuPDF over pdf2image — single pip install, no Poppler system dep,
+    # produces PIL-loadable bytes directly.
+    "pymupdf>=1.24",
 ]
 
 [project.scripts]
