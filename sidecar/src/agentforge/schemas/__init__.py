@@ -21,14 +21,22 @@ from agentforge.schemas.intake import (
     IntakeFormExtraction,
     MedicationEntry,
 )
+from agentforge.schemas.lab import (
+    AbnormalFlag,
+    LabPdfExtraction,
+    LabValue,
+)
 
 __all__ = [
     "SCANNED_SOURCE_BBOX_CONFIDENCE_FLOOR",
+    "AbnormalFlag",
     "AllergyEntry",
     "Citation",
     "Demographic",
     "FamilyHistoryEntry",
     "IntakeFormExtraction",
+    "LabPdfExtraction",
+    "LabValue",
     "MedicationEntry",
     "PageBBox",
     "SourceType",
