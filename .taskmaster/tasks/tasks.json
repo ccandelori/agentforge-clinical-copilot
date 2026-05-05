@@ -5984,7 +5984,7 @@
         "id": 11,
         "title": "Implement Sidecar attach_and_extract Tool for Lab PDFs",
         "description": "Create the sidecar attach_and_extract tool that fetches document bytes via internal endpoint, calls Claude vision with strict-schema prompt, validates against LabPdfExtraction, and persists via persist_lab_result.php.",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           3,
           7,
@@ -6000,9 +6000,10 @@
             "description": "Add pymupdf to the main dependencies list in sidecar/pyproject.toml (not optional extras).",
             "dependencies": [],
             "details": "Add 'pymupdf>=1.24' to the dependencies array in sidecar/pyproject.toml:24. PyMuPDF is preferred over pdf2image because it has no system dependencies (no Poppler), is faster, and produces PIL Images directly. Run 'uv sync' or equivalent to verify installation.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify import works: python -c 'import fitz; print(fitz.version)'",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T19:58:41.159Z"
           },
           {
             "id": 2,
@@ -6012,9 +6013,10 @@
               1
             ],
             "details": "In sidecar/src/agentforge/tools/attach_and_extract.py, implement render_pages(pdf_bytes: bytes) -> list[str]:\n- Use fitz.open(stream=pdf_bytes, filetype='pdf') to open the in-memory PDF\n- For each page: page.get_pixmap(dpi=150) -> pixmap.tobytes('png') -> base64.b64encode().decode('utf-8')\n- DPI=150 is chosen as a balance between legibility and token cost\n- Return list of base64 PNG strings ready for Anthropic vision API image content blocks",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit test: synthesize a 2-page PDF in memory using fitz (or reportlab), call render_pages(), assert len(result) == 2 and each string is valid base64 that decodes to a PNG with non-zero dimensions",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T19:58:42.552Z"
           },
           {
             "id": 3,
@@ -6024,9 +6026,10 @@
               1
             ],
             "details": "Implement fetch_bytes(document_id: int, raw_token: str) -> bytes using httpx.AsyncClient pattern matching sidecar/src/agentforge/tools/labs.py:91 (LabsFetcher). Call get_document_bytes.php endpoint with Authorization: Bearer header. Return raw bytes, never persist to disk.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test with mocked endpoint returning synthetic PDF bytes; verify bytes match expected content",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T19:58:43.951Z"
           },
           {
             "id": 4,
@@ -6036,9 +6039,10 @@
               2
             ],
             "details": "Implement extract_lab_pdf(page_images: list[str]) -> dict using Anthropic client. Model: claude-sonnet-4-6 (from ANTHROPIC_VISION_MODEL env). Build vision message with image content blocks from base64 PNGs. Use strict-schema prompt requesting LabPdfExtraction JSON with normalized 0..1 page coordinates per field and bbox_confidence scores.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test with mock Anthropic client returning valid LabPdfExtraction JSON; verify response parsing",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T19:58:45.363Z"
           },
           {
             "id": 5,
@@ -6048,9 +6052,10 @@
               4
             ],
             "details": "Implement persist(extraction: LabPdfExtraction, raw_token: str) -> None using httpx.AsyncClient. POST to persist_lab_result.php with validated extraction payload as JSON body. Include Authorization: Bearer header.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test with mocked endpoint; verify correct payload structure and JWT header sent",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T19:58:46.697Z"
           },
           {
             "id": 6,
@@ -6062,14 +6067,16 @@
               5
             ],
             "details": "Create AttachAndExtractTool class in sidecar/src/agentforge/tools/attach_and_extract.py. Orchestrate: fetch_bytes() -> render_pages() -> extract_lab_pdf() -> validate with LabPdfExtraction Pydantic model (Task 3) -> persist(). Return ExtractionResult with success status and citations. Ensure no bytes touch disk and no PHI in Langfuse logs.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "End-to-end integration test with synthetic lab PDF: verify full pipeline, LabPdfExtraction validation passes, persist called correctly, no temp files created",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T19:58:48.051Z"
           }
         ],
         "complexity": 7,
         "recommendedSubtasks": 6,
-        "expansionPrompt": "Already has 6 subtasks defined: 1) Add pymupdf dependency to pyproject.toml, 2) Implement render_pages() using PyMuPDF for PDF to base64 PNG, 3) Implement fetch_bytes() for document retrieval via JWT endpoint, 4) Implement extract_lab_pdf() Claude vision API call with strict-schema prompt, 5) Implement persist() method for lab results, 6) Create AttachAndExtractTool class orchestrating full pipeline"
+        "expansionPrompt": "Already has 6 subtasks defined: 1) Add pymupdf dependency to pyproject.toml, 2) Implement render_pages() using PyMuPDF for PDF to base64 PNG, 3) Implement fetch_bytes() for document retrieval via JWT endpoint, 4) Implement extract_lab_pdf() Claude vision API call with strict-schema prompt, 5) Implement persist() method for lab results, 6) Create AttachAndExtractTool class orchestrating full pipeline",
+        "updatedAt": "2026-05-05T19:58:48.051Z"
       },
       {
         "id": 12,
@@ -8005,9 +8012,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-05T17:13:56.849Z",
+      "lastModified": "2026-05-05T19:58:48.052Z",
       "taskCount": 37,
-      "completedCount": 10,
+      "completedCount": 11,
       "tags": [
         "week2"
       ]
