@@ -1690,3 +1690,60 @@ orchestrator's not-yet-final shape.
 guard).
 
 ---
+
+## 2026-05-05 — Task 1 MR 1 ships placeholder routing for non-FOLLOWUP plans
+
+**Plan:** Taskmaster Task 1's spec describes a supervisor whose
+`route_decision` reflects a real choice between
+`intake-extractor`, `evidence-retriever`, `both`, and `synthesize`
+based on the user's query — e.g. detect a PDF attachment and route
+to intake-extractor; detect a guideline question and route to
+evidence-retriever.
+
+**Deviation:** MR 1 (the skeleton) ships a deliberately dumb
+routing rule:
+
+* `iteration >= MAX_ITERATIONS` → `SYNTHESIZE` (hard stop)
+* `Plan.use_case == FOLLOWUP`   → `SYNTHESIZE` (no tools needed)
+* otherwise                     → `INTAKE_EXTRACTOR` (default)
+
+Real routing intelligence — translating the W1 `Planner.UseCase`
+taxonomy plus W2 signals (PDF detection, evidence query patterns)
+into a meaningful `RouteDecision` — is deferred to MR 2/3.
+
+**Why:** MR 1's purpose is the StateGraph wiring, not routing
+intelligence. The workers being routed to are all pass-through
+stubs in MR 1, so any routing decision has the same observable
+effect. Smart routing in MR 1 would be untestable (no real worker
+behavior to differentiate) and would couple the skeleton to
+worker-specific signal detection that hasn't been designed yet.
+
+The placeholder is enough to (a) prove the StateGraph compiles and
+runs end-to-end, (b) prove the conditional-edge dispatch wires
+correctly, and (c) prove the iteration cap engages — which is what
+MR 1 is for. MR 2 wires real worker bodies and reshapes the
+routing rule alongside.
+
+**What we learned:** When a multi-MR slice has the first MR be
+"plumbing only," it's worth being explicit that the routing is
+placeholder. Reviewers seeing `INTAKE_EXTRACTOR` as the default
+might otherwise read it as "this is the design" rather than "this
+is the temporary scaffold."
+
+**Sub-deviation: `RouteDecision.BOTH` collapses to
+`INTAKE_EXTRACTOR` in the conditional-edge path map.** The
+supervisor never emits `BOTH` in MR 1 (the rule above doesn't
+produce it), but the conditional-edge map needs an entry per
+enum value. Pointing it at `INTAKE_EXTRACTOR` is harmless — the
+edge is unreachable from the current rule — and keeps the map
+total. MR 2 will introduce a real fan-out node when parallel
+worker dispatch lands.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`build_graph`, `supervisor_node`, `_decide_route`, stub workers),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(graph-level + supervisor-level tests; spies on stubs to verify
+conditional-edge dispatch).
+
+---
