@@ -5238,7 +5238,7 @@
         "testStrategy": "Unit tests validating: (1) Citation with GUIDELINE source_type accepts missing bbox, (2) Citation with LAB_PDF rejects missing bbox, (3) Citation with LAB_PDF and bbox_confidence=0.6 raises ValueError, (4) Citation with LAB_PDF and bbox_confidence=0.8 passes validation.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5246,9 +5246,10 @@
             "description": "Create the sidecar/src/agentforge/schemas/ directory structure and implement the SourceType string enum with LAB_PDF, INTAKE_FORM, GUIDELINE, and OPENEMR_RECORD values.",
             "dependencies": [],
             "details": "Create sidecar/src/agentforge/schemas/__init__.py and sidecar/src/agentforge/schemas/citation.py. Define SourceType(str, Enum) following the frozen Pydantic pattern used in tools/dtos.py. The enum should inherit from both str and Enum for JSON serialization compatibility. Include proper module docstring explaining this is the citation contract between extraction, retrieval, verifier, and UI layers.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit test verifying SourceType members serialize to their string values and can be validated from string input in Pydantic models.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T13:32:29.959Z"
           },
           {
             "id": 2,
@@ -5258,9 +5259,10 @@
               1
             ],
             "details": "Add PageBBox(BaseModel) to schemas/citation.py with ConfigDict(frozen=True) following the ToolResultMetadata pattern. Use Annotated types with Field() constraints: page as PositiveInt (>=1), coordinates as float with ge=0 and le=1 constraints, bbox_confidence as float 0..1. Add a @model_validator to ensure x1 > x0 and y1 > y0 (valid bounding box geometry).",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests for: (1) valid PageBBox creation, (2) rejection of page=0, (3) rejection of coordinates outside 0..1 range, (4) rejection of inverted bbox (x1 <= x0), (5) JSON round-trip preserves all values.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T13:32:29.959Z"
           },
           {
             "id": 3,
@@ -5271,9 +5273,10 @@
               2
             ],
             "details": "Add Citation(BaseModel) with ConfigDict(frozen=True). Fields: source_type (SourceType), source_id (str), page_or_section (str|int|None), field_or_chunk_id (str|None), quote_or_value (str), page_bbox (PageBBox|None). Add @model_validator(mode='after') that raises ValueError if source_type is LAB_PDF or INTAKE_FORM and either page_bbox is None OR page_bbox.bbox_confidence < 0.7. GUIDELINE and OPENEMR_RECORD sources should accept missing bbox.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests covering: (1) GUIDELINE source accepts missing bbox, (2) LAB_PDF rejects missing bbox with clear error, (3) LAB_PDF with bbox_confidence=0.6 raises ValueError, (4) LAB_PDF with bbox_confidence=0.8 passes, (5) INTAKE_FORM follows same rules as LAB_PDF, (6) OPENEMR_RECORD accepts missing bbox.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T13:32:29.959Z"
           },
           {
             "id": 4,
@@ -5285,9 +5288,10 @@
               3
             ],
             "details": "Update sidecar/src/agentforge/schemas/__init__.py to export SourceType, PageBBox, and Citation from .citation module. Follow the pattern in tools/__init__.py. Use explicit __all__ list for API clarity. This enables imports like 'from agentforge.schemas import Citation, SourceType, PageBBox' that downstream tasks (3, 9, 15, 17) will use.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify imports work from both absolute (agentforge.schemas.citation.Citation) and package-level (agentforge.schemas.Citation) paths.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T13:32:29.959Z"
           },
           {
             "id": 5,
@@ -5300,14 +5304,16 @@
               4
             ],
             "details": "Create test file following the test_tool_dtos.py and test_verifier_citation.py patterns. Include test classes: TestSourceType (serialization, deserialization), TestPageBBox (valid/invalid coordinates, geometry validation), TestCitation (all source_type + bbox combinations per test strategy), TestCitationFrozen (immutability check), TestJsonRoundTrip (model_dump_json + model_validate_json preserves all data). Use pytest parametrize for the source_type matrix testing.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run with 'composer phpunit-isolated' pattern equivalent for Python: pytest sidecar/tests/test_schemas_citation.py -v. All 15+ test cases must pass covering the full acceptance/rejection matrix.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T13:32:29.959Z"
           }
         ],
         "complexity": 4,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create sidecar/src/agentforge/schemas/citation.py with SourceType enum (LAB_PDF, INTAKE_FORM, GUIDELINE, OPENEMR_RECORD), PageBBox model with page (int >=1) and normalized 0..1 coordinates plus bbox_confidence, Citation model with all fields, and @model_validator enforcing bbox_confidence >= 0.7 for scanned sources (LAB_PDF, INTAKE_FORM). Add __init__.py exports and comprehensive unit tests."
+        "expansionPrompt": "Create sidecar/src/agentforge/schemas/citation.py with SourceType enum (LAB_PDF, INTAKE_FORM, GUIDELINE, OPENEMR_RECORD), PageBBox model with page (int >=1) and normalized 0..1 coordinates plus bbox_confidence, Citation model with all fields, and @model_validator enforcing bbox_confidence >= 0.7 for scanned sources (LAB_PDF, INTAKE_FORM). Add __init__.py exports and comprehensive unit tests.",
+        "updatedAt": "2026-05-05T13:32:29.959Z"
       },
       {
         "id": 3,
