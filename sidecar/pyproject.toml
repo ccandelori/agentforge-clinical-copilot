@@ -37,6 +37,12 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
     "mypy>=1.10",
+    # W2: mock-lab PDF generator (scripts/generate_mock_lab.py).
+    # Dev-only — production sidecar never composes PDFs, only renders
+    # them via PyMuPDF. ReportLab gives us realistic letterhead /
+    # tabular layout that the renderer + vision tool actually have to
+    # work to extract from.
+    "reportlab>=4.2",
 ]
 
 [build-system]

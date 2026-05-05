@@ -12,7 +12,16 @@ Run with:
 
     export ANTHROPIC_API_KEY=...
     cd sidecar
-    uv run python scripts/extraction_demo.py /path/to/lab.pdf
+
+    # Default: extracts the bundled mock lab PDF
+    uv run python scripts/extraction_demo.py
+
+    # Or point at any PDF on disk
+    uv run python scripts/extraction_demo.py /path/to/your/lab.pdf
+
+The default PDF lives at ``data/samples/sample-lab.pdf``, generated
+by ``scripts/generate_mock_lab.py``. Re-run that script to see how
+the synthetic-but-realistic source data is composed.
 
 Optional flags:
 
@@ -112,9 +121,23 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
+_DEFAULT_SAMPLE_PDF = (
+    Path(__file__).resolve().parents[1] / "data" / "samples" / "sample-lab.pdf"
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pdf", type=Path, help="Path to a lab-result PDF on disk.")
+    parser.add_argument(
+        "pdf",
+        type=Path,
+        nargs="?",
+        default=_DEFAULT_SAMPLE_PDF,
+        help=(
+            f"Path to a lab-result PDF on disk. "
+            f"Defaults to the bundled mock lab at {_DEFAULT_SAMPLE_PDF.name}."
+        ),
+    )
     parser.add_argument("--document-id", type=int, default=1)
     parser.add_argument("--patient-id", type=int, default=1)
     parser.add_argument(
