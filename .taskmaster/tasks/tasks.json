@@ -5568,7 +5568,7 @@
         "id": 6,
         "title": "Implement Browser Upload Document Route",
         "description": "Create oe-module-agentforge/public/upload_document.php as a session-authenticated browser upload route that accepts PDF files and writes to the documents table via Document::createDocument(). Patient ID must be derived from the active OpenEMR session (session pid), NOT from multipart payload, to prevent unauthorized cross-patient uploads.",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           5
         ],
