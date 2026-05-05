@@ -1,0 +1,269 @@
+{
+  "version": "demo-1.0",
+  "target_tokens": 500,
+  "chunk_count": 29,
+  "doc_count": 5,
+  "chunks": [
+    {
+      "doc_id": "diabetes-ada-standards-glycemic-targets",
+      "section": "ADA Standards of Care \u2014 Glycemic Targets (Summary)",
+      "version": "2024",
+      "chunk_id": "diabetes-ada-standards-glycemic-targets::ada-standards-of-care-glycemic-targets-summary::0",
+      "text": "## ADA Standards of Care \u2014 Glycemic Targets (Summary)\n\n> **SOURCE:** American Diabetes Association, *Standards of Care in\n> Diabetes \u2014 2024*, Section 6 (\"Glycemic Goals and Hypoglycemia\").\n> Published in *Diabetes Care*, Volume 47, Supplement 1.\n> https://diabetesjournals.org/care/issue/47/Supplement_1\n>\n> **NOTICE:** Short factual summary for the AgentForge demo corpus.\n> Not clinical advice. Refer to the source for the full guidance.",
+      "token_count": 117,
+      "source_path": "diabetes/ada_standards_glycemic_targets.md"
+    },
+    {
+      "doc_id": "diabetes-ada-standards-glycemic-targets",
+      "section": "A1C Goal for Most Nonpregnant Adults",
+      "version": "2024",
+      "chunk_id": "diabetes-ada-standards-glycemic-targets::a1c-goal-for-most-nonpregnant-adults::0",
+      "text": "## A1C Goal for Most Nonpregnant Adults\n\nFor many nonpregnant adults, an A1C goal of less than 7% is\nreasonable. This target reduces the long-term risk of microvascular\ncomplications (retinopathy, nephropathy, neuropathy) and, in\ntype 1 diabetes and early type 2 diabetes, macrovascular events.\n\nThe A1C goal should be individualized based on:\n\n- **Duration of diabetes** \u2014 shorter durations support tighter targets\n- **Life expectancy** \u2014 limited expectancy supports less stringent goals\n- **Comorbid conditions** \u2014 extensive comorbidity supports less stringent goals\n- **Established cardiovascular complications** \u2014 may support less stringent goals\n- **Hypoglycemia unawareness** \u2014 less stringent goals reduce risk\n- **Patient preferences and resources**",
+      "token_count": 172,
+      "source_path": "diabetes/ada_standards_glycemic_targets.md"
+    },
+    {
+      "doc_id": "diabetes-ada-standards-glycemic-targets",
+      "section": "Less Stringent A1C Goals",
+      "version": "2024",
+      "chunk_id": "diabetes-ada-standards-glycemic-targets::less-stringent-a1c-goals::0",
+      "text": "## Less Stringent A1C Goals\n\nA1C goals less stringent than <7% (e.g., <8%) may be appropriate for\npatients with:\n\n- Limited life expectancy\n- Advanced microvascular or macrovascular complications\n- Extensive comorbid conditions\n- Long-standing diabetes where the target has been difficult to\n  achieve despite intensive efforts",
+      "token_count": 73,
+      "source_path": "diabetes/ada_standards_glycemic_targets.md"
+    },
+    {
+      "doc_id": "diabetes-ada-standards-glycemic-targets",
+      "section": "Glycemic Targets in Practice",
+      "version": "2024",
+      "chunk_id": "diabetes-ada-standards-glycemic-targets::glycemic-targets-in-practice::0",
+      "text": "## Glycemic Targets in Practice\n\nFor most nonpregnant adults with diabetes, the recommended targets are:\n\n- **Preprandial (fasting) capillary plasma glucose:** 80\u2013130 mg/dL\n  (4.4\u20137.2 mmol/L)\n- **Peak postprandial (1\u20132 hours after meal start) capillary plasma\n  glucose:** less than 180 mg/dL (10.0 mmol/L)",
+      "token_count": 96,
+      "source_path": "diabetes/ada_standards_glycemic_targets.md"
+    },
+    {
+      "doc_id": "diabetes-ada-standards-glycemic-targets",
+      "section": "Hypoglycemia",
+      "version": "2024",
+      "chunk_id": "diabetes-ada-standards-glycemic-targets::hypoglycemia::0",
+      "text": "## Hypoglycemia\n\nHypoglycemia is defined by glucose level alerts:\n\n- **Level 1:** glucose 54\u201370 mg/dL (3.0\u20133.9 mmol/L) \u2014 alert value\n- **Level 2:** glucose less than 54 mg/dL (less than 3.0 mmol/L) \u2014\n  clinically significant\n- **Level 3:** severe event with cognitive impairment requiring\n  external assistance\n\nAvoiding level 2 and 3 hypoglycemia is essential for glycemic targets\nto be considered safely achieved.",
+      "token_count": 124,
+      "source_path": "diabetes/ada_standards_glycemic_targets.md"
+    },
+    {
+      "doc_id": "hypertension-acc-aha-2017-targets",
+      "section": "ACC/AHA 2017 Hypertension Guidelines \u2014 BP Categories and Targets (Summary)",
+      "version": "2017",
+      "chunk_id": "hypertension-acc-aha-2017-targets::accaha-2017-hypertension-guidelines-bp-categories-and-targets-summary::0",
+      "text": "## ACC/AHA 2017 Hypertension Guidelines \u2014 BP Categories and Targets (Summary)\n\n> **SOURCE:** Whelton PK, Carey RM, Aronow WS, et al. *2017\n> ACC/AHA/AAPA/ABC/ACPM/AGS/APhA/ASH/ASPC/NMA/PCNA Guideline for the\n> Prevention, Detection, Evaluation, and Management of High Blood\n> Pressure in Adults*. Hypertension. 2018;71(6):e13\u2013e115.\n>\n> **NOTICE:** Short factual summary for the AgentForge demo corpus.\n> Not clinical advice. Refer to the source for the full guidance.",
+      "token_count": 141,
+      "source_path": "hypertension/acc_aha_2017_targets.md"
+    },
+    {
+      "doc_id": "hypertension-acc-aha-2017-targets",
+      "section": "Blood Pressure Categories (in mmHg)",
+      "version": "2017",
+      "chunk_id": "hypertension-acc-aha-2017-targets::blood-pressure-categories-in-mmhg::0",
+      "text": "## Blood Pressure Categories (in mmHg)\n\nThe 2017 ACC/AHA guideline classifies adult BP into four categories\nbased on the higher of systolic (SBP) or diastolic (DBP):\n\n| Category               | SBP        |     | DBP       |\n|------------------------|------------|-----|-----------|\n| Normal                 | <120       | and | <80       |\n| Elevated               | 120\u2013129    | and | <80       |\n| Hypertension Stage 1   | 130\u2013139    | or  | 80\u201389     |\n| Hypertension Stage 2   | \u2265140       | or  | \u226590       |\n\nA diagnosis of hypertension is made when the average of two or more\nproperly measured readings on two or more occasions falls into stage\n1 or stage 2 categories.",
+      "token_count": 177,
+      "source_path": "hypertension/acc_aha_2017_targets.md"
+    },
+    {
+      "doc_id": "hypertension-acc-aha-2017-targets",
+      "section": "Treatment Targets",
+      "version": "2017",
+      "chunk_id": "hypertension-acc-aha-2017-targets::treatment-targets::0",
+      "text": "## Treatment Targets\n\nFor most adults with hypertension and confirmed BP \u2265130/80 mmHg, the\ntarget is **<130/80 mmHg**.\n\nStratification by 10-year ASCVD risk:\n\n- **Stage 1 hypertension (130\u2013139/80\u201389) without ASCVD or 10-year\n  ASCVD risk \u226510%:** lifestyle therapy first; reassess in 3\u20136 months.\n- **Stage 1 hypertension with clinical ASCVD or 10-year ASCVD risk\n  \u226510%, or with diabetes / CKD:** lifestyle therapy *plus*\n  pharmacologic therapy.\n- **Stage 2 hypertension (\u2265140/\u226590):** lifestyle therapy plus\n  pharmacologic therapy in all adults.",
+      "token_count": 156,
+      "source_path": "hypertension/acc_aha_2017_targets.md"
+    },
+    {
+      "doc_id": "hypertension-acc-aha-2017-targets",
+      "section": "First-Line Pharmacologic Options",
+      "version": "2017",
+      "chunk_id": "hypertension-acc-aha-2017-targets::first-line-pharmacologic-options::0",
+      "text": "## First-Line Pharmacologic Options\n\nInitial first-line therapy for non-Black adults includes:\n\n- Thiazide diuretics\n- Calcium channel blockers\n- ACE inhibitors or ARBs (do NOT combine ACEi with ARB)\n\nFor Black adults without HF or CKD, initial therapy includes\nthiazides or CCBs.",
+      "token_count": 68,
+      "source_path": "hypertension/acc_aha_2017_targets.md"
+    },
+    {
+      "doc_id": "hypertension-acc-aha-2017-targets",
+      "section": "Special Populations",
+      "version": "2017",
+      "chunk_id": "hypertension-acc-aha-2017-targets::special-populations::0",
+      "text": "## Special Populations\n\n- **Patients with CKD (stage 3 or higher, or stage 1\u20132 with\n  albuminuria):** ACE inhibitors or ARBs are preferred.\n- **Patients with diabetes:** any of the four classes is acceptable;\n  ACEi/ARB if albuminuria is present.\n- **Heart failure with reduced ejection fraction:** GDMT (e.g.,\n  ACEi/ARB/ARNI plus beta blocker plus aldosterone antagonist).",
+      "token_count": 99,
+      "source_path": "hypertension/acc_aha_2017_targets.md"
+    },
+    {
+      "doc_id": "hypertension-acc-aha-2017-targets",
+      "section": "Out-of-Office Confirmation",
+      "version": "2017",
+      "chunk_id": "hypertension-acc-aha-2017-targets::out-of-office-confirmation::0",
+      "text": "## Out-of-Office Confirmation\n\nBefore initiating pharmacotherapy for newly diagnosed stage 1\nhypertension, confirmation by out-of-office BP measurements (home BP\nmonitoring or 24-hour ambulatory BP monitoring) is recommended to\navoid white-coat misclassification.",
+      "token_count": 55,
+      "source_path": "hypertension/acc_aha_2017_targets.md"
+    },
+    {
+      "doc_id": "labs-a1c-interpretation",
+      "section": "Hemoglobin A1C \u2014 Diagnostic and Interpretive Notes (Summary)",
+      "version": "2024",
+      "chunk_id": "labs-a1c-interpretation::hemoglobin-a1c-diagnostic-and-interpretive-notes-summary::0",
+      "text": "## Hemoglobin A1C \u2014 Diagnostic and Interpretive Notes (Summary)\n\n> **SOURCE:** American Diabetes Association *Standards of Care in\n> Diabetes \u2014 2024*, Section 2 (\"Diagnosis and Classification of\n> Diabetes\"). Diabetes Care 47(Supplement_1).\n>\n> **NOTICE:** Short factual summary for the AgentForge demo corpus.\n> Not clinical advice. Refer to the source for the full guidance.",
+      "token_count": 89,
+      "source_path": "labs/a1c_interpretation.md"
+    },
+    {
+      "doc_id": "labs-a1c-interpretation",
+      "section": "A1C as a Diagnostic Test",
+      "version": "2024",
+      "chunk_id": "labs-a1c-interpretation::a1c-as-a-diagnostic-test::0",
+      "text": "## A1C as a Diagnostic Test\n\nA1C is one of four equivalent diagnostic criteria for diabetes:\n\n- **A1C \u22656.5%** (NGSP-certified, DCCT-aligned assay)\n- Fasting plasma glucose \u2265126 mg/dL (7.0 mmol/L) \u2014 fasting \u22658 hours\n- 2-hour PG \u2265200 mg/dL (11.1 mmol/L) during 75-g OGTT\n- Random plasma glucose \u2265200 mg/dL (11.1 mmol/L) with classic\n  symptoms of hyperglycemia\n\nUnless there is unequivocal hyperglycemia, the diagnosis requires\ntwo abnormal test results \u2014 either two of the same test on separate\ndays, or two different tests at the same visit.",
+      "token_count": 160,
+      "source_path": "labs/a1c_interpretation.md"
+    },
+    {
+      "doc_id": "labs-a1c-interpretation",
+      "section": "Diagnostic Categories",
+      "version": "2024",
+      "chunk_id": "labs-a1c-interpretation::diagnostic-categories::0",
+      "text": "## Diagnostic Categories\n\n| Category               | A1C            | FPG (mg/dL)        | 2-hr PG (mg/dL)    |\n|------------------------|----------------|--------------------|--------------------|\n| Normal                 | <5.7%          | <100               | <140               |\n| Prediabetes            | 5.7\u20136.4%       | 100\u2013125 (IFG)      | 140\u2013199 (IGT)      |\n| Diabetes               | \u22656.5%          | \u2265126               | \u2265200               |\n\nPrediabetes is a risk state, not a milder disease \u2014 adults with\nprediabetes should be counseled on lifestyle modification and\nmonitored annually.",
+      "token_count": 153,
+      "source_path": "labs/a1c_interpretation.md"
+    },
+    {
+      "doc_id": "labs-a1c-interpretation",
+      "section": "When NOT to Use A1C",
+      "version": "2024",
+      "chunk_id": "labs-a1c-interpretation::when-not-to-use-a1c::0",
+      "text": "## When NOT to Use A1C\n\nA1C is unreliable in conditions affecting RBC turnover or hemoglobin\nstructure. Use plasma glucose instead in:\n\n- Hemoglobinopathies (sickle cell disease/trait, HbC, HbE, HbS-\u03b2\n  thalassemia)\n- Recent significant blood loss or transfusion\n- Hemolytic anemia\n- Iron-deficiency anemia (under-treated)\n- Erythropoietin therapy or iron repletion\n- Pregnancy (second and third trimester) \u2014 use OGTT\n- End-stage renal disease \u2014 A1C may underestimate\n- Recent severe hyperglycemia (the A1C lags by ~3 months)",
+      "token_count": 150,
+      "source_path": "labs/a1c_interpretation.md"
+    },
+    {
+      "doc_id": "labs-a1c-interpretation",
+      "section": "A1C-to-Average-Glucose Conversion (eAG)",
+      "version": "2024",
+      "chunk_id": "labs-a1c-interpretation::a1c-to-average-glucose-conversion-eag::0",
+      "text": "## A1C-to-Average-Glucose Conversion (eAG)\n\nApproximate average glucose by A1C:\n\n| A1C (%) | eAG (mg/dL) | eAG (mmol/L) |\n|---------|-------------|--------------|\n| 5.0     | 97          | 5.4          |\n| 6.0     | 126         | 7.0          |\n| 7.0     | 154         | 8.6          |\n| 8.0     | 183         | 10.2         |\n| 9.0     | 212         | 11.8         |\n| 10.0    | 240         | 13.4         |\n| 11.0    | 269         | 14.9         |\n| 12.0    | 298         | 16.5         |\n\nFormula: eAG (mg/dL) = 28.7 \u00d7 A1C \u2212 46.7.",
+      "token_count": 213,
+      "source_path": "labs/a1c_interpretation.md"
+    },
+    {
+      "doc_id": "labs-a1c-interpretation",
+      "section": "Interpretive Notes for the Agent",
+      "version": "2024",
+      "chunk_id": "labs-a1c-interpretation::interpretive-notes-for-the-agent::0",
+      "text": "## Interpretive Notes for the Agent\n\n- **A1C trends matter as much as absolute values.** A patient moving\n  from 6.4% to 7.5% over 6 months has worsening control even though\n  both are \"abnormal\" \u2014 surface the trajectory, not just the latest\n  result.\n- **A1C must be interpreted alongside CBC.** Anemia (any cause) can\n  shift A1C up or down; surface concurrent CBC results when\n  available.\n- **A new A1C \u22659% with prior values <7% is a meaningful clinical\n  change** \u2014 escalate.",
+      "token_count": 134,
+      "source_path": "labs/a1c_interpretation.md"
+    },
+    {
+      "doc_id": "lipids-aha-acc-2018-cholesterol",
+      "section": "AHA/ACC 2018 Cholesterol Guidelines \u2014 Statin Therapy (Summary)",
+      "version": "2018",
+      "chunk_id": "lipids-aha-acc-2018-cholesterol::ahaacc-2018-cholesterol-guidelines-statin-therapy-summary::0",
+      "text": "## AHA/ACC 2018 Cholesterol Guidelines \u2014 Statin Therapy (Summary)\n\n> **SOURCE:** Grundy SM, Stone NJ, Bailey AL, et al. *2018\n> AHA/ACC/AACVPR/AAPA/ABC/ACPM/ADA/AGS/APhA/ASPC/NLA/PCNA Guideline\n> on the Management of Blood Cholesterol*. Circulation.\n> 2019;139(25):e1082\u2013e1143.\n>\n> **NOTICE:** Short factual summary for the AgentForge demo corpus.\n> Not clinical advice. Refer to the source for the full guidance.",
+      "token_count": 133,
+      "source_path": "lipids/aha_acc_2018_cholesterol.md"
+    },
+    {
+      "doc_id": "lipids-aha-acc-2018-cholesterol",
+      "section": "Four Major Statin Benefit Groups",
+      "version": "2018",
+      "chunk_id": "lipids-aha-acc-2018-cholesterol::four-major-statin-benefit-groups::0",
+      "text": "## Four Major Statin Benefit Groups\n\nThe 2018 guideline identifies four groups for whom statin therapy is\nrecommended:\n\n1. **Adults with clinical ASCVD** (acute coronary syndromes, history\n   of MI, stable or unstable angina, coronary or other arterial\n   revascularization, stroke, TIA, or peripheral arterial disease).\n2. **Adults aged \u226521 with primary severe LDL-C \u2265190 mg/dL**.\n3. **Adults aged 40\u201375 with diabetes and LDL-C 70\u2013189 mg/dL**.\n4. **Adults aged 40\u201375 without diabetes, with LDL-C 70\u2013189 mg/dL,\n   and 10-year ASCVD risk \u22657.5%** based on the Pooled Cohort\n   Equations.",
+      "token_count": 168,
+      "source_path": "lipids/aha_acc_2018_cholesterol.md"
+    },
+    {
+      "doc_id": "lipids-aha-acc-2018-cholesterol",
+      "section": "Intensity of Statin Therapy",
+      "version": "2018",
+      "chunk_id": "lipids-aha-acc-2018-cholesterol::intensity-of-statin-therapy::0",
+      "text": "## Intensity of Statin Therapy\n\n| Intensity     | Expected LDL-C reduction | Examples                           |\n|---------------|--------------------------|------------------------------------|\n| High          | \u226550%                     | Atorvastatin 40\u201380 mg, Rosuvastatin 20\u201340 mg |\n| Moderate      | 30\u201349%                   | Atorvastatin 10\u201320 mg, Rosuvastatin 5\u201310 mg, Simvastatin 20\u201340 mg |\n| Low           | <30%                     | Simvastatin 10 mg, Pravastatin 10\u201320 mg |",
+      "token_count": 129,
+      "source_path": "lipids/aha_acc_2018_cholesterol.md"
+    },
+    {
+      "doc_id": "lipids-aha-acc-2018-cholesterol",
+      "section": "Treatment Recommendations",
+      "version": "2018",
+      "chunk_id": "lipids-aha-acc-2018-cholesterol::treatment-recommendations::0",
+      "text": "## Treatment Recommendations\n\n- **Clinical ASCVD, age \u226475:** high-intensity statin (or maximum\n  tolerated intensity).\n- **Clinical ASCVD, age >75:** moderate- or high-intensity statin\n  after risk discussion.\n- **Primary severe LDL-C \u2265190:** high-intensity statin without\n  10-year risk assessment.\n- **Diabetes, age 40\u201375:** moderate-intensity statin; add high-\n  intensity if multiple ASCVD risk enhancers.\n- **Primary prevention, age 40\u201375, ASCVD risk 7.5\u2013<20%:** moderate-\n  intensity statin after risk discussion.\n- **Primary prevention, age 40\u201375, ASCVD risk \u226520%:** high-intensity\n  statin to reduce LDL-C \u226550%.",
+      "token_count": 169,
+      "source_path": "lipids/aha_acc_2018_cholesterol.md"
+    },
+    {
+      "doc_id": "lipids-aha-acc-2018-cholesterol",
+      "section": "Risk Enhancers",
+      "version": "2018",
+      "chunk_id": "lipids-aha-acc-2018-cholesterol::risk-enhancers::0",
+      "text": "## Risk Enhancers\n\nRisk enhancers that may favor statin therapy in borderline cases\ninclude:\n\n- Family history of premature ASCVD\n- Persistently elevated LDL-C \u2265160 mg/dL\n- Chronic kidney disease\n- Metabolic syndrome\n- Conditions specific to women (preeclampsia, premature menopause)\n- Inflammatory diseases (psoriasis, rheumatoid arthritis, HIV)\n- Ethnicity (e.g., South Asian)\n- Persistently elevated triglycerides \u2265175 mg/dL\n- ABI <0.9, hs-CRP \u22652.0 mg/L, Lp(a) \u226550 mg/dL, apoB \u2265130 mg/dL",
+      "token_count": 138,
+      "source_path": "lipids/aha_acc_2018_cholesterol.md"
+    },
+    {
+      "doc_id": "lipids-aha-acc-2018-cholesterol",
+      "section": "Coronary Artery Calcium",
+      "version": "2018",
+      "chunk_id": "lipids-aha-acc-2018-cholesterol::coronary-artery-calcium::0",
+      "text": "## Coronary Artery Calcium\n\nIn adults age 40\u201375 at borderline (5 to <7.5%) or intermediate\n(\u22657.5 to <20%) 10-year ASCVD risk where the decision is uncertain,\nmeasuring CAC may help refine risk:\n\n- **CAC = 0:** withholding statin therapy is reasonable (unless\n  diabetes, family history of premature CHD, or smoking).\n- **CAC 1\u201399:** statin therapy is favored, especially for those age\n  \u226555.\n- **CAC \u2265100 or \u226575th percentile:** statin therapy is indicated.",
+      "token_count": 127,
+      "source_path": "lipids/aha_acc_2018_cholesterol.md"
+    },
+    {
+      "doc_id": "renal-kdigo-ckd-staging",
+      "section": "KDIGO CKD Staging \u2014 GFR and Albuminuria Categories (Summary)",
+      "version": "2024",
+      "chunk_id": "renal-kdigo-ckd-staging::kdigo-ckd-staging-gfr-and-albuminuria-categories-summary::0",
+      "text": "## KDIGO CKD Staging \u2014 GFR and Albuminuria Categories (Summary)\n\n> **SOURCE:** *KDIGO 2024 Clinical Practice Guideline for the\n> Evaluation and Management of Chronic Kidney Disease*. Kidney\n> International Supplements. https://kdigo.org/guidelines/ckd/\n>\n> **NOTICE:** Short factual summary for the AgentForge demo corpus.\n> Not clinical advice. Refer to the source for the full guidance.",
+      "token_count": 94,
+      "source_path": "renal/kdigo_ckd_staging.md"
+    },
+    {
+      "doc_id": "renal-kdigo-ckd-staging",
+      "section": "Definition",
+      "version": "2024",
+      "chunk_id": "renal-kdigo-ckd-staging::definition::0",
+      "text": "## Definition\n\nCKD is defined as abnormalities of kidney structure or function,\npresent for **>3 months**, with implications for health.\n\nDiagnostic criteria require \u22651 of:\n\n- GFR <60 mL/min/1.73 m\u00b2 for >3 months\n- Markers of kidney damage (one or more):\n  - Albuminuria (AER \u226530 mg/24h or ACR \u226530 mg/g)\n  - Urine sediment abnormalities\n  - Electrolyte and other abnormalities due to tubular disorders\n  - Histologic abnormalities\n  - Structural abnormalities on imaging\n  - History of kidney transplantation",
+      "token_count": 125,
+      "source_path": "renal/kdigo_ckd_staging.md"
+    },
+    {
+      "doc_id": "renal-kdigo-ckd-staging",
+      "section": "GFR Categories",
+      "version": "2024",
+      "chunk_id": "renal-kdigo-ckd-staging::gfr-categories::0",
+      "text": "## GFR Categories\n\n| Category | GFR (mL/min/1.73 m\u00b2) | Description                       |\n|----------|----------------------|-----------------------------------|\n| G1       | \u226590                  | Normal or high                    |\n| G2       | 60\u201389                | Mildly decreased                  |\n| G3a      | 45\u201359                | Mildly to moderately decreased    |\n| G3b      | 30\u201344                | Moderately to severely decreased  |\n| G4       | 15\u201329                | Severely decreased                |\n| G5       | <15                  | Kidney failure                    |\n\nGFR categories alone do not define CKD without markers of damage \u2014\nG1 and G2 require an additional marker (e.g., albuminuria).",
+      "token_count": 164,
+      "source_path": "renal/kdigo_ckd_staging.md"
+    },
+    {
+      "doc_id": "renal-kdigo-ckd-staging",
+      "section": "Albuminuria Categories",
+      "version": "2024",
+      "chunk_id": "renal-kdigo-ckd-staging::albuminuria-categories::0",
+      "text": "## Albuminuria Categories\n\n| Category | ACR (mg/g) | ACR (mg/mmol) | Description                  |\n|----------|------------|---------------|------------------------------|\n| A1       | <30        | <3            | Normal to mildly increased   |\n| A2       | 30\u2013300     | 3\u201330          | Moderately increased         |\n| A3       | >300       | >30           | Severely increased           |\n\nThe preferred specimen is a **first-morning void**, with quantitative\nalbumin-to-creatinine ratio (ACR) reported. Random spot collections\nare acceptable when first-morning void isn't available.",
+      "token_count": 138,
+      "source_path": "renal/kdigo_ckd_staging.md"
+    },
+    {
+      "doc_id": "renal-kdigo-ckd-staging",
+      "section": "Combined Risk Stratification",
+      "version": "2024",
+      "chunk_id": "renal-kdigo-ckd-staging::combined-risk-stratification::0",
+      "text": "## Combined Risk Stratification\n\nRisk of progression and adverse outcomes is stratified by the\ncombination of GFR and albuminuria:\n\n- **Low risk:** G1\u2013G2 with A1 (and no other markers)\n- **Moderately increased risk:** G1\u2013G2 with A2; G3a with A1\n- **High risk:** G1\u2013G2 with A3; G3a with A2; G3b with A1\n- **Very high risk:** G3a with A3; G3b with A2 or A3; G4\u2013G5 with any\n\nHigher-risk categories are referred to nephrology and warrant more\nfrequent monitoring.",
+      "token_count": 145,
+      "source_path": "renal/kdigo_ckd_staging.md"
+    },
+    {
+      "doc_id": "renal-kdigo-ckd-staging",
+      "section": "Practical Notes",
+      "version": "2024",
+      "chunk_id": "renal-kdigo-ckd-staging::practical-notes::0",
+      "text": "## Practical Notes\n\n- The GFR equation recommended is the **2021 CKD-EPI creatinine\n  equation** (not race-corrected). The cystatin C equation is\n  preferred when greater accuracy is needed.\n- A single low GFR is not CKD \u2014 confirm chronicity (>3 months) before\n  staging.\n- Albuminuria progression and stable GFR can both indicate\n  progressive CKD; track BOTH markers over time.",
+      "token_count": 94,
+      "source_path": "renal/kdigo_ckd_staging.md"
+    }
+  ]
+}
