@@ -88,7 +88,7 @@
         "testStrategy": "Navigate to patient summary page and verify event listener fires (add temporary logging). Confirm no performance impact on page load without agent panel active.",
         "priority": "high",
         "dependencies": [
-          "1"
+          1
         ],
         "status": "done",
         "subtasks": [
@@ -174,8 +174,8 @@
         "testStrategy": "Render template on patient summary page. Verify patient_id matches current chart context. Test that panel collapses/expands correctly. Check Bootstrap 4.6 styling compatibility.",
         "priority": "high",
         "dependencies": [
-          "1",
-          "2"
+          1,
+          2
         ],
         "status": "done",
         "subtasks": [
@@ -251,7 +251,7 @@
         "testStrategy": "Test message sending and receiving in browser console. Verify streaming chunks render progressively. Test citation formatting [encounter #X, date] renders as clickable links. Verify graceful handling when patient_id is missing.",
         "priority": "high",
         "dependencies": [
-          "3"
+          3
         ],
         "status": "done",
         "subtasks": [
@@ -410,7 +410,7 @@
         "testStrategy": "Unit test JWT generation with known inputs. Verify token decodes correctly with expected claims. Test expiration enforcement. Verify role lookup matches GACL database.",
         "priority": "high",
         "dependencies": [
-          "1"
+          1
         ],
         "status": "done",
         "subtasks": [
@@ -494,7 +494,7 @@
         "testStrategy": "Test with valid session and patient context. Verify 400 returned when no patient_id. Test streaming response passes through correctly. Verify JWT is included in sidecar request header.",
         "priority": "high",
         "dependencies": [
-          "6"
+          6
         ],
         "status": "done",
         "subtasks": [
@@ -549,7 +549,7 @@
         "testStrategy": "Unit test JWT validation with valid/invalid/expired tokens. Test Redis failure causes 503. Verify RequestContext is immutable. Test clearance loading from Redis policy.",
         "priority": "high",
         "dependencies": [
-          "5"
+          5
         ],
         "status": "done",
         "subtasks": [
@@ -605,8 +605,8 @@
         "testStrategy": "Test YAML parsing with valid and malformed configs. Verify Redis keys created correctly. Test health check fails when policy not loaded. Test policy reload on config change.",
         "priority": "high",
         "dependencies": [
-          "5",
-          "8"
+          5,
+          8
         ],
         "status": "done",
         "subtasks": [
@@ -683,8 +683,8 @@
         "testStrategy": "Test each sensitivity category with authorized and unauthorized users. Verify function never receives record content. Test breakglass override behavior. Benchmark latency to ensure < 5ms per check.",
         "priority": "high",
         "dependencies": [
-          "8",
-          "9"
+          8,
+          9
         ],
         "status": "done",
         "subtasks": [
@@ -750,7 +750,7 @@
         "testStrategy": "Unit test each client with mocked responses. Integration test streaming behavior. Verify timeout enforcement. Test provider failover when primary returns non-200 health.",
         "priority": "high",
         "dependencies": [
-          "5"
+          5
         ],
         "status": "done",
         "subtasks": [
@@ -829,7 +829,7 @@
         "testStrategy": "Simulate primary failure and verify failover occurs after 2 consecutive checks. Test recovery when primary becomes healthy again. Verify no failover to smaller local model (v1 constraint).",
         "priority": "medium",
         "dependencies": [
-          "11"
+          11
         ],
         "status": "done",
         "subtasks": [
@@ -881,7 +881,7 @@
         "testStrategy": "Verify frozen dataclasses are immutable. Test citation string formatting. Ensure all status values are handled in orchestrator.",
         "priority": "high",
         "dependencies": [
-          "5"
+          5
         ],
         "status": "done",
         "subtasks": [
@@ -961,8 +961,8 @@
         "testStrategy": "Unit test with mocked FHIR responses. Test cache hit/miss behavior. Verify 2s timeout enforcement. Test permission_denied status on 403.",
         "priority": "high",
         "dependencies": [
-          "8",
-          "13"
+          8,
+          13
         ],
         "status": "done",
         "subtasks": [
@@ -1039,7 +1039,7 @@
         "testStrategy": "Test with patients having coded ICD diagnoses and free-text entries. Verify both are surfaced. Test empty result for patient with no problems. Verify citation IDs match FHIR resource IDs.",
         "priority": "high",
         "dependencies": [
-          "14"
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1115,7 +1115,7 @@
         "testStrategy": "Test with patient having active and discontinued meds. Verify discontinued meds do NOT appear. Test medication with complex dosing instructions. Verify citation format matches [Rx: name, date].",
         "priority": "high",
         "dependencies": [
-          "14"
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1196,7 +1196,7 @@
         "testStrategy": "Test with patient having multiple allergies. Verify reaction severity is captured. Test 'no known allergies' case returns status='empty'. Test drug vs food allergy categorization.",
         "priority": "high",
         "dependencies": [
-          "14"
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1275,7 +1275,7 @@
         "testStrategy": "Test with patient having multiple lab panels. Verify value extraction for numeric and text results. Test date filtering with 'since' parameter. Benchmark query time (should be < 2s with indexes).",
         "priority": "high",
         "dependencies": [
-          "14"
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1341,7 +1341,7 @@
         "testStrategy": "Test with patient having vitals history. Verify all vital types are captured. Test date filtering. Verify trend calculation (most recent vs historical).",
         "priority": "medium",
         "dependencies": [
-          "14"
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1418,7 +1418,7 @@
         "testStrategy": "Test endpoint returns correct vitals data. Verify audit log entry created. Test JWT validation rejects invalid tokens. Verify localhost-only access restriction.",
         "priority": "medium",
         "dependencies": [
-          "7"
+          7
         ],
         "status": "done",
         "subtasks": [
@@ -1493,8 +1493,8 @@
         "testStrategy": "Test with user having and lacking mental health clearance. Verify psych encounters are filtered for unauthorized users. Test normal encounters visible to all. Verify no content is examined for sensitivity.",
         "priority": "high",
         "dependencies": [
-          "10",
-          "14"
+          10,
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1550,8 +1550,8 @@
         "testStrategy": "Test with CFR42 substance abuse notes and authorized/unauthorized users. Verify note body is never fetched when metadata says restricted. Test permission_denied status in result.",
         "priority": "high",
         "dependencies": [
-          "10",
-          "14"
+          10,
+          14
         ],
         "status": "done",
         "subtasks": [
@@ -1622,7 +1622,7 @@
         "testStrategy": "Test endpoint returns notes from both tables. Verify UNION ordering is correct. Test deleted/inactive notes are excluded. Verify audit logging.",
         "priority": "high",
         "dependencies": [
-          "20"
+          20
         ],
         "status": "done",
         "subtasks": [
@@ -1677,7 +1677,7 @@
         "testStrategy": "Test full-text search matches expected notes. Verify p95 latency < 1s on demo dataset. Test empty results for no-match query. Test sensitivity filtering applies to search results.",
         "priority": "high",
         "dependencies": [
-          "22"
+          22
         ],
         "status": "done",
         "subtasks": [
@@ -1732,7 +1732,7 @@
         "testStrategy": "Test search finds expected notes. Verify patient_id scoping works. Test SQL injection prevention. Benchmark with varying note corpus sizes.",
         "priority": "high",
         "dependencies": [
-          "23"
+          23
         ],
         "status": "done",
         "subtasks": [
@@ -1796,14 +1796,14 @@
         "testStrategy": "Test parallel dispatch with mock tools. Verify 3-tool concurrency limit. Test 4s timeout cancels pending tools. Verify state transitions correctly.",
         "priority": "high",
         "dependencies": [
-          "14",
-          "15",
-          "16",
-          "17",
-          "18",
-          "21",
-          "22",
-          "24"
+          14,
+          15,
+          16,
+          17,
+          18,
+          21,
+          22,
+          24
         ],
         "status": "done",
         "subtasks": [
@@ -1883,8 +1883,8 @@
         "testStrategy": "Test use case classification accuracy on sample queries. Verify correct tool selection for each UC. Test JSON parsing robustness. Verify cheaper model is used.",
         "priority": "high",
         "dependencies": [
-          "11",
-          "26"
+          11,
+          26
         ],
         "status": "done",
         "subtasks": [
@@ -1940,8 +1940,8 @@
         "testStrategy": "Unit test with recorded token streams. Verify unverified claims are replaced. Test citation ID validation against cache. Test medication dose verification. Verify no retry attempts.",
         "priority": "high",
         "dependencies": [
-          "13",
-          "26"
+          13,
+          26
         ],
         "status": "done",
         "subtasks": [
@@ -2030,7 +2030,7 @@
         "testStrategy": "Test each constraint with valid and invalid claims. Test medication dose mismatch detection. Test lab value tolerance. Test counterfactual detection.",
         "priority": "high",
         "dependencies": [
-          "28"
+          28
         ],
         "status": "done",
         "subtasks": [
@@ -2109,7 +2109,7 @@
         "testStrategy": "Test TTL enforcement for both session and cache. Verify encryption at rest is configured. Test cache hit/miss behavior. Verify session isolation by user+patient.",
         "priority": "high",
         "dependencies": [
-          "5"
+          5
         ],
         "status": "done",
         "subtasks": [
@@ -2188,7 +2188,7 @@
         "testStrategy": "Test turn counting accuracy. Verify soft cap triggers reset suggestion at turn 6. Verify hard cap refuses turn 9. Test session isolation.",
         "priority": "medium",
         "dependencies": [
-          "30"
+          30
         ],
         "status": "done",
         "subtasks": [
@@ -2267,7 +2267,7 @@
         "testStrategy": "Verify pseudonymization is deterministic. Test HMAC key rotation strategy. Verify no PHI fields in traces. Test trace correlation works.",
         "priority": "medium",
         "dependencies": [
-          "5"
+          5
         ],
         "status": "done",
         "subtasks": [
@@ -2320,12 +2320,12 @@
         "testStrategy": "Test /turn endpoint with valid request. Verify streaming response format. Test conversation cap enforcement. Test health check requires policy.",
         "priority": "high",
         "dependencies": [
-          "8",
-          "26",
-          "28",
-          "30",
-          "31",
-          "32"
+          8,
+          26,
+          28,
+          30,
+          31,
+          32
         ],
         "status": "done",
         "subtasks": [
@@ -2390,8 +2390,8 @@
         "testStrategy": "Test log entry created in OpenEMR log table. Verify reason text in log.comments only. Verify Langfuse has boolean only. Test idempotency on repeated calls.",
         "priority": "high",
         "dependencies": [
-          "7",
-          "32"
+          7,
+          32
         ],
         "status": "done",
         "subtasks": [
@@ -2477,9 +2477,9 @@
         "testStrategy": "Run `docker compose up` and verify all services start. Test agent-sidecar can reach OpenEMR. Test Redis connectivity. Verify Langfuse UI accessible.",
         "priority": "high",
         "dependencies": [
-          "5",
-          "30",
-          "32"
+          5,
+          30,
+          32
         ],
         "status": "done",
         "subtasks": [
@@ -2560,8 +2560,8 @@
         "testStrategy": "Test /agentforge/turn accessible from browser. Verify /agentforge/internal/* blocked from external. Test streaming response passthrough works.",
         "priority": "high",
         "dependencies": [
-          "33",
-          "35"
+          33,
+          35
         ],
         "status": "done",
         "subtasks": [
@@ -2643,7 +2643,7 @@
         "testStrategy": "Run eval harness against demo dataset. Verify grounding checks catch fabricated citations. Test LLM-judge calibration. Verify adversarial cases trigger expected failures.",
         "priority": "high",
         "dependencies": [
-          "33"
+          33
         ],
         "status": "done",
         "subtasks": [
@@ -2727,14 +2727,14 @@
         "testStrategy": "Verify mock returns match fixture data. Test all tools have mock implementations. Verify determinism across runs. Test fixture schema matches real tool output.",
         "priority": "medium",
         "dependencies": [
-          "14",
-          "15",
-          "16",
-          "17",
-          "18",
-          "21",
-          "22",
-          "24"
+          14,
+          15,
+          16,
+          17,
+          18,
+          21,
+          22,
+          24
         ],
         "status": "done",
         "subtasks": [
@@ -2790,8 +2790,8 @@
         "testStrategy": "Run full regression suite. Verify all 8 cases pass. Test failure detection when grounding breaks. Verify CI blocks on regression failure.",
         "priority": "high",
         "dependencies": [
-          "37",
-          "38"
+          37,
+          38
         ],
         "status": "done",
         "subtasks": [
@@ -2945,7 +2945,7 @@
         "testStrategy": "Test timeout enforcement at each level. Verify retry only on transient errors. Test remaining budget calculation. Verify degradation notice formatting.",
         "priority": "medium",
         "dependencies": [
-          "26"
+          26
         ],
         "status": "done",
         "subtasks": [
@@ -3029,7 +3029,7 @@
         "testStrategy": "Test detection of explicit patient name in query. Test MRN reference detection. Test room/bed reference. Verify current patient references pass. Test hard stop message format.",
         "priority": "medium",
         "dependencies": [
-          "27"
+          27
         ],
         "status": "done",
         "subtasks": [
@@ -3111,8 +3111,8 @@
         "testStrategy": "Test prompt loading from versioned files. Verify version constant appears in Langfuse traces. Test rollback by changing version.json. Verify prompts render correctly.",
         "priority": "medium",
         "dependencies": [
-          "27",
-          "28"
+          27,
+          28
         ],
         "status": "done",
         "subtasks": [
@@ -3189,7 +3189,7 @@
         "testStrategy": "Run script and verify users.api_log_option updated. Test API calls from agent user don't log bodies in api_log. Verify other users still log normally.",
         "priority": "medium",
         "dependencies": [
-          "7"
+          7
         ],
         "status": "done",
         "subtasks": [
@@ -3271,7 +3271,7 @@
         "testStrategy": "Test truncation triggers at 12k threshold. Verify high-priority data preserved. Test oldest records removed first. Verify token count accurate.",
         "priority": "medium",
         "dependencies": [
-          "26"
+          26
         ],
         "status": "done",
         "subtasks": [
@@ -3327,8 +3327,8 @@
         "testStrategy": "Test stale lab detection at exactly 30 days. Test conflict detection with prepared test cases. Verify inline flag formatting. Test no false positives on consistent data.",
         "priority": "low",
         "dependencies": [
-          "28",
-          "29"
+          28,
+          29
         ],
         "status": "done",
         "subtasks": [
@@ -3381,9 +3381,9 @@
         "testStrategy": "Run against Docker compose environment. Test all use cases end-to-end. Verify auth flow works. Test error cases. Verify latency within budget.",
         "priority": "high",
         "dependencies": [
-          "33",
-          "35",
-          "36"
+          33,
+          35,
+          36
         ],
         "status": "done",
         "subtasks": [
@@ -3468,8 +3468,8 @@
         "testStrategy": "Review checklist against ARCHITECTURE.md. Verify all items are actionable. Test checklist against fresh deployment.",
         "priority": "medium",
         "dependencies": [
-          "40",
-          "44"
+          40,
+          44
         ],
         "status": "done",
         "subtasks": [
@@ -3549,7 +3549,7 @@
         "testStrategy": "",
         "status": "done",
         "dependencies": [
-          "40"
+          40
         ],
         "priority": "low",
         "subtasks": [],
@@ -3776,8 +3776,8 @@
         "testStrategy": "1. Unit test: Orchestrator with Planner calls planner.plan() before dispatch\n2. Integration test: UC-1 query produces ADMIT_SYNTHESIS classification\n3. Langfuse trace: Verify use_case appears in trace metadata",
         "priority": "high",
         "dependencies": [
-          "2",
-          "21"
+          2,
+          21
         ],
         "status": "done",
         "subtasks": [
@@ -3860,7 +3860,7 @@
         "testStrategy": "1. Unit test: asyncio.gather is used for batch dispatch\n2. Latency test: UC-1 on pid=8 completes in <15s (vs 25s+ sequential)\n3. Error isolation: One failing tool doesn't crash the batch\n4. Integration test: All tool results still collected correctly",
         "priority": "high",
         "dependencies": [
-          "4"
+          4
         ],
         "status": "done",
         "subtasks": [
@@ -3929,7 +3929,7 @@
         "testStrategy": "1. Unit test: Truncator.truncate() called before final LLM synthesis\n2. Token test: Large chart (>12000 tokens) is correctly truncated\n3. Priority test: search_notes dropped before get_demographics\n4. Langfuse trace: Truncation metadata recorded",
         "priority": "medium",
         "dependencies": [
-          "5"
+          5
         ],
         "status": "done",
         "subtasks": [],
@@ -3944,7 +3944,7 @@
         "description": "Integrate DataQualityChecker on tool outputs and IdentityGuard on synthesis output to add data quality flags and prevent cross-patient leakage. Uses Option B (sidecar-fetches-demographics-first) for IdentityGuard patient identity sourcing \u2014 no PHP changes required for first pass.",
         "status": "done",
         "dependencies": [
-          "6"
+          6
         ],
         "priority": "medium",
         "details": "## Architecture Decision: Option B for Patient Identity\n\nIdentityGuard requires `current_patient_name` and `current_mrn`, but RequestContext (`auth_gateway.py:54-78`) only carries `patient_id`, `user_id`, `role`, `breakglass_flag`. Three options were considered:\n\n- **Option A**: Extend RequestContext + JWT claims from PHP \u2014 requires AgentJwtService.php changes\n- **Option B (CHOSEN)**: Sidecar fetches demographics synchronously before IdentityGuard check \u2014 no PHP changes, defers schema decisions\n- **Option C**: Pass patient identity from PHP turn.php in request body \u2014 requires API schema changes\n\n**Option B selected** for first pass: the sidecar calls `get_demographics` tool internally before IdentityGuard.check_message(), using the result to construct the guard. Adds 1 round-trip but keeps implementation self-contained.\n\n## Implementation Order\n\nDataQualityChecker and IdentityGuard are independent concerns but must be wired carefully:\n\n1. **IdentityGuard check** happens AFTER demographics fetch, BEFORE other tools fan out\n2. **DataQualityChecker** runs AFTER all tool results collected, BEFORE synthesis\n\n---\n\n## Part A: DataQualityChecker Integration (no demographics dependency)\n\n1. In `sidecar/src/agentforge/orchestrator/__init__.py`:\n   - Import `DataQualityChecker` from `agentforge.verifier.data_quality`\n   - Add `data_quality: DataQualityChecker | None = None` to `Orchestrator.__init__`\n   - Construct in `create_app()` with `now=lambda: datetime.now(UTC)`\n\n2. After tool results collected (before `_verify_response`):\n   ```python\n   if self._data_quality is not None:\n       # Extract lab results from tool_results dict\n       labs_result = tool_results.get(\"get_recent_labs\")\n       if labs_result is not None and hasattr(labs_result.payload, \"labs\"):\n           stale_flags = [\n               self._data_quality.check_stale_labs(lab)\n               for lab in labs_result.payload.labs\n           ]\n           # Filter None values\n           quality_warnings = [f for f in stale_flags if f]\n       \n       # Extract problems + notes for conflict checking\n       problems_result = tool_results.get(\"get_active_problems\")\n       notes_result = tool_results.get(\"get_recent_notes\")\n       if problems_result and notes_result:\n           conflicts = self._data_quality.check_conflicting_sources(\n               problems_result.payload.problems,\n               notes_result.payload.notes,\n           )\n           quality_warnings.extend(conflicts)\n   ```\n\n3. Append quality warnings to synthesis context (before final LLM call or verifier)\n\n---\n\n## Part B: IdentityGuard Integration (requires demographics-first fetch)\n\n1. In `sidecar/src/agentforge/orchestrator/__init__.py`:\n   - Import `IdentityGuard, IdentityCheckResult` from `agentforge.orchestrator.identity_guard`\n\n2. Early in `turn()`, AFTER breakglass audit but BEFORE tool loop:\n   ```python\n   # Fetch demographics synchronously to get patient name/MRN for IdentityGuard\n   demo_result = await self._demographics.fetch(\n       patient_id=ctx.patient_id,\n       raw_token=ctx.raw_token\n   )\n   patient_name = f\"{demo_result.payload.given_name} {demo_result.payload.family_name}\"\n   # Note: DemographicsPayload doesn't currently include MRN\n   # For MVP, use patient_id as MRN fallback until demographics.php is extended\n   patient_mrn = str(ctx.patient_id)  # TODO: Add mrn to DemographicsPayload\n   \n   guard = IdentityGuard(\n       current_patient_name=patient_name,\n       current_mrn=patient_mrn\n   )\n   check = guard.check_message(user_message)\n   if not check.is_valid:\n       self._record_identity_guard_refusal(trace, check)\n       return check.refusal_reason\n   ```\n\n3. Add `_record_identity_guard_refusal` helper for Langfuse telemetry:\n   ```python\n   def _record_identity_guard_refusal(\n       self,\n       trace: TraceHandle | None,\n       check: IdentityCheckResult,\n   ) -> None:\n       if self._langfuse is None or trace is None:\n           return\n       self._langfuse.record_identity_guard_decision(\n           trace,\n           is_valid=check.is_valid,\n           matched_pattern=check.matched_pattern,\n       )\n   ```\n\n4. Update `LangfuseClient` protocol to add `record_identity_guard_decision`\n\n---\n\n## Part C: Extend Demographics for MRN (Optional Follow-up)\n\nTo use real MRN instead of patient_id fallback:\n\n1. Update `interface/modules/custom_modules/oe-module-agentforge/public/internal/demographics.php` to include `pubpid` (MRN) in response\n2. Update `DemographicsPayload` in `sidecar/src/agentforge/tools/demographics.py` to add `mrn: str | None = None`\n3. Update IdentityGuard construction to use `demo_result.payload.mrn or str(ctx.patient_id)`\n\n---\n\n## Langfuse Telemetry\n\nRecord in trace metadata:\n- `identity_guard.is_valid`: bool\n- `identity_guard.matched_pattern`: \"patient_name\" | \"mrn\" | \"room\" | null\n- `data_quality.stale_labs_count`: int\n- `data_quality.conflict_count`: int",
@@ -4149,8 +4149,8 @@
         "description": "Enforce total-turn and tool-phase budgets in Orchestrator.turn(), then tighten test defaults and PHP proxy timeouts after measuring actual p95 latency.",
         "status": "done",
         "dependencies": [
-          "5",
-          "7"
+          5,
+          7
         ],
         "priority": "medium",
         "details": "TimeoutPolicy.total_turn is already 7.0s in sidecar/src/agentforge/timeouts.py:46 \u2014 the gap is enforcement. This task wires budget enforcement at three levels in Orchestrator.turn() (sidecar/src/agentforge/orchestrator/__init__.py), then measures p95 before tightening downstream configs.\n\n**1. Enforce total-turn budget in Orchestrator.turn()**\n- Wrap the entire turn logic (lines 239-293) in `asyncio.wait_for(timeout=self._timeout_policy.total_turn)`\n- Catch `asyncio.TimeoutError` and return a graceful degradation message\n- Today only per_tool=2.0s is enforced via `_call_with_retry()` (lines 337-351)\n\n**2. Enforce tool-phase budget around parallel dispatch**\n- After Task 5 lands, the sequential for-loop (lines 279-291) becomes `asyncio.gather()` consuming Plan.parallel_batches\n- Wrap each batch dispatch in `asyncio.wait_for(timeout=policy.tool_phase)` (currently 4.0s)\n- Partial results from timed-out batches should still be collected and logged to `timed_out_tools`\n\n**3. Enforce synthesis-phase budget around the LLM call**\n- The LLM completion call (lines 241-246) should have an explicit timeout wrapper\n- Could use remaining total_turn budget minus elapsed tool-phase time\n- Alternative: Add `TimeoutPolicy.synthesis_phase` as an explicit budget\n\n**4. After enforcement, MEASURE p95 on pid=8 (Eula)**\n- Run latency tests on integration-pass branch with parallel dispatch wired\n- Only proceed with tightening if measured p95 < 7s\n- Document actual p95 in commit message\n\n**5. Tighten latency TEST default**\n- In sidecar/tests/integration/test_latency.py:280-281, change default budget from 30000ms to 7000ms\n- Keep AGENTFORGE_INT_UC1_P95_BUDGET_MS env override for dev-laptop flexibility\n\n**6. Lower PHP proxy timeouts**\n- In interface/modules/custom_modules/oe-module-agentforge/public/turn.php:\n  - Line 92: Change `'timeout' => 30.0` to `'timeout' => 10.0`\n  - Line 97: Change `'max_duration' => 90.0` to `'max_duration' => 15.0`\n- AgentProxyController (src/Controllers/AgentProxyController.php) doesn't set timeouts directly \u2014 they're passed in from turn.php\n\n**7. Smoke test droplet at 7s budget**\n- If droplet p95 exceeds 7s, document the gap in DEVIATIONS.md rather than shipping an unenforceable budget\n- Update deploy-droplet.sh .env if enforcement changes require config",
@@ -4269,7 +4269,7 @@
         "testStrategy": "1. Unit test: /turn returns StreamingResponse when streaming_enabled=True\n2. SSE format: Each chunk follows 'data: {...}\\n\\n' format\n3. Completion signal: [DONE] sent at end\n4. Fallback: streaming_enabled=False returns TurnResponse",
         "priority": "high",
         "dependencies": [
-          "9"
+          9
         ],
         "status": "done",
         "subtasks": [],
@@ -4284,7 +4284,7 @@
         "description": "Modify AgentProxyController to proxy chunked/SSE responses from sidecar through to the browser without buffering, and ensure turn.php has appropriate timeout settings for streaming.",
         "status": "done",
         "dependencies": [
-          "10"
+          10
         ],
         "priority": "high",
         "details": "The streaming logic spans two files in interface/modules/custom_modules/oe-module-agentforge/:\n\n## 1. turn.php (timeout configuration only)\nCurrent timeouts at lines 84-98 are already set for streaming:\n- `'timeout' => 30.0` (idle timeout)\n- `'max_duration' => 90.0` (hard ceiling)\n\nFor streaming, consider increasing idle timeout since SSE connections may have pauses between chunks. Keep the existing values or adjust if streaming tests show issues.\n\n## 2. AgentProxyController.php (SSE passthrough logic)\nThe existing `streamSidecarResponse()` method at lines 137-158 needs enhancement:\n\n### Current behavior\n- Uses `StreamedResponse` with `$client->stream()` chunk iteration\n- Forwards `Content-Type` header from sidecar\n- Calls `flush()` per chunk (but not `ob_flush()`)\n\n### Required changes\n\n**a) Detect SSE response and set appropriate headers:**\n```php\nprivate function streamSidecarResponse(ResponseInterface $sidecarResponse): StreamedResponse\n{\n    $client = $this->httpClient;\n    $sidecarHeaders = $sidecarResponse->getHeaders(throw: false);\n    $contentType = $sidecarHeaders['content-type'][0] ?? 'application/json';\n    $isSSE = str_starts_with($contentType, 'text/event-stream');\n\n    $streamed = new StreamedResponse(function () use ($client, $sidecarResponse): void {\n        foreach ($client->stream($sidecarResponse) as $chunk) {\n            echo $chunk->getContent();\n            if (ob_get_level() > 0) {\n                ob_flush();\n            }\n            flush();\n        }\n    }, Response::HTTP_OK);\n\n    $streamed->headers->set('Content-Type', $contentType);\n\n    if ($isSSE) {\n        $streamed->headers->set('Cache-Control', 'no-cache');\n        $streamed->headers->set('Connection', 'keep-alive');\n        $streamed->headers->set('X-Accel-Buffering', 'no'); // nginx buffer disable\n    }\n\n    return $streamed;\n}\n```\n\n**b) Pass through X-Agent-Cost-USD header:**\n```php\n// After setting Content-Type\nif (isset($sidecarHeaders['x-agent-cost-usd'][0])) {\n    $streamed->headers->set('X-Agent-Cost-USD', $sidecarHeaders['x-agent-cost-usd'][0]);\n}\n```\n\n**c) Add ob_flush() before flush():**\nUpdate the streaming callback to call `ob_flush()` when output buffering is active to ensure PHP's output buffers are flushed before calling the system flush.\n\n## Architecture notes\n- turn.php remains the entry-point bootstrap (instantiates controller, passes HttpClient with timeouts)\n- AgentProxyController.streamSidecarResponse() handles all SSE detection and header management\n- Non-SSE responses (Content-Type: application/json) continue to work via existing code path",
@@ -4418,7 +4418,7 @@
         "testStrategy": "1. Visual test: Characters appear progressively as they stream\n2. Error handling: Network errors show error message\n3. Non-streaming fallback: Works when server returns JSON\n4. Mobile: ReadableStream works on target browsers",
         "priority": "high",
         "dependencies": [
-          "11"
+          11
         ],
         "status": "done",
         "subtasks": [],
@@ -4433,7 +4433,7 @@
         "description": "Integrate StreamingVerifier inline with the LLM token stream so that ONLY verified sentence chunks reach the browser \u2014 never expose unverified clinical text to the user.",
         "status": "done",
         "dependencies": [
-          "12"
+          12
         ],
         "priority": "medium",
         "details": "## Clinical Safety Constraint\n\n**CRITICAL**: Never stream unverified clinical text to the browser then 'rewrite' it later. That briefly exposes potentially unsafe content to the user, which is a clinical-safety violation.\n\n## Implementation Pattern (Sentence-Buffered Streaming)\n\nThe existing `StreamingVerifier` in `sidecar/src/agentforge/verifier/streaming_verifier.py` already implements sentence-buffered verification via `verify_stream()`. The task is to wire this into the LLM streaming path so tokens flow through verification before reaching the browser.\n\n### Architecture Flow:\n\n1. **Token Accumulation**: LLM tokens stream into `StreamingVerifier.verify_stream()` which buffers until sentence boundary (`.!?` followed by whitespace, or `\\n\\n`).\n\n2. **Per-Sentence Verification**: As each sentence completes, the verifier runs:\n   - Citation grounding check (`find_citations()` \u2192 `CitationIndex.contains()`)\n   - Domain constraint checks (`DomainConstraintChecker.check()`)\n   - Identity guard integration (detect wrong-patient references)\n\n3. **Verified-Only Emission**:\n   - If sentence verifies clean \u2192 emit `VerifiedChunk` to SSE stream\n   - If sentence fails \u2192 emit `REJECTION_MARKER` (\"[claim withheld \u2014 could not be grounded]\") and continue OR abort response\n   - **NEVER emit the unverified raw sentence first**\n\n### Code Changes Required:\n\n```python\n# In Orchestrator \u2014 new stream_turn() method or modified turn()\nasync def stream_turn(self, ctx, user_message, session_id=None):\n    # ... tool dispatch phase (same as turn()) ...\n    \n    # Build citation index from tool results\n    index = build_citation_index(tool_results)\n    verifier = StreamingVerifier(\n        citation_index=index, \n        domain_checker=self._domain_constraints\n    )\n    \n    # Stream LLM tokens through verifier\n    async def llm_token_stream():\n        async for token in self._llm.stream(...):\n            yield token\n    \n    # Emit ONLY verified chunks to caller\n    async for chunk in verifier.verify_stream(llm_token_stream()):\n        if chunk.verified:\n            yield chunk.text\n        else:\n            yield chunk.text  # Already replaced with REJECTION_MARKER\n```\n\n### Files to Modify:\n\n- `sidecar/src/agentforge/orchestrator/__init__.py`: Add `stream_turn()` method that pipes LLM stream through `StreamingVerifier.verify_stream()`\n- `sidecar/src/agentforge/app.py`: Wire `/turn` endpoint to use streaming response with sentence-buffered chunks\n\n### Latency Tradeoff\n\nUser-perceived streaming is per-sentence, not per-token:\n- Typical sentence: 50-200ms of generation (well within human reading speed)\n- Time-to-first-verified-sentence: ~1-2s after first model token\n- Full response budget (7s p95): unchanged\n\nDocument this tradeoff in ARCHITECTURE.md \u00a76 (already describes sentence-buffered streaming; confirm alignment).\n\n### No 'Rewrite' Pattern\n\nDO NOT implement:\n- `yield '[Rewriting for accuracy...]'` \u2014 wrong shape\n- Any pattern that shows unverified text then corrects it",
@@ -4847,7 +4847,7 @@
         "testStrategy": "1. Unit test: aggregate_costs() sums correctly\n2. CLI test: --days 7 returns 7 days of data\n3. Output format: Readable table with dates and totals\n4. Error handling: Graceful failure when Langfuse unavailable",
         "priority": "low",
         "dependencies": [
-          "14"
+          14
         ],
         "status": "done",
         "subtasks": [],
@@ -4864,8 +4864,8 @@
         "testStrategy": "1. Runner test: EvalRunner invokes real Orchestrator.turn()\n2. DB state: Same seed produces same tool outputs\n3. Scoring: Results include grounding and LLM-judge scores\n4. Isolation: eval marker separates from unit/integration tests",
         "priority": "high",
         "dependencies": [
-          "7",
-          "21"
+          7,
+          21
         ],
         "status": "done",
         "subtasks": [],
@@ -4882,7 +4882,7 @@
         "testStrategy": "1. Schema validation: All YAML files parse to EvalCase model\n2. Coverage: Each failure mode has 3-5 cases\n3. Patient IDs: Reference existing demo DB patients\n4. Expected behaviors: Clear, testable assertions",
         "priority": "high",
         "dependencies": [
-          "16"
+          16
         ],
         "status": "done",
         "subtasks": [],
@@ -4899,7 +4899,7 @@
         "testStrategy": "1. Deterministic: Ungrounded citation \u2192 grounded=False\n2. Terms: Missing required term \u2192 required_terms_present=False\n3. LLM judge: Returns 1-5 score with rationale\n4. Consensus: 3 runs agree for passing score",
         "priority": "medium",
         "dependencies": [
-          "17"
+          17
         ],
         "status": "done",
         "subtasks": [],
@@ -4916,7 +4916,7 @@
         "testStrategy": "1. Report format: Valid markdown with summary and details\n2. File location: docs/eval-report-*.md exists after run\n3. Git: First report committed to main branch\n4. CI: Eval run produces updated report",
         "priority": "medium",
         "dependencies": [
-          "18"
+          18
         ],
         "status": "done",
         "subtasks": [],
@@ -4933,8 +4933,8 @@
         "testStrategy": "1. Config: droplet .env shows VERIFIER_ENABLED=true\n2. Health check: /health returns policy_loaded=true\n3. Grounding test: Ungrounded claim is blocked/rewritten\n4. Latency: Verify adds <500ms to response time",
         "priority": "medium",
         "dependencies": [
-          "13",
-          "19"
+          13,
+          19
         ],
         "status": "done",
         "subtasks": [],
@@ -5023,10 +5023,10 @@
         "testStrategy": "## 1. Trace Order Tests\n\n**Unit test** (`sidecar/tests/test_orchestrator_tracing.py`):\n- Assert span recording order matches planner \u2192 tool \u2192 truncator \u2192 llm \u2192 verifier \u2192 identity_guard\n- Mock Langfuse client records calls in order; verify call sequence\n- Each span has `start_time` before `end_time`\n- Parallel tool spans have overlapping time windows\n\n**Integration test**:\n- Run a full turn with all components enabled\n- Query Langfuse API for the trace\n- Assert observations array is in expected order by start_time\n\n## 2. Tool Failure Reason Tests\n\n**Unit test** (`sidecar/tests/test_orchestrator_retry.py`):\n- Simulate TimeoutError \u2192 verify `error_type=\"TimeoutError\"`, `retry_attempts=3`, `final_outcome=\"raised\"`\n- Simulate HTTPError 503 \u2192 verify `error_type=\"HTTPError\"`, includes `error_message`\n- Simulate partial success (timeout after some data) \u2192 verify `final_outcome=\"returned_partial\"`\n\n**PHI safety test**:\n- `error_message` never contains patient names, IDs, or clinical data\n- Exception messages are sanitized (generic patterns only)\n\n## 3. Trace ID Correlation Tests\n\n**Unit test** (`sidecar/tests/test_main.py`):\n- POST to `/turn` returns `X-Trace-Id` header\n- Header value matches pattern `^[a-f0-9-]{36}$` (UUID)\n- When Langfuse disabled (NullClient), header is absent or empty\n\n**PHP unit test** (`tests/phpunit/AgentProxyControllerTest.php` if exists):\n- Mock sidecar response with `X-Trace-Id` header\n- Assert PHP logs contain `trace_id=...` with correct value\n- Assert header is forwarded to browser response\n\n**Manual verification**:\n- Check PHP error_log for `[AgentForge] user=X pid=Y trace_id=Z` format\n- Paste trace_id into Langfuse UI \u2192 trace loads\n\n## 4. No-PHI Assertion Test\n\n**Automated test** (`sidecar/tests/observability/test_no_phi_in_traces.py`):\n```bash\nuv run pytest sidecar/tests/observability/test_no_phi_in_traces.py -v\n```\n\n- Test runs against real turn with pid=8 (Eula)\n- Captures all SDK calls via mock\n- Fails if any PHI pattern matches in any event payload\n- Fails if args_hash/result_hash are not 64-char hex strings\n\n## 5. Droplet Langfuse Smoke Test\n\n**Script execution**:\n```bash\nexport LANGFUSE_PUBLIC_KEY=pk-lf-...\nexport LANGFUSE_SECRET_KEY=sk-lf-...\n./scripts/smoke-test-langfuse.sh\n```\n\n**Expected output**:\n```\nTurn 1...\n  Captured trace: abc-123-def\nTurn 2...\n  Captured trace: ghi-456-jkl\nTurn 3...\n  Captured trace: mno-789-pqr\nWaiting 10s for Langfuse ingestion...\n\u2713 Trace abc-123-def: 6 spans, cost=0.0012\n\u2713 Trace ghi-456-jkl: 6 spans, cost=0.0015\n\u2713 Trace mno-789-pqr: 6 spans, cost=0.0011\n\nResults: 3 passed, 0 failed\n```\n\n**Acceptance criteria**:\n- All 3 traces found in Langfuse\n- Each trace has >0 spans\n- Each trace has cost data (from Task #14)\n- Script exits 0 on success, non-zero on failure\n\n## CI Integration\n\nAdd to `.github/workflows/` or equivalent:\n- `test_no_phi_in_traces.py` runs on every PR touching observability code\n- Smoke test runs post-deploy to droplet (manual trigger or scheduled)",
         "status": "done",
         "dependencies": [
-          "4",
-          "6",
-          "8",
-          "13"
+          4,
+          6,
+          8,
+          13
         ],
         "priority": "medium",
         "subtasks": [
@@ -5401,7 +5401,7 @@
         "dependencies": [
           2
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5409,9 +5409,10 @@
             "description": "Create sidecar/src/agentforge/schemas/intake.py and implement the Demographic Pydantic model with field, value, and citation reference.",
             "dependencies": [],
             "details": "Create sidecar/src/agentforge/schemas/intake.py with proper module docstring explaining this schema handles intake form extraction output. Import Citation from agentforge.schemas.citation (Task 2 dependency). Define Demographic(BaseModel) with model_config = ConfigDict(frozen=True) for immutability. Fields: field (str, required) - the demographic field name like 'date_of_birth' or 'phone', value (str, required) - the extracted value, citation (Citation, required) - provenance reference. This follows the frozen Pydantic pattern used in tools/dtos.py.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit test: Demographic creation with all required fields passes. Test that field, value, and citation are required (ValidationError if missing). Test frozen immutability - assignment raises TypeError.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:24.812Z"
           },
           {
             "id": 2,
@@ -5421,9 +5422,10 @@
               1
             ],
             "details": "In schemas/intake.py, add three models with frozen=True config: (1) MedicationEntry(BaseModel): name (str, required), dose (str | None = None), frequency (str | None = None), citation (Citation, required). (2) AllergyEntry(BaseModel): substance (str, required), reaction (str | None = None), severity (str | None = None), citation (Citation, required). (3) FamilyHistoryEntry(BaseModel): relative (str, required) - relationship like 'mother' or 'sibling', condition (str, required) - the health condition, citation (Citation, required). Each model represents one extractable entry from the intake form with optional detail fields.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) MedicationEntry requires name and citation, dose/frequency optional. (2) AllergyEntry requires substance and citation, reaction/severity optional (can be None). (3) FamilyHistoryEntry requires relative, condition, and citation.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:26.264Z"
           },
           {
             "id": 3,
@@ -5434,9 +5436,10 @@
               2
             ],
             "details": "In schemas/intake.py, create IntakeFormExtraction(BaseModel) with frozen=True. Fields: document_id (int, required), patient_id (int, required), chief_concern (str | None = None), chief_concern_citation (Citation | None = None), demographics (list[Demographic] = Field(default_factory=list)), medications (list[MedicationEntry] = Field(default_factory=list)), allergies (list[AllergyEntry] = Field(default_factory=list)), family_history (list[FamilyHistoryEntry] = Field(default_factory=list)), extraction_confidence (float with Field(ge=0.0, le=1.0)), unsupported_fields (list[str] = Field(default_factory=list)) for tracking fields the extractor couldn't parse confidently. Note: chief_concern and chief_concern_citation are both optional but paired - the citation is the provenance for the chief concern text.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) IntakeFormExtraction with all empty lists is valid. (2) chief_concern without chief_concern_citation is valid (both optional). (3) extraction_confidence validates 0.0-1.0 range. (4) All four list types accept multiple entries. (5) document_id and patient_id are required.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:27.889Z"
           },
           {
             "id": 4,
@@ -5448,9 +5451,10 @@
               3
             ],
             "details": "Update sidecar/src/agentforge/schemas/__init__.py to add imports from .intake module: Demographic, MedicationEntry, AllergyEntry, FamilyHistoryEntry, IntakeFormExtraction. Add these to the __all__ list for explicit public API. This enables clean imports like 'from agentforge.schemas import IntakeFormExtraction, MedicationEntry' that downstream tasks will use. Follow the existing pattern of citation.py exports (SourceType, PageBBox, Citation).",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify imports work from package-level (agentforge.schemas.IntakeFormExtraction) and absolute (agentforge.schemas.intake.IntakeFormExtraction). Test that all 5 intake models are accessible from the package root.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:29.717Z"
           },
           {
             "id": 5,
@@ -5463,20 +5467,22 @@
               4
             ],
             "details": "Create test file following patterns from test_schemas_citation.py and test_schemas_lab.py. Test cases: (1) IntakeFormExtraction with all empty lists is valid, (2) MedicationEntry requires name and citation - ValidationError without, (3) chief_concern without chief_concern_citation is valid - both are optional, (4) AllergyEntry severity can be None, (5) All four list types accept multiple entries - test with 3+ items each, (6) FamilyHistoryEntry requires relative and condition, (7) extraction_confidence rejects values outside 0.0-1.0, (8) Demographic requires field and value, (9) Frozen immutability - all models reject attribute assignment, (10) JSON round-trip with model_dump_json/model_validate_json preserves all data. Use pytest.mark.parametrize for required field validation tests.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run pytest sidecar/tests/test_schemas_intake.py -v. All tests must pass covering the full validation matrix from the task test strategy: empty lists valid, required fields enforced, optional fields accept None, multiple entries per list type.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:31.452Z"
           }
         ],
         "complexity": 3,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create sidecar/src/agentforge/schemas/intake.py with Demographic, MedicationEntry, AllergyEntry, FamilyHistoryEntry models (each with Citation reference), and IntakeFormExtraction model aggregating all fields including chief_concern, demographics list, medications list, allergies list, family_history list, extraction_confidence, and unsupported_fields. Add exports and unit tests."
+        "expansionPrompt": "Create sidecar/src/agentforge/schemas/intake.py with Demographic, MedicationEntry, AllergyEntry, FamilyHistoryEntry models (each with Citation reference), and IntakeFormExtraction model aggregating all fields including chief_concern, demographics list, medications list, allergies list, family_history list, extraction_confidence, and unsupported_fields. Add exports and unit tests.",
+        "updatedAt": "2026-05-05T15:19:31.452Z"
       },
       {
         "id": 5,
         "title": "Seed AgentForge Intake Questionnaire via Doctrine Migration",
         "description": "Create a Doctrine migration that seeds the canonical 'AgentForge Intake Form' Questionnaire resource into questionnaire_repository, required by FhirQuestionnaireResponseFormService for intake form persistence.",
-        "status": "pending",
+        "status": "done",
         "dependencies": [],
         "priority": "high",
         "details": "1. Create db/Migrations/Version20260504000001_seed_agentforge_intake_questionnaire.php at the project root (NOT under the module).\n\n2. Use SELECT-then-INSERT/UPDATE pattern for idempotency (the table has no unique index on source_url):\n   - Use Doctrine\\DBAL\\Connection ($this->connection) to query: SELECT id FROM questionnaire_repository WHERE source_url = :url\n   - If 0 rows returned: INSERT new row\n   - If 1 row returned: UPDATE existing row (or no-op for write-once semantics)\n   - Use executeStatement() with parameter binding for safety\n\n3. Seed data:\n   - source_url: 'https://agentforge.openemr.org/Questionnaire/intake-form'\n   - name: 'AgentForge Intake Form'\n   - status: 'active'\n   - type: 'Questionnaire'\n   - questionnaire: JSON-encoded FHIR Questionnaire with item set matching IntakeFormExtraction fields:\n     * chief_concern (text item)\n     * demographics (group item)\n     * medications (group item, repeating)\n     * allergies (group item, repeating)\n     * family_history (group item, repeating)\n\n4. Add down() method:\n   - DELETE FROM questionnaire_repository WHERE source_url = :url\n   - Use parameter binding\n\n5. Follow existing migration conventions (see db/Migrations/Version20260430000001.php for structure).\n\n6. Document the canonical URL in module README.",
@@ -5488,9 +5494,10 @@
             "description": "Create db/Migrations/Version20260504000001_seed_agentforge_intake_questionnaire.php following the project's migration conventions.",
             "dependencies": [],
             "details": "Use namespace OpenEMR\\Core\\Migrations; extend AbstractMigration. Include proper file docblock with @package, @link, @author, @copyright, @license. Implement getDescription() returning 'Seed AgentForge Intake Form questionnaire for intake form persistence'.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Migration file parses without syntax errors and appears in doctrine:migrations:status.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:33.799Z"
           },
           {
             "id": 2,
@@ -5500,9 +5507,10 @@
               1
             ],
             "details": "Use $this->connection->executeQuery() to SELECT id FROM questionnaire_repository WHERE source_url = :url with the canonical URL. If fetchOne() returns false/null (no rows), execute INSERT. If row exists, execute UPDATE (or skip for write-once). Use executeStatement() for modifications. Never use ON DUPLICATE KEY UPDATE since source_url has no unique index.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run migration twice in sequence; verify exactly one row exists with the canonical source_url after both runs.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:35.342Z"
           },
           {
             "id": 3,
@@ -5512,9 +5520,10 @@
               1
             ],
             "details": "Build FHIR R4 Questionnaire resource with: resourceType=Questionnaire, url=canonical URL, status=active, name='AgentForge Intake Form'. Items: chief_concern (string type), demographics (group with nested items), medications (group, repeats=true), allergies (group, repeats=true), family_history (group, repeats=true). JSON-encode for storage in questionnaire column.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Validate generated JSON against FHIR Questionnaire schema. Verify all IntakeFormExtraction fields have corresponding linkIds.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:36.803Z"
           },
           {
             "id": 4,
@@ -5524,9 +5533,10 @@
               1
             ],
             "details": "Execute DELETE FROM questionnaire_repository WHERE source_url = :url using executeStatement() with parameter binding. This allows clean rollback of the migration.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run up() then down(); verify row no longer exists in questionnaire_repository.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:38.544Z"
           },
           {
             "id": 5,
@@ -5537,14 +5547,16 @@
               3
             ],
             "details": "After running migration, test that QuestionnaireService or FhirQuestionnaireFormService can look up the questionnaire by source_url. Verify the questionnaire JSON parses correctly as a FHIR Questionnaire resource.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Query questionnaire_repository by source_url, load via QuestionnaireService, confirm valid FHIR Questionnaire object is returned.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:40.227Z"
           }
         ],
         "complexity": 5,
         "recommendedSubtasks": 5,
-        "expansionPrompt": "Already has 5 subtasks defined: 1) Create migration file with proper namespace/class structure, 2) Implement SELECT-then-INSERT/UPDATE idempotency pattern in up(), 3) Define FHIR Questionnaire JSON structure matching IntakeFormExtraction, 4) Implement down() method with parameterized DELETE, 5) Verify migration integration with FhirQuestionnaireResponseFormService"
+        "expansionPrompt": "Already has 5 subtasks defined: 1) Create migration file with proper namespace/class structure, 2) Implement SELECT-then-INSERT/UPDATE idempotency pattern in up(), 3) Define FHIR Questionnaire JSON structure matching IntakeFormExtraction, 4) Implement down() method with parameterized DELETE, 5) Verify migration integration with FhirQuestionnaireResponseFormService",
+        "updatedAt": "2026-05-05T15:19:40.227Z"
       },
       {
         "id": 6,
@@ -5629,7 +5641,7 @@
         "testStrategy": "Unit test with mock Document: (1) Valid JWT + valid document_id returns bytes, (2) Valid JWT + wrong patient_id returns 403, (3) Invalid JWT returns 401, (4) Non-existent document_id returns 404, (5) Response Content-Type matches document MIME type.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5637,9 +5649,10 @@
             "description": "Create the PHP entry point file that handles HTTP requests, initializes the environment, and wires dependencies to the controller.",
             "dependencies": [],
             "details": "Create public/internal/get_document_bytes.php following the exact pattern from labs.php. Include: (1) $ignoreAuth = true before globals.php require, (2) EnvLoader::load() call, (3) Apache Authorization header workaround for mod_php, (4) AGENTFORGE_JWT_SECRET validation with 500 error if missing, (5) Doctrine DBAL connection setup from OEGlobalsBag sqlconf, (6) ServiceContainer::getClock() for PSR-20 clock, (7) Wire InternalDocumentBytesController with AgentJwtValidator and DocumentBytesRepository, (8) Call controller->show(Request::createFromGlobals()) and send response. The docblock should describe JWT validation for document byte retrieval scoped to patient_id.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Manual HTTP test with curl: verify 500 when AGENTFORGE_JWT_SECRET missing, verify 401 when no Authorization header, verify endpoint routes correctly when JWT is valid.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:41.848Z"
           },
           {
             "id": 2,
@@ -5649,9 +5662,10 @@
               1
             ],
             "details": "Create src/Controllers/InternalDocumentBytesController.php in the AgentForge module namespace. Pattern after InternalLabsController. Constructor accepts AgentJwtValidator and DocumentBytesRepository. The show() method: (1) Check Authorization header, return 401 JSON if missing, (2) Call validator->validateBearer(), catch JwtException|RuntimeException and return 401, (3) Get document_id from query int param, return 400 if <= 0, (4) Call repository->getDocumentWithBytes(document_id), (5) If null return 404 JSON {'error': 'Document not found'}, (6) If document.foreign_id !== claims.patientId return 403 JSON {'error': 'Document does not belong to patient'}, (7) Return binary Response with Content-Type header from document mimetype, Content-Disposition: inline. Do not set caching headers.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit test with mock repository: (1) Missing Authorization returns 401, (2) Invalid JWT returns 401, (3) Missing document_id returns 400, (4) Non-existent document returns 404, (5) Wrong patient_id returns 403, (6) Valid request returns bytes with correct Content-Type.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:44.983Z"
           },
           {
             "id": 3,
@@ -5659,9 +5673,10 @@
             "description": "Implement repository class that loads document metadata and retrieves file bytes via C_Document::retrieve_action API.",
             "dependencies": [],
             "details": "Create src/Services/DocumentBytesRepository.php in the AgentForge module. Constructor accepts Doctrine\\DBAL\\Connection. Method getDocumentWithBytes(int $documentId): ?DocumentBytesResult. Query documents table for id, foreign_id (patient_id), name, mimetype where deleted=0. If no row return null. Use C_Document class with onReturnRetrieveKey() + retrieve_action($pid, $did, true, true, true) to get raw bytes (following DocumentService::getFile pattern). Return a DocumentBytesResult DTO with properties: documentId, patientId (from foreign_id), filename, mimetype, bytes (string). Handle encrypted documents transparently via C_Document.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test with database: (1) Non-existent document_id returns null, (2) Deleted document returns null, (3) Valid document returns DTO with correct patientId from foreign_id, (4) Bytes are successfully retrieved and match expected content.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:46.992Z"
           },
           {
             "id": 4,
@@ -5669,9 +5684,10 @@
             "description": "Define an immutable DTO class that encapsulates document metadata and binary content returned by the repository.",
             "dependencies": [],
             "details": "Create src/Services/DocumentBytesResult.php as a final readonly class in OpenEMR\\Modules\\AgentForge\\Services namespace. Properties: int $documentId, int $patientId, string $filename, string $mimetype, string $bytes. Use constructor property promotion. Add proper docblock with @package OpenEMR header. This DTO separates repository concerns from controller concerns and enables type-safe parameter passing.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit test: (1) Constructor accepts all required parameters, (2) All properties are accessible, (3) Class is readonly and immutable.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:48.765Z"
           },
           {
             "id": 5,
@@ -5684,14 +5700,16 @@
               4
             ],
             "details": "Verify the endpoint is accessible at /agentforge/internal/get_document_bytes.php (file-based routing already handled by public/ directory). Write tests in tests/ covering: (1) Valid JWT + valid document_id returns bytes with Content-Type matching mimetype, (2) Valid JWT + document belonging to different patient returns 403, (3) Invalid/expired JWT returns 401, (4) Non-existent document_id returns 404, (5) No Authorization header returns 401, (6) Response Content-Type header matches document's stored MIME type (test with application/pdf and image/png), (7) No Cache-Control or caching headers are set on response. Update module's README or documentation if endpoint documentation exists.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "End-to-end integration tests using HTTP client: test all 5 specified scenarios (valid bytes, 403 wrong patient, 401 invalid JWT, 404 missing doc, correct MIME types). Mock JWT generation for test tokens.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:50.384Z"
           }
         ],
         "complexity": 4,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create public/internal/get_document_bytes.php following existing internal/*.php pattern (labs.php as template). Validate JWT using AgentJwtValidator, extract patient_id from claims, accept document_id from query parameter, load Document and verify patient ownership, read bytes via Document API, return with correct Content-Type header. Handle 401/403/404 error cases."
+        "expansionPrompt": "Create public/internal/get_document_bytes.php following existing internal/*.php pattern (labs.php as template). Validate JWT using AgentJwtValidator, extract patient_id from claims, accept document_id from query parameter, load Document and verify patient ownership, read bytes via Document API, return with correct Content-Type header. Handle 401/403/404 error cases.",
+        "updatedAt": "2026-05-05T15:19:50.384Z"
       },
       {
         "id": 8,
@@ -6039,7 +6057,7 @@
         "id": 12,
         "title": "Implement JWT-Validated QuestionnaireResponse Persistence Endpoint",
         "description": "Create oe-module-agentforge/public/internal/persist_questionnaire_response.php that accepts IntakeFormExtraction JSON and writes via FhirQuestionnaireResponseFormService.",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           4,
           5,
@@ -6055,9 +6073,10 @@
             "description": "Implement the controller that handles POST requests, validates JWT via AgentJwtValidator, verifies triple patient_id match (JWT \u2194 request \u2194 document owner), and orchestrates the persistence of QuestionnaireResponse.",
             "dependencies": [],
             "details": "Create src/Controllers/PersistQuestionnaireResponseController.php:\n- Inject AgentJwtValidator, DocumentOwnershipVerifier (from Task 8), and FhirQuestionnaireResponseFormService\n- persist(Request $request): Response method\n- Validate JWT via AgentJwtValidator::validateBearer() \u2192 extract ValidatedClaims.patientId\n- Parse JSON body, extract patient_id and document_id from IntakeFormExtraction payload\n- Call DocumentOwnershipVerifier::getPatientIdForDocument(document_id) to get document owner's patient_id\n- Triple check: JWT.patientId == request.patient_id == document.foreign_id\n- Return 403 JsonResponse on ANY mismatch with generic error message (no data leakage)\n- On success, delegate to FhirQuestionnaireResponseFormService for persistence",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests with mocked dependencies: (1) JWT.pid != request.pid \u2192 403, no writes, no audit; (2) JWT.pid != doc.pid \u2192 403, no writes, no audit; (3) document not found \u2192 403; (4) all matching \u2192 calls FhirQuestionnaireResponseFormService",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:52.008Z"
           },
           {
             "id": 2,
@@ -6067,9 +6086,10 @@
               1
             ],
             "details": "In PersistQuestionnaireResponseController or as a pre-check in the endpoint:\n- Query questionnaire_repository for source_url matching the canonical AgentForge Intake Form URL\n- If not found, return HTTP 500 with error 'Seed Questionnaire missing'\n- Cache the result for the request lifecycle (no need to re-query per request)\n- Follow fail-closed principle: if the seed doesn't exist, refuse all persist operations",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration tests: (1) with seed present, request proceeds; (2) with seed absent, returns 500 without writing anything",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:53.811Z"
           },
           {
             "id": 3,
@@ -6079,9 +6099,10 @@
               1
             ],
             "details": "Create transformation method or service:\n- Map IntakeFormExtraction fields to QuestionnaireResponse.item[] with matching linkIds from seed Questionnaire\n- Set questionnaire reference to the canonical URL\n- Set subject reference to Patient/{patient_id}\n- Set authored timestamp to current datetime\n- Set status to 'completed'\n- Map demographics, medications, allergies, family_history to nested item answers\n- Preserve citation data in extensions or separate tracking for UI display",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) transformation produces valid FHIR QuestionnaireResponse, (2) all IntakeFormExtraction fields are mapped, (3) questionnaire reference matches canonical URL",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:55.351Z"
           },
           {
             "id": 4,
@@ -6093,9 +6114,10 @@
               3
             ],
             "details": "Create public/internal/persist_questionnaire_response.php following existing pattern:\n- Set $ignoreAuth = true, require globals.php, load EnvLoader\n- Handle Apache Authorization header stripping workaround\n- Validate AGENTFORGE_JWT_SECRET env var\n- Wire up Doctrine connection from OEGlobalsBag sqlconf\n- Instantiate DocumentOwnershipVerifier (reuse from Task 8), PersistQuestionnaireResponseController\n- Reject non-POST requests with 405\n- Call controller->persist(Request::createFromGlobals())\n- Send response",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test: endpoint accessible via POST, returns correct responses for valid/invalid requests",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:56.816Z"
           },
           {
             "id": 5,
@@ -6105,9 +6127,10 @@
               4
             ],
             "details": "In PersistQuestionnaireResponseController:\n- After successful persistence via FhirQuestionnaireResponseFormService, fire EventAuditLogger event 'agentforge.questionnaire_persist'\n- Include attributes: questionnaire_response_id, extraction_status, patient_id, document_id\n- Ensure audit event is NOT fired on 403 patient mismatch or other failures\n- Follow existing EventAuditLogger patterns in the codebase (see BreakglassAuditWriter for reference)",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test: (1) successful persist fires audit event with correct attributes, (2) 403 rejection does NOT fire audit event",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:19:58.995Z"
           },
           {
             "id": 6,
@@ -6117,14 +6140,16 @@
               4
             ],
             "details": "Create tests/Tests/Isolated/Modules/AgentForge/PersistQuestionnaireResponsePatientScopingTest.php:\n- Test JWT.patientId != request.patient_id \u2192 403, verify no QuestionnaireResponse written, verify no audit event\n- Test JWT.patientId != documents[doc_id].foreign_id \u2192 403 (catches replayed JWT with forged document_id)\n- Test document_id references non-existent document \u2192 403\n- Test document_id references deleted document (deleted=1) \u2192 403\n- Test all three matching \u2192 200, QuestionnaireResponse created, audit event fired\n- Use test fixtures with controlled patient/document relationships\n- Also verify patient_data, medications, allergies, family_history tables remain unchanged",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "These ARE the tests - verify all 403 scenarios prevent data writes and audit events, verify success path completes fully",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T15:20:00.677Z"
           }
         ],
         "complexity": 7,
         "recommendedSubtasks": 6,
-        "expansionPrompt": "Already has 6 subtasks defined: 1) Create PersistQuestionnaireResponseController with triple patient verification, 2) Assert AgentForge Intake Questionnaire seed exists at startup, 3) Transform IntakeFormExtraction to FHIR QuestionnaireResponse structure, 4) Create persist_questionnaire_response.php endpoint, 5) Integrate EventAuditLogger for questionnaire_persist events, 6) Add comprehensive integration tests for patient scoping"
+        "expansionPrompt": "Already has 6 subtasks defined: 1) Create PersistQuestionnaireResponseController with triple patient verification, 2) Assert AgentForge Intake Questionnaire seed exists at startup, 3) Transform IntakeFormExtraction to FHIR QuestionnaireResponse structure, 4) Create persist_questionnaire_response.php endpoint, 5) Integrate EventAuditLogger for questionnaire_persist events, 6) Add comprehensive integration tests for patient scoping",
+        "updatedAt": "2026-05-05T15:20:00.677Z"
       },
       {
         "id": 13,
@@ -7962,9 +7987,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-05T04:23:00.844Z",
+      "lastModified": "2026-05-05T15:20:00.677Z",
       "taskCount": 37,
-      "completedCount": 2,
+      "completedCount": 7,
       "tags": [
         "week2"
       ]
