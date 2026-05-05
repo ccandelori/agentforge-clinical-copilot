@@ -18,7 +18,7 @@ S7.3 ("What is never logged").
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -79,6 +79,49 @@ class LangfuseClient(Protocol):
         latency_ms: int,
         cost_usd: float | None = None,
     ) -> None: ...
+
+    def record_extraction_call(
+        self,
+        trace: TraceHandle,
+        *,
+        model: str,
+        tool_name: str,
+        input_tokens: int,
+        output_tokens: int,
+        latency_ms: int,
+        schema_validation: Literal["pass", "fail"],
+        page_count: int,
+        unsupported_fields_count: int,
+        extraction_confidence: float | None = None,
+        cost_usd: float | None = None,
+    ) -> None:
+        """Record one vision-extraction call (Task 11/13 ``attach_and_extract``).
+
+        Like :meth:`record_llm_call`, this method is **structurally
+        PHI-safe**: it accepts only the call's metadata shape, never
+        the prompt body, the rendered images, or the extracted fields'
+        text. The four extraction-specific fields beyond the LLM-call
+        baseline are all bounded:
+
+        * ``tool_name`` is the closed two-element set
+          ``"emit_lab_pdf_extraction"`` / ``"emit_intake_form_extraction"``
+          (one per :class:`VisionContract`); not patient data.
+        * ``schema_validation`` is the closed literal pair
+          ``"pass"`` / ``"fail"`` reflecting whether
+          :meth:`pydantic.BaseModel.model_validate` succeeded on the
+          tool_use payload.
+        * ``page_count`` is the number of rendered PDF pages, not
+          their content.
+        * ``unsupported_fields_count`` is the **length** of the
+          extraction's ``unsupported_fields`` list — not the field
+          names themselves, which could leak intent (e.g. "syphilis"
+          if the form had a positive test the model couldn't
+          confidently localize).
+        * ``extraction_confidence`` is the worker's overall
+          self-rating in [0, 1]; ``None`` when validation failed
+          before a confidence number existed.
+        """
+        ...
 
     def record_planner_decision(
         self,

@@ -15,6 +15,7 @@ real Langfuse instance.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from agentforge.observability.hmac_hash import pseudonymize
 from agentforge.observability.protocols import TraceHandle
@@ -78,6 +79,35 @@ class NullLangfuseClient:
         cost_usd: float | None = None,
     ) -> None:
         del trace, model, prompt_tokens, completion_tokens, latency_ms, cost_usd
+
+    def record_extraction_call(
+        self,
+        trace: TraceHandle,
+        *,
+        model: str,
+        tool_name: str,
+        input_tokens: int,
+        output_tokens: int,
+        latency_ms: int,
+        schema_validation: Literal["pass", "fail"],
+        page_count: int,
+        unsupported_fields_count: int,
+        extraction_confidence: float | None = None,
+        cost_usd: float | None = None,
+    ) -> None:
+        del (
+            trace,
+            model,
+            tool_name,
+            input_tokens,
+            output_tokens,
+            latency_ms,
+            schema_validation,
+            page_count,
+            unsupported_fields_count,
+            extraction_confidence,
+            cost_usd,
+        )
 
     def record_planner_decision(
         self,
