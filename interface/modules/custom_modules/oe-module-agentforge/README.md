@@ -72,6 +72,37 @@ which makes it redundant with the InnoDB clustered index. It was added
 per the original task spec for parity; whether to drop it is tracked
 as Taskmaster Task 49 (low priority, post-MVP).
 
+## Pre-deploy gate: canonical intake-form Questionnaire
+
+The intake-form persistence flow (W2 Task 12) writes a
+`QuestionnaireResponse` against a single canonical `Questionnaire` row
+identified by URL. That row must exist before any intake-form upload
+can be persisted.
+
+**Canonical URL:** `https://agentforge.openemr.org/Questionnaire/intake-form`
+
+### Applying the seed
+
+| Install type | How the Questionnaire row gets seeded |
+|--------------|---------------------------------------|
+| Fresh OpenEMR install | Apply the W2 Doctrine migration: `ENVIRONMENT=development ./cli migrations:migrate --no-interaction` |
+| Existing OpenEMR install | Same as above — Doctrine migrations are not auto-applied during upgrades (issue #10708) |
+
+Migration: `db/Migrations/Version20260505000001.php` — seeds one row in
+`questionnaire_repository` with `source_url` set to the canonical URL,
+a name of `AgentForge Intake Form`, status `active`, and a FHIR R4
+Questionnaire JSON whose `item` set mirrors the `IntakeFormExtraction`
+Pydantic model (chief_concern, demographics, medications, allergies,
+family_history).
+
+### Idempotency
+
+`questionnaire_repository.source_url` has no DB-enforced unique index,
+so the migration uses a `SELECT`-then-`INSERT`-or-`UPDATE` pattern in
+`up()`. Re-running over an existing canonical row updates that row in
+place rather than producing a duplicate. `down()` deletes by
+`source_url` so the rollback is scoped to the canonical row only.
+
 ## Layout
 
 ```
