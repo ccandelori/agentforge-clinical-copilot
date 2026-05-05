@@ -44,6 +44,7 @@ from pathlib import Path
 
 from agentforge.tools.attach_and_extract import (
     DEFAULT_DPI,
+    LAB_CONTRACT,
     PdfRenderer,
     VisionExtractor,
 )
@@ -65,7 +66,7 @@ async def run(args: argparse.Namespace) -> int:
     )
     print(f"Rendered {len(pages)} page(s): {page_summaries}")
 
-    extractor = VisionExtractor()
+    extractor = VisionExtractor(contract=LAB_CONTRACT)
     print("Calling Claude vision...")
     result = await extractor.extract(
         pages=pages,

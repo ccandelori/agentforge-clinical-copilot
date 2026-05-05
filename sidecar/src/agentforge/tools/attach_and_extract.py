@@ -1,5 +1,6 @@
-"""W2 Task 11: ``attach_and_extract`` — vision-based extraction of
-scanned lab PDFs into a structured ``LabPdfExtraction`` payload.
+"""W2 Tasks 11 + 13: ``attach_and_extract`` — vision-based extraction of
+scanned PDFs (lab results, intake forms) into structured Pydantic
+payloads.
 
 The tool's pipeline is:
 
@@ -9,17 +10,22 @@ The tool's pipeline is:
   2. ``VisionExtractor.extract(images, document_id, patient_id)`` —
      POST the images plus a strict-schema prompt to Claude vision.
      The response is forced through a tool-use shape so the model
-     emits structured JSON we can ``LabPdfExtraction.model_validate``
-     directly. Each lab value's ``citation.page_bbox`` carries the
-     model's stated bounding box (normalized 0..1 page coordinates).
+     emits structured JSON we can validate against the contract's
+     Pydantic class directly. Each value's ``citation.page_bbox``
+     carries the model's stated bounding box (normalized 0..1 page
+     coordinates).
   3. The caller persists the validated extraction by POSTing it to
-     ``persist_lab_result.php`` (Task 8). The persistence step lives
-     outside this module so the extraction stays unit-testable
-     without spinning up Apache.
+     the appropriate endpoint (``persist_lab_result.php`` for labs,
+     ``persist_questionnaire_response.php`` for intake forms). The
+     persistence step lives outside this module so the extraction
+     stays unit-testable without spinning up Apache.
 
-The intake-form variant (Task 13) extends ``VisionExtractor`` with a
-different prompt + response schema (``IntakeFormExtraction``); the
-renderer is identical.
+The lab vs intake variants share the renderer and the extractor body;
+they differ only in the prompt + tool spec + Pydantic schema. Those
+three differences are bundled into a :class:`VisionContract`, and
+:class:`VisionExtractor` is parameterized over the contract. The
+module exposes :data:`LAB_CONTRACT` and :data:`INTAKE_CONTRACT`
+constants for the two W2 doc types.
 
 Security constraints honored:
 
@@ -52,8 +58,9 @@ from anthropic.types import (
     ToolParam,
     ToolUseBlock,
 )
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from agentforge.schemas.intake import IntakeFormExtraction
 from agentforge.schemas.lab import LabPdfExtraction
 
 logger = logging.getLogger(__name__)
@@ -139,27 +146,47 @@ class PdfRenderer:
 
 
 # ---------------------------------------------------------------------------
-# VisionExtractor
+# VisionContract — bundles the per-doc-type configuration
 # ---------------------------------------------------------------------------
-
-# Anthropic tool name used to coerce structured output. The model never
-# "sees" this — it's the JSON-shape-as-tool pattern.
-_EXTRACT_TOOL_NAME = "emit_lab_pdf_extraction"
 
 # Default model, env-overridable so we can pin/upgrade without code changes.
 DEFAULT_VISION_MODEL = "claude-sonnet-4-5-20250929"
 
 
-def _build_tool_spec() -> ToolParam:
-    """Tool spec that mirrors LabPdfExtraction's wire shape.
+@dataclass(frozen=True)
+class VisionContract[T: BaseModel]:
+    """Per-document-type configuration for :class:`VisionExtractor`.
 
-    Defining the schema inline (rather than reflecting it from the
-    Pydantic class) keeps the prompt's structural contract pinned —
-    a Pydantic field rename shouldn't silently reshape what the LLM
-    emits without us noticing in tests.
+    Bundles the four pieces that differ between vision flows:
+
+    - ``tool_name``: the Anthropic tool the model is forced to call
+      (via ``tool_choice``). Distinct names per flow keep the
+      ``_first_tool_use`` filter unambiguous if the contracts ever
+      coexist in one request.
+    - ``tool_spec``: the JSON schema mirroring the wire shape of
+      ``T``. Defined inline (not reflected from the Pydantic class)
+      so a field rename can't silently reshape the LLM emission
+      contract without a test failure.
+    - ``system_prompt``: extraction-task instructions, including the
+      anti-invention rules and the bbox-confidence floor reminder.
+    - ``extraction_class``: the Pydantic model used to validate the
+      model's tool_use payload.
+
+    Frozen so contracts can be shared as module-level constants
+    without risk of mutation. Generic over ``T`` so the extractor's
+    return type binds to the contract's schema class.
     """
+
+    tool_name: str
+    tool_spec: ToolParam
+    system_prompt: str
+    extraction_class: type[T]
+
+
+def _build_lab_tool_spec() -> ToolParam:
+    """Tool spec that mirrors :class:`LabPdfExtraction`'s wire shape."""
     return {
-        "name": _EXTRACT_TOOL_NAME,
+        "name": "emit_lab_pdf_extraction",
         "description": (
             "Emit the structured lab-PDF extraction. Call this exactly "
             "once with the values you can confidently extract from the "
@@ -206,46 +233,7 @@ def _build_tool_spec() -> ToolParam:
                                     "unknown",
                                 ],
                             },
-                            "citation": {
-                                "type": "object",
-                                "required": [
-                                    "source_type",
-                                    "source_id",
-                                    "page_or_section",
-                                    "field_or_chunk_id",
-                                    "quote_or_value",
-                                    "page_bbox",
-                                ],
-                                "properties": {
-                                    "source_type": {
-                                        "type": "string",
-                                        "const": "lab_pdf",
-                                    },
-                                    "source_id": {"type": "string"},
-                                    "page_or_section": {"type": "string"},
-                                    "field_or_chunk_id": {"type": "string"},
-                                    "quote_or_value": {"type": "string"},
-                                    "page_bbox": {
-                                        "type": "object",
-                                        "required": [
-                                            "page",
-                                            "x0",
-                                            "y0",
-                                            "x1",
-                                            "y1",
-                                            "bbox_confidence",
-                                        ],
-                                        "properties": {
-                                            "page": {"type": "integer", "minimum": 1},
-                                            "x0": {"type": "number"},
-                                            "y0": {"type": "number"},
-                                            "x1": {"type": "number"},
-                                            "y1": {"type": "number"},
-                                            "bbox_confidence": {"type": "number"},
-                                        },
-                                    },
-                                },
-                            },
+                            "citation": _citation_schema(source_type="lab_pdf"),
                         },
                     },
                 },
@@ -259,7 +247,142 @@ def _build_tool_spec() -> ToolParam:
     }
 
 
-_SYSTEM_PROMPT = (
+def _build_intake_tool_spec() -> ToolParam:
+    """Tool spec that mirrors :class:`IntakeFormExtraction`'s wire shape.
+
+    The four list sections (demographics, medications, allergies,
+    family_history) line up 1:1 with the canonical FHIR Questionnaire
+    seeded by Task 5. ``chief_concern`` and ``chief_concern_citation``
+    are both optional (a blank intake form is valid; a citation-less
+    chief concern is the "extracted but bbox confidence below floor"
+    shape — schema doesn't pair them, the worker's caller does).
+    """
+    citation_schema = _citation_schema(source_type="intake_form")
+    return {
+        "name": "emit_intake_form_extraction",
+        "description": (
+            "Emit the structured intake-form extraction. Call this "
+            "exactly once with the demographics, medications, "
+            "allergies, family-history entries, and chief concern you "
+            "can confidently extract from the PDF pages provided. Every "
+            "structured entry MUST carry a citation whose page_bbox "
+            "refers to the rectangular region of the page where the "
+            "value was read; bbox coordinates are normalized to [0, 1] "
+            "(top-left origin) and bbox_confidence must be at or above "
+            "0.7 — entries you cannot localize that confidently belong "
+            "in unsupported_fields, NOT in the structured lists."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": [
+                "document_id",
+                "patient_id",
+                "extraction_confidence",
+            ],
+            "properties": {
+                "document_id": {"type": "integer"},
+                "patient_id": {"type": "integer"},
+                "chief_concern": {"type": ["string", "null"]},
+                "chief_concern_citation": {
+                    "anyOf": [citation_schema, {"type": "null"}],
+                },
+                "demographics": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["field", "value", "citation"],
+                        "properties": {
+                            "field": {"type": "string"},
+                            "value": {"type": "string"},
+                            "citation": citation_schema,
+                        },
+                    },
+                },
+                "medications": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["name", "citation"],
+                        "properties": {
+                            "name": {"type": "string"},
+                            "dose": {"type": ["string", "null"]},
+                            "frequency": {"type": ["string", "null"]},
+                            "citation": citation_schema,
+                        },
+                    },
+                },
+                "allergies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["substance", "citation"],
+                        "properties": {
+                            "substance": {"type": "string"},
+                            "reaction": {"type": ["string", "null"]},
+                            "severity": {"type": ["string", "null"]},
+                            "citation": citation_schema,
+                        },
+                    },
+                },
+                "family_history": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["relative", "condition", "citation"],
+                        "properties": {
+                            "relative": {"type": "string"},
+                            "condition": {"type": "string"},
+                            "citation": citation_schema,
+                        },
+                    },
+                },
+                "extraction_confidence": {"type": "number"},
+                "unsupported_fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+    }
+
+
+def _citation_schema(*, source_type: str) -> dict[str, object]:
+    """Inline citation sub-schema. Shared between lab and intake tool
+    specs since the citation contract is uniform across scanned-source
+    extractions; ``source_type`` is the only per-flow constant."""
+    return {
+        "type": "object",
+        "required": [
+            "source_type",
+            "source_id",
+            "page_or_section",
+            "field_or_chunk_id",
+            "quote_or_value",
+            "page_bbox",
+        ],
+        "properties": {
+            "source_type": {"type": "string", "const": source_type},
+            "source_id": {"type": "string"},
+            "page_or_section": {"type": "string"},
+            "field_or_chunk_id": {"type": "string"},
+            "quote_or_value": {"type": "string"},
+            "page_bbox": {
+                "type": "object",
+                "required": ["page", "x0", "y0", "x1", "y1", "bbox_confidence"],
+                "properties": {
+                    "page": {"type": "integer", "minimum": 1},
+                    "x0": {"type": "number"},
+                    "y0": {"type": "number"},
+                    "x1": {"type": "number"},
+                    "y1": {"type": "number"},
+                    "bbox_confidence": {"type": "number"},
+                },
+            },
+        },
+    }
+
+
+_LAB_SYSTEM_PROMPT = (
     "You are a medical-record extraction assistant. You are given the "
     "rendered pages of a scanned lab-result PDF. Extract every lab value "
     "you can ground in the document into a structured emission via the "
@@ -282,8 +405,64 @@ _SYSTEM_PROMPT = (
 )
 
 
+_INTAKE_SYSTEM_PROMPT = (
+    "You are a medical-record extraction assistant. You are given the "
+    "rendered pages of a scanned patient intake form. Extract the "
+    "demographics, current medications, allergies, family history, and "
+    "chief concern (reason for visit) you can ground in the document "
+    "into a structured emission via the emit_intake_form_extraction "
+    "tool.\n\n"
+    "Strict rules:\n"
+    " - Only emit structured entries whose bounding box you can "
+    "identify with bbox_confidence >= 0.7. Lower-confidence reads "
+    "belong in unsupported_fields, not in the structured lists.\n"
+    " - source_type is always 'intake_form'. source_id is the "
+    "document_id you are given. quote_or_value is the literal string "
+    "from the form.\n"
+    " - page_bbox.page is 1-indexed, matching the page sequence I send "
+    "you. x0/y0/x1/y1 are normalized to [0, 1] with origin at top-left, "
+    "and you MUST keep x1 > x0 and y1 > y0 (no inverted boxes).\n"
+    " - Demographics: emit free-form (field, value) pairs. Common keys "
+    "include date_of_birth, sex, address, phone, email — but use "
+    "whatever the form labels. The persistence layer normalizes to FHIR "
+    "codings.\n"
+    " - Medications without a written dose/frequency are common; emit "
+    "with dose=null and frequency=null rather than inventing values. "
+    "Same for allergies missing reaction/severity.\n"
+    " - Family-history entries require BOTH relative and condition. "
+    "Cases where one is missing or illegible (e.g. 'Mother: ?') belong "
+    "in unsupported_fields.\n"
+    " - chief_concern is the patient's stated reason for visit, written "
+    "in their words. If absent or unreadable, omit both chief_concern "
+    "and chief_concern_citation.\n"
+    " - Do not invent. If you cannot read a field, list its name in "
+    "unsupported_fields and move on.\n"
+    " - Call the tool exactly once. Do not emit any free text."
+)
+
+
+LAB_CONTRACT: VisionContract[LabPdfExtraction] = VisionContract(
+    tool_name="emit_lab_pdf_extraction",
+    tool_spec=_build_lab_tool_spec(),
+    system_prompt=_LAB_SYSTEM_PROMPT,
+    extraction_class=LabPdfExtraction,
+)
+
+INTAKE_CONTRACT: VisionContract[IntakeFormExtraction] = VisionContract(
+    tool_name="emit_intake_form_extraction",
+    tool_spec=_build_intake_tool_spec(),
+    system_prompt=_INTAKE_SYSTEM_PROMPT,
+    extraction_class=IntakeFormExtraction,
+)
+
+
+# ---------------------------------------------------------------------------
+# VisionExtractor
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
-class VisionExtractionResult:
+class VisionExtractionResult[T: BaseModel]:
     """The validated extraction plus the raw model metadata.
 
     ``input_tokens`` and ``output_tokens`` come from the Anthropic
@@ -292,15 +471,20 @@ class VisionExtractionResult:
     here so the caller can log without re-parsing the SDK response.
     """
 
-    extraction: LabPdfExtraction
+    extraction: T
     model: str
     input_tokens: int
     output_tokens: int
 
 
-class VisionExtractor:
-    """Drives Claude vision, validates the response as
-    :class:`LabPdfExtraction`.
+class VisionExtractor[T: BaseModel]:
+    """Drives Claude vision, validates the response against the
+    contract's Pydantic class.
+
+    Generic over the contract's schema type ``T`` so the return type
+    of :meth:`extract` binds tightly — call sites operate on the
+    concrete extraction (``LabPdfExtraction`` or
+    ``IntakeFormExtraction``) without runtime casts.
 
     The Anthropic client is injectable so tests can pass an
     ``AsyncMock`` whose ``messages.create`` returns a stub response
@@ -309,11 +493,13 @@ class VisionExtractor:
 
     def __init__(
         self,
-        client: AsyncAnthropic | None = None,
         *,
+        contract: VisionContract[T],
+        client: AsyncAnthropic | None = None,
         model: str | None = None,
         max_tokens: int = 4096,
     ) -> None:
+        self._contract = contract
         self._client = client or AsyncAnthropic()
         self._model = model or os.environ.get(
             "ANTHROPIC_VISION_MODEL", DEFAULT_VISION_MODEL
@@ -326,7 +512,7 @@ class VisionExtractor:
         pages: list[RenderedPage],
         document_id: int,
         patient_id: int,
-    ) -> VisionExtractionResult:
+    ) -> VisionExtractionResult[T]:
         if not pages:
             raise ValueError("pages list is empty; nothing to extract from")
 
@@ -348,8 +534,8 @@ class VisionExtractor:
                     f"document_id = {document_id}\n"
                     f"patient_id = {patient_id}\n"
                     f"pages = {len(pages)}\n\n"
-                    "Extract the lab values from these pages and emit "
-                    "the structured result via emit_lab_pdf_extraction."
+                    f"Extract from these pages and emit the structured "
+                    f"result via {self._contract.tool_name}."
                 ),
             )
         )
@@ -360,10 +546,10 @@ class VisionExtractor:
 
         response: Message = await self._client.messages.create(
             model=self._model,
-            system=_SYSTEM_PROMPT,
+            system=self._contract.system_prompt,
             messages=messages,
-            tools=[_build_tool_spec()],
-            tool_choice={"type": "tool", "name": _EXTRACT_TOOL_NAME},
+            tools=[self._contract.tool_spec],
+            tool_choice={"type": "tool", "name": self._contract.tool_name},
             max_tokens=self._max_tokens,
         )
 
@@ -376,13 +562,14 @@ class VisionExtractor:
 
         # Anthropic returns tool_use.input as already-parsed dict.
         try:
-            extraction = LabPdfExtraction.model_validate(tool_use.input)
+            extraction = self._contract.extraction_class.model_validate(tool_use.input)
         except ValidationError as exc:
             # Don't include the payload itself in the log — that's PHI.
             logger.warning(
                 "vision extraction failed schema validation",
                 extra={
                     "model": self._model,
+                    "tool_name": self._contract.tool_name,
                     "page_count": len(pages),
                     "error_count": len(exc.errors()),
                 },
@@ -397,9 +584,11 @@ class VisionExtractor:
             output_tokens=int(usage.output_tokens),
         )
 
-    @staticmethod
-    def _first_tool_use(response: Message) -> ToolUseBlock | None:
+    def _first_tool_use(self, response: Message) -> ToolUseBlock | None:
         for block in response.content:
-            if isinstance(block, ToolUseBlock) and block.name == _EXTRACT_TOOL_NAME:
+            if (
+                isinstance(block, ToolUseBlock)
+                and block.name == self._contract.tool_name
+            ):
                 return block
         return None

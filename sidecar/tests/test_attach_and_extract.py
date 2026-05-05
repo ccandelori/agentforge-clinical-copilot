@@ -24,8 +24,12 @@ import pytest
 from anthropic.types import Message, TextBlock, ToolUseBlock, Usage
 from pydantic import ValidationError
 
+from agentforge.schemas.intake import IntakeFormExtraction
+from agentforge.schemas.lab import LabPdfExtraction
 from agentforge.tools.attach_and_extract import (
     DEFAULT_DPI,
+    INTAKE_CONTRACT,
+    LAB_CONTRACT,
     PdfRenderer,
     RenderedPage,
     VisionExtractor,
@@ -267,7 +271,11 @@ async def test_extractor_returns_validated_extraction_on_happy_path() -> None:
     client = AsyncMock()
     client.messages.create = AsyncMock(return_value=response)
 
-    extractor = VisionExtractor(client=client, model="claude-sonnet-4-5-20250929")
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        model="claude-sonnet-4-5-20250929",
+    )
     result = await extractor.extract(
         pages=_rendered_pages(),
         document_id=42,
@@ -293,7 +301,7 @@ async def test_extractor_calls_anthropic_with_image_blocks_and_tool_choice() -> 
         return_value=_make_anthropic_response(payload, "emit_lab_pdf_extraction")
     )
 
-    extractor = VisionExtractor(client=client)
+    extractor = VisionExtractor(contract=LAB_CONTRACT, client=client)
     await extractor.extract(
         pages=_rendered_pages(2),
         document_id=42,
@@ -341,7 +349,7 @@ async def test_extractor_raises_when_response_lacks_tool_use_block() -> None:
     client = AsyncMock()
     client.messages.create = AsyncMock(return_value=response)
 
-    extractor = VisionExtractor(client=client)
+    extractor = VisionExtractor(contract=LAB_CONTRACT, client=client)
     with pytest.raises(RuntimeError, match="tool_use"):
         await extractor.extract(
             pages=_rendered_pages(),
@@ -361,7 +369,7 @@ async def test_extractor_raises_validation_error_on_bad_payload() -> None:
     client = AsyncMock()
     client.messages.create = AsyncMock(return_value=response)
 
-    extractor = VisionExtractor(client=client)
+    extractor = VisionExtractor(contract=LAB_CONTRACT, client=client)
     with pytest.raises(ValidationError):
         await extractor.extract(
             pages=_rendered_pages(),
@@ -372,7 +380,7 @@ async def test_extractor_raises_validation_error_on_bad_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_extractor_rejects_empty_pages_list() -> None:
-    extractor = VisionExtractor(client=AsyncMock())
+    extractor = VisionExtractor(contract=LAB_CONTRACT, client=AsyncMock())
     with pytest.raises(ValueError, match="empty"):
         await extractor.extract(pages=[], document_id=42, patient_id=7)
 
@@ -388,7 +396,7 @@ async def test_extractor_propagates_inverted_bbox_validation_error() -> None:
     client = AsyncMock()
     client.messages.create = AsyncMock(return_value=response)
 
-    extractor = VisionExtractor(client=client)
+    extractor = VisionExtractor(contract=LAB_CONTRACT, client=client)
     with pytest.raises(ValidationError):
         await extractor.extract(
             pages=_rendered_pages(),
@@ -421,3 +429,304 @@ def test_usage_construction_smoke() -> None:
         server_tool_use=None,
     )
     assert u.input_tokens == 1
+
+
+# ---------------------------------------------------------------------------
+# Contract sanity — guards against drift between the inline tool spec
+# and the corresponding Pydantic schema. These tests don't assert
+# every JSON-schema property; they assert the load-bearing constants
+# (tool name, source_type const, required-field skeleton) so a rename
+# in either side surfaces immediately rather than silently breaking
+# the LLM emission contract.
+# ---------------------------------------------------------------------------
+
+
+def test_lab_contract_binds_to_lab_pdf_extraction() -> None:
+    assert LAB_CONTRACT.extraction_class is LabPdfExtraction
+    assert LAB_CONTRACT.tool_name == "emit_lab_pdf_extraction"
+    # source_type pinned to lab_pdf at the spec layer prevents the
+    # model from emitting a citation that would later fail
+    # SourceType validation.
+    citation_const = (
+        LAB_CONTRACT.tool_spec["input_schema"]  # type: ignore[index]
+        ["properties"]["values"]["items"]["properties"]["citation"]
+        ["properties"]["source_type"]["const"]
+    )
+    assert citation_const == "lab_pdf"
+
+
+def test_intake_contract_binds_to_intake_form_extraction() -> None:
+    assert INTAKE_CONTRACT.extraction_class is IntakeFormExtraction
+    assert INTAKE_CONTRACT.tool_name == "emit_intake_form_extraction"
+    citation_const = (
+        INTAKE_CONTRACT.tool_spec["input_schema"]  # type: ignore[index]
+        ["properties"]["medications"]["items"]["properties"]["citation"]
+        ["properties"]["source_type"]["const"]
+    )
+    assert citation_const == "intake_form"
+
+
+def test_intake_contract_lists_all_four_repeating_sections() -> None:
+    """The four list sections in IntakeFormExtraction map 1:1 to the
+    canonical FHIR Questionnaire's repeating groups (Task 5 migration).
+    Drift between this list and the Pydantic schema would mean the
+    extractor emits something the persistence layer can't map."""
+    props = INTAKE_CONTRACT.tool_spec["input_schema"]["properties"]  # type: ignore[index]
+    for required_section in (
+        "demographics",
+        "medications",
+        "allergies",
+        "family_history",
+    ):
+        assert required_section in props, f"missing section: {required_section}"
+        assert props[required_section]["type"] == "array"
+
+
+def test_intake_contract_chief_concern_is_optional() -> None:
+    """Both chief_concern and its citation are optional in the
+    schema (a blank intake form is valid). Pairing — concern present
+    ⇒ citation present — is a worker-layer concern, not a schema one."""
+    schema = INTAKE_CONTRACT.tool_spec["input_schema"]  # type: ignore[index]
+    required = schema.get("required", [])
+    assert "chief_concern" not in required
+    assert "chief_concern_citation" not in required
+
+
+# ---------------------------------------------------------------------------
+# IntakeFormExtraction extraction — happy path + error paths
+# ---------------------------------------------------------------------------
+
+
+def _valid_intake_payload(*, document_id: int = 99, patient_id: int = 5) -> dict:
+    """A minimal valid IntakeFormExtraction wire payload.
+
+    Covers chief_concern (optional, present), one row in each of the
+    four lists, and the unsupported_fields surface. Keeps every
+    citation at the bbox-confidence floor (0.7+) so the schema's
+    scanned-source validator doesn't reject the payload before the
+    test assertions run.
+    """
+    cite = {
+        "source_type": "intake_form",
+        "source_id": str(document_id),
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "intake-row",
+        "quote_or_value": "—",
+        "page_bbox": {
+            "page": 1,
+            "x0": 0.05,
+            "y0": 0.10,
+            "x1": 0.45,
+            "y1": 0.15,
+            "bbox_confidence": 0.85,
+        },
+    }
+    return {
+        "document_id": document_id,
+        "patient_id": patient_id,
+        "chief_concern": "follow-up for diabetes",
+        "chief_concern_citation": cite,
+        "demographics": [
+            {"field": "date_of_birth", "value": "1972-04-12", "citation": cite},
+        ],
+        "medications": [
+            {
+                "name": "Metformin",
+                "dose": "500 mg",
+                "frequency": "BID",
+                "citation": cite,
+            },
+        ],
+        "allergies": [
+            {
+                "substance": "Penicillin",
+                "reaction": "rash",
+                "severity": None,
+                "citation": cite,
+            },
+        ],
+        "family_history": [
+            {"relative": "Mother", "condition": "Type 2 diabetes", "citation": cite},
+        ],
+        "extraction_confidence": 0.88,
+        "unsupported_fields": ["smoking_status"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_returns_validated_extraction_on_happy_path() -> None:
+    payload = _valid_intake_payload()
+    response = _make_anthropic_response(payload, "emit_intake_form_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    result = await extractor.extract(
+        pages=_rendered_pages(),
+        document_id=99,
+        patient_id=5,
+    )
+
+    assert isinstance(result.extraction, IntakeFormExtraction)
+    assert result.extraction.document_id == 99
+    assert result.extraction.patient_id == 5
+    assert result.extraction.chief_concern == "follow-up for diabetes"
+    assert len(result.extraction.demographics) == 1
+    assert len(result.extraction.medications) == 1
+    assert len(result.extraction.allergies) == 1
+    assert len(result.extraction.family_history) == 1
+    assert result.extraction.unsupported_fields == ["smoking_status"]
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_uses_intake_tool_choice_and_prompt() -> None:
+    """Lock the request shape — tool_choice forces intake, system
+    prompt is the intake one (not the lab one), image blocks come
+    first, the tail text block carries the IDs."""
+    payload = _valid_intake_payload()
+    client = AsyncMock()
+    client.messages.create = AsyncMock(
+        return_value=_make_anthropic_response(payload, "emit_intake_form_extraction")
+    )
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    await extractor.extract(
+        pages=_rendered_pages(2),
+        document_id=99,
+        patient_id=5,
+    )
+
+    call_kwargs = client.messages.create.call_args.kwargs
+    assert call_kwargs["tool_choice"] == {
+        "type": "tool",
+        "name": "emit_intake_form_extraction",
+    }
+    # system prompt must be the intake one, not the lab one — otherwise
+    # the model gets contradictory instructions.
+    assert "intake" in call_kwargs["system"].lower()
+    assert "lab-result" not in call_kwargs["system"]
+    user_msg = call_kwargs["messages"][0]
+    image_blocks = [b for b in user_msg["content"] if b["type"] == "image"]
+    assert len(image_blocks) == 2
+    text_blocks = [b for b in user_msg["content"] if b["type"] == "text"]
+    assert len(text_blocks) == 1
+    assert "document_id = 99" in text_blocks[0]["text"]
+    assert "patient_id = 5" in text_blocks[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_accepts_blank_form() -> None:
+    """A blank intake form is a valid extraction — chief_concern can
+    be omitted entirely, lists default to empty. The schema permits
+    this; the synthesizer surfaces the absence to the clinician."""
+    payload = {
+        "document_id": 1,
+        "patient_id": 1,
+        "extraction_confidence": 0.5,
+    }
+    response = _make_anthropic_response(payload, "emit_intake_form_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    result = await extractor.extract(
+        pages=_rendered_pages(),
+        document_id=1,
+        patient_id=1,
+    )
+
+    assert isinstance(result.extraction, IntakeFormExtraction)
+    assert result.extraction.chief_concern is None
+    assert result.extraction.chief_concern_citation is None
+    assert result.extraction.demographics == []
+    assert result.extraction.medications == []
+    assert result.extraction.allergies == []
+    assert result.extraction.family_history == []
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_raises_when_response_lacks_tool_use_block() -> None:
+    response = Message.model_validate({
+        "id": "msg_intake_2",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5-20250929",
+        "content": [{"type": "text", "text": "I cannot extract that."}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard",
+            "server_tool_use": None,
+        },
+    })
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    with pytest.raises(RuntimeError, match="tool_use"):
+        await extractor.extract(
+            pages=_rendered_pages(),
+            document_id=1,
+            patient_id=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_raises_validation_error_on_bad_payload() -> None:
+    """Missing required field (medication name) — schema-side reject."""
+    bad_payload = _valid_intake_payload()
+    del bad_payload["medications"][0]["name"]
+    response = _make_anthropic_response(bad_payload, "emit_intake_form_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    with pytest.raises(ValidationError):
+        await extractor.extract(
+            pages=_rendered_pages(),
+            document_id=99,
+            patient_id=5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_propagates_low_bbox_confidence_rejection() -> None:
+    """Citation contract: intake_form citations require bbox_confidence
+    >= 0.7 (SCANNED_SOURCE_BBOX_CONFIDENCE_FLOOR). A model emitting a
+    lower-confidence citation must fail validation here, not silently
+    surface as a click-to-source the clinician can't trust."""
+    bad_payload = _valid_intake_payload()
+    bad_payload["medications"][0]["citation"]["page_bbox"]["bbox_confidence"] = 0.4
+    response = _make_anthropic_response(bad_payload, "emit_intake_form_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    with pytest.raises(ValidationError):
+        await extractor.extract(
+            pages=_rendered_pages(),
+            document_id=99,
+            patient_id=5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_intake_extractor_propagates_inverted_bbox_validation_error() -> None:
+    """Same inverted-bbox guarantee as the lab path."""
+    bad_payload = _valid_intake_payload()
+    bad_payload["demographics"][0]["citation"]["page_bbox"]["y1"] = 0.05  # < y0=0.10
+    response = _make_anthropic_response(bad_payload, "emit_intake_form_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=INTAKE_CONTRACT, client=client)
+    with pytest.raises(ValidationError):
+        await extractor.extract(
+            pages=_rendered_pages(),
+            document_id=99,
+            patient_id=5,
+        )
