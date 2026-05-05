@@ -1,0 +1,100 @@
+# ============================================================================
+# .gitlab-ci.yml — AgentForge Week 2 CI bootstrap
+# ============================================================================
+#
+# Scope (PRD Phase 0): catch regressions from MR #1 forward, before the
+# 50-case agent-eval gate (Task 20) lands.
+#
+# Runs on every MR:
+#   - PHP: phpstan (level 10), phpunit-isolated  (mirrors GitHub workflows)
+#   - Sidecar: full pytest suite (markers exclude slow/latency/eval),
+#              dedicated job for the 9 W1 regression locks for visibility.
+#
+# Verified locally before commit:
+#   - sidecar `uv run pytest`              -> 774 passed, 13 deselected
+#   - sidecar `uv run pytest tests/eval/regression_locks.py` -> 10 passed (~0.02s)
+#
+# No secrets needed at this stage. The eval marker tests (which call
+# Anthropic) are deselected by default in sidecar/pyproject.toml.
+# ============================================================================
+
+default:
+  interruptible: true
+
+variables:
+  COMPOSER_ALLOW_SUPERUSER: "1"
+  COMPOSER_NO_INTERACTION: "1"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+
+stages:
+  - test
+
+# ============================================================================
+# PHP — mirrors existing GitHub Actions surface (composer.yml, phpstan.yml,
+# isolated-tests.yml). Extensions installed via mlocati/docker-php-extension-
+# installer to match composer.json's ext-* requirements.
+# ============================================================================
+
+.php_base:
+  image: php:8.2-cli
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends git unzip ca-certificates curl
+    - curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions -o /usr/local/bin/install-php-extensions
+    - chmod +x /usr/local/bin/install-php-extensions
+    - install-php-extensions bcmath calendar ctype curl dom fileinfo filter gd iconv imagick intl ldap mbstring mysqli openssl pdo pdo_mysql redis session soap sockets sodium xsl zip
+    - curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    - composer install --prefer-dist --no-progress
+  cache:
+    key:
+      files:
+        - composer.lock
+    paths:
+      - vendor/
+
+phpstan:
+  extends: .php_base
+  stage: test
+  script:
+    - composer phpstan
+
+phpunit-isolated:
+  extends: .php_base
+  stage: test
+  script:
+    - composer phpunit-isolated
+
+# ============================================================================
+# Sidecar (Python 3.12 + uv).
+# ============================================================================
+
+.python_base:
+  image: python:3.12-slim
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends curl ca-certificates
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+    - cd sidecar
+    - uv sync --frozen
+  cache:
+    key:
+      files:
+        - sidecar/uv.lock
+    paths:
+      - .uv-cache/
+
+sidecar-pytest:
+  extends: .python_base
+  stage: test
+  script:
+    # Default markers in sidecar/pyproject.toml deselect slow/latency/eval.
+    - uv run pytest
+
+sidecar-regression-locks:
+  extends: .python_base
+  stage: test
+  script:
+    # Dedicated job: surfaces W1 lock regressions prominently in the CI summary
+    # rather than buried in the 774-test sweep above.
+    - uv run pytest tests/eval/regression_locks.py -v
