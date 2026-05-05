@@ -17,6 +17,7 @@ units stay testable without Apache or network.
 from __future__ import annotations
 
 import io
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import fitz  # type: ignore[import-untyped]
@@ -32,6 +33,7 @@ from agentforge.tools.attach_and_extract import (
     LAB_CONTRACT,
     PdfRenderer,
     RenderedPage,
+    VisionContract,
     VisionExtractor,
 )
 
@@ -180,11 +182,64 @@ def test_bundled_sample_pdf_contains_expected_panels() -> None:
         assert expected in full_text, f"sample PDF missing expected text: {expected!r}"
 
 
+_SAMPLE_INTAKE_PDF_PATH = (
+    pathlib.Path(__file__).resolve().parents[1] / "data" / "samples" / "sample-intake.pdf"
+)
+
+
+def test_bundled_sample_intake_pdf_renders_without_errors() -> None:
+    """Mirror of test_bundled_sample_pdf_renders_without_errors for
+    the intake fixture. Guards against the same fixture-rot scenario:
+    someone updates generate_mock_intake.py but forgets to re-run it,
+    or a future ReportLab/PyMuPDF upgrade breaks the bytes."""
+    if not _SAMPLE_INTAKE_PDF_PATH.exists():
+        pytest.skip(
+            "sample-intake.pdf not committed — run "
+            "`uv run python scripts/generate_mock_intake.py`."
+        )
+
+    pdf_bytes = _SAMPLE_INTAKE_PDF_PATH.read_bytes()
+    pages = PdfRenderer(dpi=72).render_pages(pdf_bytes)
+    assert len(pages) >= 1, "sample intake PDF should have at least one page"
+    for page in pages:
+        assert page.png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        assert page.pixel_width > 0
+        assert page.pixel_height > 0
+
+
+def test_bundled_sample_intake_pdf_contains_expected_sections() -> None:
+    """Sanity check the demo intake fixture still has the headline
+    sections we advertise in intake_extraction_demo.py — guards
+    against an accidental regeneration that drops content."""
+    if not _SAMPLE_INTAKE_PDF_PATH.exists():
+        pytest.skip("sample-intake.pdf not committed.")
+
+    document = fitz.open(stream=_SAMPLE_INTAKE_PDF_PATH.read_bytes(), filetype="pdf")
+    try:
+        full_text = "\n".join(page.get_text() for page in document)
+    finally:
+        document.close()
+    for expected in (
+        "DEMO PRIMARY CARE CLINIC",
+        "Patient Information",
+        "Chief Concern",
+        "Current Medications",
+        "Allergies",
+        "Family Medical History",
+        "Metformin",
+        "Penicillin",
+        "DEMO DATA",
+    ):
+        assert expected in full_text, (
+            f"sample intake PDF missing expected text: {expected!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # VisionExtractor — happy path + error paths
 # ---------------------------------------------------------------------------
 
-def _make_anthropic_response(tool_input: dict, tool_name: str) -> Message:
+def _make_anthropic_response(tool_input: dict[str, Any], tool_name: str) -> Message:
     """Build a fake anthropic.types.Message that simulates a vision
     tool-use response. We construct it through the SDK types so any
     Pydantic-side renames in the SDK surface immediately as a test
@@ -215,7 +270,7 @@ def _make_anthropic_response(tool_input: dict, tool_name: str) -> Message:
     })
 
 
-def _valid_extraction_payload(*, document_id: int = 42, patient_id: int = 7) -> dict:
+def _valid_extraction_payload(*, document_id: int = 42, patient_id: int = 7) -> dict[str, Any]:
     return {
         "document_id": document_id,
         "patient_id": patient_id,
@@ -441,16 +496,25 @@ def test_usage_construction_smoke() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _input_schema(contract: VisionContract[Any]) -> dict[str, Any]:
+    """Cast the contract's tool_spec input_schema to a dict for ergonomic
+    assertion access. The Anthropic SDK types tool_spec entries as
+    a TypedDict whose fields surface as ``object`` to mypy, which makes
+    nested key access painful — but these are tests asserting against
+    constants we wrote ourselves, so a plain cast is the right call."""
+    return cast(dict[str, Any], contract.tool_spec["input_schema"])
+
+
 def test_lab_contract_binds_to_lab_pdf_extraction() -> None:
     assert LAB_CONTRACT.extraction_class is LabPdfExtraction
     assert LAB_CONTRACT.tool_name == "emit_lab_pdf_extraction"
     # source_type pinned to lab_pdf at the spec layer prevents the
     # model from emitting a citation that would later fail
     # SourceType validation.
+    schema = _input_schema(LAB_CONTRACT)
     citation_const = (
-        LAB_CONTRACT.tool_spec["input_schema"]  # type: ignore[index]
-        ["properties"]["values"]["items"]["properties"]["citation"]
-        ["properties"]["source_type"]["const"]
+        schema["properties"]["values"]["items"]["properties"]
+        ["citation"]["properties"]["source_type"]["const"]
     )
     assert citation_const == "lab_pdf"
 
@@ -458,10 +522,10 @@ def test_lab_contract_binds_to_lab_pdf_extraction() -> None:
 def test_intake_contract_binds_to_intake_form_extraction() -> None:
     assert INTAKE_CONTRACT.extraction_class is IntakeFormExtraction
     assert INTAKE_CONTRACT.tool_name == "emit_intake_form_extraction"
+    schema = _input_schema(INTAKE_CONTRACT)
     citation_const = (
-        INTAKE_CONTRACT.tool_spec["input_schema"]  # type: ignore[index]
-        ["properties"]["medications"]["items"]["properties"]["citation"]
-        ["properties"]["source_type"]["const"]
+        schema["properties"]["medications"]["items"]["properties"]
+        ["citation"]["properties"]["source_type"]["const"]
     )
     assert citation_const == "intake_form"
 
@@ -471,7 +535,7 @@ def test_intake_contract_lists_all_four_repeating_sections() -> None:
     canonical FHIR Questionnaire's repeating groups (Task 5 migration).
     Drift between this list and the Pydantic schema would mean the
     extractor emits something the persistence layer can't map."""
-    props = INTAKE_CONTRACT.tool_spec["input_schema"]["properties"]  # type: ignore[index]
+    props = _input_schema(INTAKE_CONTRACT)["properties"]
     for required_section in (
         "demographics",
         "medications",
@@ -486,7 +550,7 @@ def test_intake_contract_chief_concern_is_optional() -> None:
     """Both chief_concern and its citation are optional in the
     schema (a blank intake form is valid). Pairing — concern present
     ⇒ citation present — is a worker-layer concern, not a schema one."""
-    schema = INTAKE_CONTRACT.tool_spec["input_schema"]  # type: ignore[index]
+    schema = _input_schema(INTAKE_CONTRACT)
     required = schema.get("required", [])
     assert "chief_concern" not in required
     assert "chief_concern_citation" not in required
@@ -497,7 +561,7 @@ def test_intake_contract_chief_concern_is_optional() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _valid_intake_payload(*, document_id: int = 99, patient_id: int = 5) -> dict:
+def _valid_intake_payload(*, document_id: int = 99, patient_id: int = 5) -> dict[str, Any]:
     """A minimal valid IntakeFormExtraction wire payload.
 
     Covers chief_concern (optional, present), one row in each of the
