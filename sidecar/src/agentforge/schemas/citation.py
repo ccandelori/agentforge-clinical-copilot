@@ -53,6 +53,11 @@ class PageBBox(BaseModel):
     component's pixel-positioning math). bbox_confidence is the VLM's
     stated confidence in the geometric box itself, distinct from
     extraction confidence on the field's textual value.
+
+    Inverted or zero-area rectangles (x1 <= x0 or y1 <= y0) are rejected
+    at the schema layer — they're geometrically nonsense, almost always
+    a transposed-corner bug or a fabrication, and would render as an
+    empty/inverted overlay either way.
     """
 
     page: int = Field(ge=1, description="1-indexed PDF page number")
@@ -65,6 +70,20 @@ class PageBBox(BaseModel):
         le=1.0,
         description="VLM-reported confidence in the geometric box [0, 1].",
     )
+
+    @model_validator(mode="after")
+    def _reject_inverted_or_zero_area_box(self) -> PageBBox:
+        if self.x1 <= self.x0:
+            raise ValueError(
+                f"PageBBox x1 ({self.x1}) must be strictly greater than "
+                f"x0 ({self.x0}); inverted or zero-width boxes are rejected."
+            )
+        if self.y1 <= self.y0:
+            raise ValueError(
+                f"PageBBox y1 ({self.y1}) must be strictly greater than "
+                f"y0 ({self.y0}); inverted or zero-height boxes are rejected."
+            )
+        return self
 
 
 # Inclusive lower bound — bumping this is an explicit, audited change.

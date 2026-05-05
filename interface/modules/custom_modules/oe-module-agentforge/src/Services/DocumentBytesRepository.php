@@ -15,7 +15,9 @@ declare(strict_types=1);
 
 namespace OpenEMR\Modules\AgentForge\Services;
 
+use BadMethodCallException;
 use Document;
+use RuntimeException;
 
 /**
  * Wraps the legacy `Document` class so the controller layer can stay
@@ -67,11 +69,31 @@ class DocumentBytesRepository
             $mimetype = 'application/octet-stream';
         }
 
-        $bytes = $document->get_data();
+        // Document::get_data() throws on the legacy storage edge cases:
+        //   - BadMethodCallException for expired or deleted documents,
+        //     and for documents not stored on the filesystem
+        //   - RuntimeException for missing files on disk and for
+        //     decryption failures
+        // Treat all of these as "the bytes aren't retrievable", which is
+        // observationally indistinguishable from a missing record from
+        // the caller's perspective. Returning null routes them to a 404
+        // rather than letting them bubble up as an uncaught 500.
+        //
+        // PHPStan note: get_data()'s docblock only declares
+        // BadMethodCallException, but in practice get_content_from_filesystem
+        // throws RuntimeException for missing files on disk and that
+        // propagates undeclared. Catching it anyway is correct in
+        // production; the suppression below silences phpstan's
+        // documentation-trusting catch.neverThrown rule.
+        try {
+            $bytes = $document->get_data();
+        /** @phpstan-ignore catch.neverThrown */
+        } catch (BadMethodCallException | RuntimeException) {
+            return null;
+        }
         if (!is_string($bytes)) {
-            // Non-string return is a legacy class quirk on storage
-            // failure paths. Treat as a missing record rather than
-            // attempting to decode mid-failure.
+            // Belt-and-suspenders for any other legacy quirk that
+            // returns a non-string instead of throwing.
             return null;
         }
 

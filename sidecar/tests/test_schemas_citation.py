@@ -98,6 +98,38 @@ def test_pagebbox_rejects_negative_confidence() -> None:
         PageBBox(page=1, x0=0.1, y0=0.1, x1=0.5, y1=0.3, bbox_confidence=-0.1)
 
 
+def test_pagebbox_rejects_inverted_x_axis() -> None:
+    """A bbox with x1 <= x0 has zero or negative width — geometrically
+    nonsense and almost certainly a fabrication or a transposed-corner
+    bug. Either way it would render as an empty/inverted overlay, so
+    reject at the schema layer."""
+    with pytest.raises(ValidationError) as exc_info:
+        PageBBox(page=1, x0=0.6, y0=0.1, x1=0.4, y1=0.3, bbox_confidence=0.9)
+    msg = str(exc_info.value).lower()
+    assert "x" in msg
+
+
+def test_pagebbox_rejects_equal_x_axis() -> None:
+    """A bbox where x1 == x0 has zero width. The 0.7 confidence floor
+    blocks "the VLM thinks something might be near here" guesses; a
+    zero-width box is the geometric version of that and gets the same
+    rejection."""
+    with pytest.raises(ValidationError):
+        PageBBox(page=1, x0=0.4, y0=0.1, x1=0.4, y1=0.3, bbox_confidence=0.9)
+
+
+def test_pagebbox_rejects_inverted_y_axis() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        PageBBox(page=1, x0=0.1, y0=0.5, x1=0.5, y1=0.3, bbox_confidence=0.9)
+    msg = str(exc_info.value).lower()
+    assert "y" in msg
+
+
+def test_pagebbox_rejects_equal_y_axis() -> None:
+    with pytest.raises(ValidationError):
+        PageBBox(page=1, x0=0.1, y0=0.3, x1=0.5, y1=0.3, bbox_confidence=0.9)
+
+
 # ---------------------------------------------------------------------------
 # Citation validator: the bbox-confidence floor for scanned sources
 # ---------------------------------------------------------------------------
