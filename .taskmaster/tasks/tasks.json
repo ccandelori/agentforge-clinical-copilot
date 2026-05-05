@@ -7649,6 +7649,19 @@
         "dependencies": [],
         "status": "pending",
         "subtasks": []
+      },
+      {
+        "id": 37,
+        "title": "Fix 118 pre-existing PHPStan errors in W1 AgentForge module",
+        "description": "GitLab CI bootstrap (Task 36) surfaced 118 PHPStan level-10 errors in W1 AgentForge module code that were never captured in the existing .phpstan/baseline/. The phpstan job is currently marked allow_failure to unblock W2 work; this task removes that allow_failure once the errors are fixed.",
+        "details": "Files with errors (from pipeline 1383 / job 5737):\n\n- agentforge/public/turn.php\n- tests/Tests/Isolated/Modules/AgentForge/EncountersRepositoryTest.php\n- tests/Tests/Isolated/Modules/AgentForge/NotesRepositoryTest.php\n- tests/Tests/Isolated/Modules/AgentForge/NotesSearchRepositoryTest.php\n- tests/Tests/Isolated/Modules/AgentForge/VitalsRepositoryTest.php\n\nError patterns observed:\n- Parameter #2 $haystack of assertStringContainsString() expects string, mixed given\n- Cannot access offset 'pid'/'since' on mixed\n- Parameter #1 $datetime of strtotime expects string, mixed given\n\nRoot cause: $row variables typed as mixed because the repository method returns aren't narrowed. Fix at the source (typed return shapes on the repository methods) per CLAUDE.md guidance: 'Fix at the source, not the sink. Narrow, don't cast.'\n\nImplementation steps:\n1. Add typed array shapes (@phpstan-type or DTO returns) to the    repository methods that produce $row\n2. Update test files to use the narrowed types\n3. Run `composer phpstan` locally inside the openemr docker    container to verify zero errors before pushing\n4. Remove `allow_failure: true` from the phpstan job in    .gitlab-ci.yml\n5. Confirm CI goes green with phpstan as a hard merge-block\n\nDO NOT regenerate the phpstan baseline. CLAUDE.md is explicit: 'Never add new baseline entries \u2014 fix the underlying type error.' The baseline exists for upstream OpenEMR's known issues, not for AgentForge code we're authoring.",
+        "testStrategy": "Run `composer phpstan` locally (inside the openemr docker container since PHP isn't on the host) and confirm exit code 0 with the AgentForge files in scope. Then push a test commit and confirm the GitLab CI phpstan job runs green WITHOUT allow_failure (which means removing that flag and re-pushing). The cleanup is complete when the phpstan job is merge-blocking and green.",
+        "priority": "high",
+        "dependencies": [
+          36
+        ],
+        "status": "pending",
+        "subtasks": []
       }
     ],
     "metadata": {
