@@ -5325,7 +5325,7 @@
         "dependencies": [
           2
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5333,9 +5333,10 @@
             "description": "Create sidecar/src/agentforge/schemas/ directory with __init__.py and base Citation Pydantic model that Task 2 defines as a dependency for LabValue.",
             "dependencies": [],
             "details": "Create sidecar/src/agentforge/schemas/ directory. Add __init__.py with SourceType enum (EHR, GUIDELINE, LAB_PDF) and Citation BaseModel containing source_type (SourceType), source_id (str), page_or_section (str|None), field_or_chunk_id (str|None), quote_or_value (str). This Citation model is distinct from verifier/citation.py's dataclass - it's a Pydantic model for schema validation. Export Citation and SourceType from __init__.py.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify Citation model validates correctly with all field combinations, SourceType enum has expected values, and imports work from schemas package.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:25.408Z"
           },
           {
             "id": 2,
@@ -5345,9 +5346,10 @@
               1
             ],
             "details": "Create sidecar/src/agentforge/schemas/lab.py. Define AbnormalFlag as class AbnormalFlag(str, Enum) with values: NORMAL='normal', HIGH='high', LOW='low', CRITICAL_HIGH='critical_high', CRITICAL_LOW='critical_low', UNKNOWN='unknown'. Using str base allows JSON serialization and case-insensitive coercion via Pydantic validators. Include docstring explaining clinical meaning of each flag.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test AbnormalFlag serializes to lowercase strings, coerces from lowercase input strings, and all 6 enum values are accessible.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:27.331Z"
           },
           {
             "id": 3,
@@ -5358,9 +5360,10 @@
               2
             ],
             "details": "In lab.py, create LabValue(BaseModel) with model_config frozen=True. Fields: test_name (str, required), loinc_code (str | None = None), value (str, required - kept as string for numeric/text flexibility), unit (str | None = None), reference_range (str | None = None), collection_date (date | None = None with validator accepting ISO strings), abnormal_flag (AbnormalFlag = AbnormalFlag.UNKNOWN), citation (Citation, required). Import date from datetime and Citation from schemas base.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test LabValue creation with all fields, test with minimal required fields only, test collection_date accepts ISO format strings like '2024-01-15', test abnormal_flag defaults to UNKNOWN.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:28.951Z"
           },
           {
             "id": 4,
@@ -5370,9 +5373,10 @@
               3
             ],
             "details": "In lab.py, create LabPdfExtraction(BaseModel) with model_config frozen=True. Fields: document_id (int, required), patient_id (int, required), ordering_provider (str | None = None), accession_number (str | None = None), values (list[LabValue], required - can be empty), extraction_confidence (float with Field(ge=0.0, le=1.0)), unsupported_fields (list[str] = Field(default_factory=list)) for tracking fields the extractor couldn't parse confidently. Update schemas/__init__.py to export LabValue, LabPdfExtraction, AbnormalFlag.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Test LabPdfExtraction with empty values list is valid, test extraction_confidence validates 0.0-1.0 range, test unsupported_fields accumulates field names, test full model with multiple LabValue items.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:30.745Z"
           },
           {
             "id": 5,
@@ -5382,14 +5386,16 @@
               4
             ],
             "details": "Create sidecar/tests/test_schemas_lab.py using pytest. Test cases: (1) LabValue with valid Citation passes validation, (2) LabPdfExtraction with empty values list is valid, (3) AbnormalFlag coerces from lowercase string like 'high' -> AbnormalFlag.HIGH, (4) collection_date accepts ISO format string '2024-01-15' and parses to date object, (5) unsupported_fields list accumulates low-confidence field names correctly, (6) extraction_confidence rejects values outside 0.0-1.0, (7) LabValue requires test_name and value and citation, (8) LabPdfExtraction requires document_id and patient_id. Use pytest parametrize for enum coercion test cases.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run pytest on test_schemas_lab.py ensuring 100% pass rate. Verify all edge cases are covered including validation errors for invalid inputs.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:32.806Z"
           }
         ],
         "complexity": 3,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create sidecar/src/agentforge/schemas/lab.py with AbnormalFlag enum (6 values), LabValue model with test_name, optional loinc_code, value, unit, reference_range, collection_date, abnormal_flag, and Citation reference. Create LabPdfExtraction model with document_id, patient_id, ordering_provider, accession_number, values list, extraction_confidence, and unsupported_fields. Add exports and unit tests."
+        "expansionPrompt": "Create sidecar/src/agentforge/schemas/lab.py with AbnormalFlag enum (6 values), LabValue model with test_name, optional loinc_code, value, unit, reference_range, collection_date, abnormal_flag, and Citation reference. Create LabPdfExtraction model with document_id, patient_id, ordering_provider, accession_number, values list, extraction_confidence, and unsupported_fields. Add exports and unit tests.",
+        "updatedAt": "2026-05-05T17:13:32.806Z"
       },
       {
         "id": 4,
@@ -5715,7 +5721,7 @@
         "id": 8,
         "title": "Implement JWT-Validated Lab Result Persistence Endpoint",
         "description": "Create oe-module-agentforge/public/internal/persist_lab_result.php that accepts LabPdfExtraction JSON and writes to procedure_order/procedure_report/procedure_result tables with document_id linkage, including triple patient_id verification (JWT \u2194 request \u2194 document owner).",
-        "status": "pending",
+        "status": "done",
         "dependencies": [
           3,
           7
@@ -5730,9 +5736,10 @@
             "description": "Implement a service class that queries the documents table to verify document ownership by patient_id. This enables the triple patient_id verification required for defense-in-depth security.",
             "dependencies": [],
             "details": "Create src/Services/DocumentOwnershipVerifier.php with:\n- Constructor accepting Doctrine DBAL Connection\n- getPatientIdForDocument(int $documentId): ?int method that queries: SELECT foreign_id FROM documents WHERE id = :id AND deleted = 0\n- Returns null if document not found or deleted\n- Follow existing service patterns in oe-module-agentforge/src/Services/",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) returns patient_id for existing document, (2) returns null for non-existent document, (3) returns null for deleted document (deleted=1)",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:34.718Z"
           },
           {
             "id": 2,
@@ -5742,9 +5749,10 @@
               1
             ],
             "details": "Create src/Controllers/PersistLabResultController.php:\n- Inject AgentJwtValidator, DocumentOwnershipVerifier, LabResultPersistenceRepository\n- persist(Request $request): Response method\n- Validate JWT via AgentJwtValidator::validateBearer() \u2192 extract ValidatedClaims.patientId\n- Parse JSON body, extract patient_id and document_id from LabPdfExtraction\n- Call DocumentOwnershipVerifier::getPatientIdForDocument(document_id)\n- Triple check: JWT.patientId == request.patient_id == document.foreign_id\n- Return 403 JsonResponse on any mismatch with error message (generic, no data leakage)\n- On success, delegate to persistence repository",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests with mocked dependencies: (1) JWT.pid != request.pid \u2192 403, (2) JWT.pid != doc.pid \u2192 403, (3) document not found \u2192 403, (4) all matching \u2192 calls repository",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:37.109Z"
           },
           {
             "id": 3,
@@ -5752,9 +5760,10 @@
             "description": "Implement repository that creates procedure_order, procedure_report, and procedure_result rows from LabPdfExtraction data.",
             "dependencies": [],
             "details": "Create src/Services/LabResultPersistenceRepository.php:\n- Constructor accepting Doctrine DBAL Connection\n- persist(int $patientId, int $documentId, array $labValues): array method\n- For each LabValue: create procedure_order (find existing by patient+date or create new), create procedure_report, create procedure_result\n- Set procedure_result.document_id = documentId\n- Map LabValue fields: test_name\u2192result_text, value\u2192result, unit\u2192units, reference_range\u2192range, abnormal_flag\u2192abnormal\n- Return array of created procedure_result_id values\n- Use transactions for atomicity",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration tests with test database: (1) creates all three procedure_* rows, (2) document_id is set on result, (3) multiple LabValues create multiple results, (4) transaction rollback on error",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:38.915Z"
           },
           {
             "id": 4,
@@ -5765,9 +5774,10 @@
               3
             ],
             "details": "Create public/internal/persist_lab_result.php following labs.php pattern:\n- Set $ignoreAuth = true, require globals.php, load EnvLoader\n- Handle Apache Authorization header stripping workaround\n- Validate AGENTFORGE_JWT_SECRET env var\n- Wire up Doctrine connection from OEGlobalsBag sqlconf\n- Instantiate DocumentOwnershipVerifier, LabResultPersistenceRepository, PersistLabResultController\n- Reject non-POST requests with 405\n- Call controller->persist(Request::createFromGlobals())\n- Send response",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test: endpoint accessible via POST, returns correct responses for valid/invalid requests",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:40.585Z"
           },
           {
             "id": 5,
@@ -5777,9 +5787,10 @@
               3
             ],
             "details": "In PersistLabResultController or LabResultPersistenceRepository:\n- After successful persistence, fire EventAuditLogger event 'agentforge.lab_persist'\n- Include attributes: procedure_result_ids (array), extraction_status, patient_id, document_id\n- Ensure audit event is NOT fired on 403 patient mismatch or other failures\n- Follow existing EventAuditLogger patterns in the codebase",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test: (1) successful persist fires audit event with correct attributes, (2) 403 rejection does NOT fire audit event, (3) audit event includes all procedure_result_ids",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:42.286Z"
           },
           {
             "id": 6,
@@ -5789,14 +5800,16 @@
               4
             ],
             "details": "Create tests/Tests/Isolated/Modules/AgentForge/PersistLabResultPatientScopingTest.php:\n- Test JWT.patientId != request.patient_id \u2192 403, verify no procedure_* rows written, verify no audit event\n- Test JWT.patientId != documents[doc_id].foreign_id \u2192 403 (catches replayed JWT with forged document_id)\n- Test document_id references non-existent document \u2192 403 or 404\n- Test document_id references deleted document \u2192 403 or 404\n- Test all three matching \u2192 200, procedure_* rows created, audit event fired\n- Use test fixtures with controlled patient/document relationships",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "These ARE the tests - verify all 403 scenarios prevent data writes and audit events, verify success path completes fully",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:44.991Z"
           }
         ],
         "complexity": 7,
         "recommendedSubtasks": 6,
-        "expansionPrompt": "Already has 6 subtasks defined: 1) Create DocumentOwnershipVerifier service, 2) Create PersistLabResultController with triple patient verification, 3) Create LabResultPersistenceRepository for procedure_* table writes, 4) Create persist_lab_result.php public endpoint, 5) Integrate EventAuditLogger for lab_persist audit events, 6) Add comprehensive integration tests for patient scoping verification"
+        "expansionPrompt": "Already has 6 subtasks defined: 1) Create DocumentOwnershipVerifier service, 2) Create PersistLabResultController with triple patient verification, 3) Create LabResultPersistenceRepository for procedure_* table writes, 4) Create persist_lab_result.php public endpoint, 5) Integrate EventAuditLogger for lab_persist audit events, 6) Add comprehensive integration tests for patient scoping verification",
+        "updatedAt": "2026-05-05T17:13:44.991Z"
       },
       {
         "id": 9,
@@ -5908,7 +5921,7 @@
         "testStrategy": "Validate: (1) All guideline files are valid UTF-8, (2) index.json parses correctly, (3) Chunk count is approximately 600, (4) Each chunk has required metadata fields, (5) Average chunk token count is ~500 (\u00b120%), (6) BM25 and dense retriever can load and query the corpus.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5916,9 +5929,10 @@
             "description": "Create sidecar/data/guidelines/ directory with topic subdirectories (diabetes, hypertension, lipids, renal, labs) and author ~30 clinical guideline markdown documents covering ADA diabetes standards, JNC8/ACC/AHA hypertension guidelines, lipid management, CKD staging, and lab interpretation notes.",
             "dependencies": [],
             "details": "1. Create directory structure:\n   - sidecar/data/guidelines/diabetes/\n   - sidecar/data/guidelines/hypertension/\n   - sidecar/data/guidelines/lipids/\n   - sidecar/data/guidelines/renal/\n   - sidecar/data/guidelines/labs/\n\n2. Author markdown documents (~30 total):\n   - diabetes/ada_standards_of_care.md (A1c targets, screening, medication algorithms)\n   - diabetes/ada_hypoglycemia.md, ada_dka_hhs.md, ada_pregnancy.md\n   - hypertension/jnc8_guidelines.md (BP thresholds, lifestyle, pharmacotherapy)\n   - hypertension/acc_aha_2017.md (stages, risk factors, treatment goals)\n   - hypertension/resistant_hypertension.md, secondary_causes.md\n   - lipids/aha_acc_cholesterol_2018.md (statin intensity, ASCVD risk, LDL targets)\n   - lipids/triglycerides.md, familial_hypercholesterolemia.md\n   - renal/ckd_staging.md (GFR categories, albuminuria stages, progression risk)\n   - renal/ckd_complications.md, dialysis_initiation.md, aki_staging.md\n   - labs/cbc_interpretation.md (RBC, WBC, platelets, differentials)\n   - labs/cmp_interpretation.md (electrolytes, renal, hepatic panels)\n   - labs/a1c_interpretation.md, lipid_panel_interpretation.md\n   - labs/tsh_interpretation.md, urinalysis_interpretation.md\n   - labs/coagulation_interpretation.md, iron_studies.md\n\n3. Each document should include:\n   - Clear section headers (##) for semantic chunking boundaries\n   - Version/year of the source guideline\n   - Key clinical decision points and thresholds\n   - Target ~600-1000 words per document to yield ~20 chunks each\n\n4. Ensure UTF-8 encoding, valid markdown syntax",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Validate: (1) All directories exist, (2) ~30 markdown files created, (3) Each file is valid UTF-8, (4) Each file has section headers for chunking, (5) Each file includes version/attribution metadata in frontmatter or header",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:49.592Z"
           },
           {
             "id": 2,
@@ -5928,9 +5942,10 @@
               1
             ],
             "details": "1. Create sidecar/scripts/chunk_guidelines.py\n\n2. Use tiktoken with cl100k_base encoding (already a project dependency) for accurate token counting consistent with existing truncation.py usage\n\n3. Chunking algorithm:\n   - Parse markdown files, extract frontmatter if present (version, source)\n   - Split on ## headers to preserve semantic boundaries\n   - For sections exceeding ~500 tokens, split further at paragraph boundaries\n   - Target 400-600 tokens per chunk (\u00b120% tolerance)\n   - Never split mid-sentence\n\n4. Chunk metadata schema:\n   ```python\n   @dataclass\n   class GuidelineChunk:\n       doc_id: str           # e.g., 'diabetes/ada_standards_of_care'\n       section: str          # e.g., 'Glycemic Targets'\n       version: str          # e.g., '2024' or 'ADA 2024'\n       chunk_id: str         # e.g., 'diabetes/ada_standards_of_care#glycemic-targets-001'\n       text: str             # The actual chunk content (~500 tokens)\n       token_count: int      # Actual token count for validation\n   ```\n\n5. Output JSON structure for index.json:\n   ```json\n   {\n     \"version\": \"1.0\",\n     \"generated_at\": \"ISO-8601\",\n     \"total_chunks\": 600,\n     \"chunks\": [...]\n   }\n   ```\n\n6. CLI interface: `python scripts/chunk_guidelines.py --input data/guidelines --output data/guidelines/index.json`\n\n7. Add to pyproject.toml scripts if desired",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) Test token counting matches expected for sample text, (2) Test chunking respects 500-token target (\u00b120%), (3) Test section boundary detection, (4) Test chunk_id uniqueness, (5) Test JSON schema validation of output",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:53.267Z"
           },
           {
             "id": 3,
@@ -5941,9 +5956,10 @@
               2
             ],
             "details": "1. Run chunking script: `cd sidecar && uv run python scripts/chunk_guidelines.py --input data/guidelines --output data/guidelines/index.json`\n\n2. Validation checks during generation:\n   - Each chunk has all required fields (doc_id, section, version, chunk_id, text)\n   - No chunk_id duplicates\n   - Token counts within 400-600 range (flag outliers)\n   - Total chunk count approximately 600 (\u00b150)\n   - No empty text fields\n\n3. Generate summary statistics:\n   - Total chunks by topic (diabetes, hypertension, lipids, renal, labs)\n   - Average/min/max token count per chunk\n   - Chunks per document distribution\n\n4. index.json structure:\n   ```json\n   {\n     \"version\": \"1.0\",\n     \"generated_at\": \"2024-XX-XXTXX:XX:XXZ\",\n     \"total_chunks\": 612,\n     \"statistics\": {\n       \"avg_tokens\": 487,\n       \"min_tokens\": 312,\n       \"max_tokens\": 598,\n       \"by_topic\": {\"diabetes\": 145, \"hypertension\": 120, ...}\n     },\n     \"chunks\": [...]\n   }\n   ```\n\n5. Ensure index.json is committed to repo (not .gitignore'd) since it's pre-computed static data required at runtime\n\n6. File size estimate: ~600 chunks \u00d7 ~2KB each = ~1.2MB JSON file",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Validate: (1) index.json parses as valid JSON, (2) Chunk count is 550-650, (3) Average token count is 450-550, (4) All chunks have required metadata fields, (5) No duplicate chunk_ids, (6) BM25/dense retriever can load and query the corpus successfully",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:55.130Z"
           },
           {
             "id": 4,
@@ -5953,14 +5969,16 @@
               1
             ],
             "details": "1. Create sidecar/data/guidelines/ATTRIBUTION.md with source citations:\n   - American Diabetes Association (ADA) Standards of Care\n   - JNC 8 Hypertension Guidelines (JAMA)\n   - ACC/AHA 2017 Hypertension Guidelines\n   - AHA/ACC 2018 Cholesterol Guidelines\n   - KDIGO CKD Staging Guidelines\n   - Lab interpretation notes (cite clinical references)\n\n2. For each source, document:\n   - Full citation (authors, title, journal, year, DOI if available)\n   - Copyright holder\n   - License or usage terms (many are CC-BY or allow educational use)\n   - Any modifications made (summarization, restructuring)\n\n3. Create sidecar/data/guidelines/LICENSE:\n   - Overall license for the compiled corpus (likely CC-BY-NC or similar)\n   - Note that individual guidelines retain their original licenses\n   - Include disclaimer that content is for educational/research purposes\n   - Not a substitute for professional medical judgment\n\n4. Add SPDX license identifier if applicable\n\n5. Ensure attribution is visible in README if guidelines are used downstream\n\n6. Note in LICENSE that the chunked index is derivative work and subject to original source terms",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify: (1) ATTRIBUTION.md exists with citations for all sources, (2) LICENSE file exists with clear terms, (3) Each guideline document has version/source in frontmatter matching ATTRIBUTION.md, (4) No copyright violations (all sources allow educational derivative works)",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-05T17:13:56.849Z"
           }
         ],
         "complexity": 5,
         "recommendedSubtasks": 4,
-        "expansionPrompt": "Break down into: 1) Create sidecar/data/guidelines/ directory structure by topic (diabetes, hypertension, lipids, renal, labs), 2) Author ~30 guideline markdown documents covering ADA, JNC8, ACC/AHA, CKD staging, and lab interpretation, 3) Create chunking script producing ~500 token chunks with metadata (doc_id, section, version, chunk_id, text), 4) Generate index.json with pre-chunked data (~600 chunks), 5) Add LICENSE/attribution for guideline sources"
+        "expansionPrompt": "Break down into: 1) Create sidecar/data/guidelines/ directory structure by topic (diabetes, hypertension, lipids, renal, labs), 2) Author ~30 guideline markdown documents covering ADA, JNC8, ACC/AHA, CKD staging, and lab interpretation, 3) Create chunking script producing ~500 token chunks with metadata (doc_id, section, version, chunk_id, text), 4) Generate index.json with pre-chunked data (~600 chunks), 5) Add LICENSE/attribution for guideline sources",
+        "updatedAt": "2026-05-05T17:13:56.849Z"
       },
       {
         "id": 11,
@@ -7987,9 +8005,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-05T15:20:00.677Z",
+      "lastModified": "2026-05-05T17:13:56.849Z",
       "taskCount": 37,
-      "completedCount": 7,
+      "completedCount": 10,
       "tags": [
         "week2"
       ]
