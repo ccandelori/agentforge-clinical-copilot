@@ -382,10 +382,10 @@ If an AI assistant helped write a commit, add an `Assisted-by` trailer to that
 commit:
 
 ```bash
-git commit --trailer "Assisted-by: Claude Code" -m "fix(calendar): correct date parsing"
+git commit --trailer "Assisted-by: Codex" -m "fix(calendar): correct date parsing"
 ```
 
-Use the name of the tool as the trailer value (e.g. `Claude Code`,
+Use the name of the tool as the trailer value (e.g. `Codex`,
 `GitHub Copilot`, `ChatGPT`). When the AI agent creates commits automatically,
 this trailer is typically added for you.
 
@@ -442,17 +442,3 @@ Preserve existing authors/copyrights when editing files.
 - `API_README.md` - REST API docs
 - `FHIR_README.md` - FHIR implementation
 - `tests/Tests/README.md` - Testing guide
-
-## Agent skills
-
-### Issue tracker
-
-Issues live as GitLab issues at https://labs.gauntletai.com/cameroncandelori/openemr/-/issues, managed via the `glab` CLI. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Uses GitLab scoped-label style (`status::needs-triage`, `status::needs-info`, `status::ready-for-agent`, `status::ready-for-human`, `status::wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
