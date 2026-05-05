@@ -1,26 +1,36 @@
-"""LangGraph supervisor skeleton for the W2 agent (Task 1, MR 1).
+"""LangGraph supervisor for the W2 agent (Task 1).
 
-This module ships the StateGraph wiring + supervisor routing as
-**dead code in production** — only exercised by tests. The old
-``Orchestrator.turn()`` iterative loop in ``__init__.py`` remains
-the production entrypoint.
+This module ships the StateGraph wiring, supervisor routing, and
+real worker bodies for the intake extractor and evidence retriever.
+The graph remains **dead code in production** — only exercised by
+tests — until MR 3 cuts over the production entrypoint from the
+old ``Orchestrator.turn()`` iterative loop.
 
-Subsequent MRs:
-  * MR 2 (Task 1.3-1.5) — wires real worker bodies into
-    ``intake_extractor_node`` (VisionExtractor[IntakeFormExtraction])
-    and ``synthesize_node`` (existing synthesis logic).
-  * MR 3 (Task 1.6-1.8) — replaces the production entrypoint with
-    ``graph.ainvoke()``, removes the old loop.
+MR layering:
+  * MR 1 (Task 1.1-1.2) — StateGraph skeleton + supervisor routing
+    against ``Planner.plan()`` + iteration cap.
+  * MR 2 (Task 1.3-1.4, this MR) — wires the real
+    ``VisionExtractor[IntakeFormExtraction]`` into
+    ``intake_extractor_node`` and ``EvidenceRetriever`` into
+    ``evidence_retriever_node``. ``synthesize_node`` and
+    ``terminal_node`` stay as stubs (deferred to MR 3 since real
+    synthesis overlaps with the ``_turn_inner`` cutover).
+  * MR 3 (Task 1.5-1.8) — migrates synthesis, wraps StreamingVerifier
+    as the terminal node, wires Langfuse spans + DataQuality
+    warnings, and replaces the production entrypoint with
+    ``graph.ainvoke()``.
 
-Routing (MR 1 placeholder, deepens in MR 2/3):
+Routing (still the MR 1 placeholder until MR 3):
   * iteration >= MAX_ITERATIONS → SYNTHESIZE (hard stop)
   * Plan.use_case == FOLLOWUP   → SYNTHESIZE (no tools needed)
   * otherwise                   → INTAKE_EXTRACTOR (default)
 
-The default-INTAKE_EXTRACTOR rule is intentionally dumb. Real
-PDF-vs-evidence routing is not load-bearing in MR 1 because the
-workers being routed to are pass-through stubs. Logged in
-DEVIATIONS.md.
+Worker idempotency keeps the placeholder routing safe under
+loop-back. Each worker checks state for prior output and no-ops if
+already done — so the supervisor's loop-back may re-enter a node
+multiple times without paying for the same Anthropic / retrieval
+call twice. Real PDF-vs-evidence-vs-both routing logic lands in
+MR 3 alongside cutover.
 """
 
 from __future__ import annotations
@@ -32,6 +42,12 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agentforge.orchestrator.planner import Plan, UseCase
+from agentforge.rag.types import RetrievalResult
+from agentforge.schemas.intake import IntakeFormExtraction
+from agentforge.tools.attach_and_extract import (
+    RenderedPage,
+    VisionExtractionResult,
+)
 
 MAX_ITERATIONS: int = 3
 
@@ -55,6 +71,18 @@ class AgentState(TypedDict):
     All workers append to / read from this single dict. The
     ``route_decision`` field carries the supervisor's routing intent
     forward to the conditional edges.
+
+    Worker-input fields (``document_id``, ``patient_id``,
+    ``pdf_pages``, ``query``) are populated by the entrypoint that
+    constructs the starter state from a request. The intake extractor
+    consumes the PDF triple; the evidence retriever consumes
+    ``query``.
+
+    Worker-output fields (``extraction_result``, ``evidence_chunks``)
+    are populated by the workers themselves and consumed downstream
+    by the synthesizer. Workers are idempotent — once an output
+    field is populated, the worker no-ops if the supervisor routes
+    back to it.
     """
 
     messages: list[dict[str, Any]]
@@ -62,8 +90,12 @@ class AgentState(TypedDict):
     route_decision: RouteDecision | None
     route_reason: str
     iteration: int
-    extraction_result: Any | None
-    evidence_chunks: list[Any]
+    extraction_result: IntakeFormExtraction | None
+    evidence_chunks: list[RetrievalResult]
+    document_id: int | None
+    patient_id: int | None
+    pdf_pages: list[RenderedPage]
+    query: str
 
 
 class _PlannerLike(Protocol):
@@ -74,6 +106,28 @@ class _PlannerLike(Protocol):
     """
 
     async def plan(self, user_message: str) -> Plan: ...
+
+
+class _VisionExtractorLike(Protocol):
+    """Subset of ``VisionExtractor[IntakeFormExtraction]`` consumed
+    by ``intake_extractor_node``."""
+
+    async def extract(
+        self,
+        *,
+        pages: list[RenderedPage],
+        document_id: int,
+        patient_id: int,
+    ) -> VisionExtractionResult[IntakeFormExtraction]: ...
+
+
+class _EvidenceRetrieverLike(Protocol):
+    """Subset of ``EvidenceRetriever`` consumed by
+    ``evidence_retriever_node``."""
+
+    async def retrieve(
+        self, query: str, *, top_k: int = 5
+    ) -> list[RetrievalResult]: ...
 
 
 def _last_user_message(state: AgentState) -> str:
@@ -111,14 +165,58 @@ async def supervisor_node(
     }
 
 
-async def intake_extractor_node(state: AgentState) -> dict[str, Any]:
-    """MR 1 stub. Real VisionExtractor[IntakeFormExtraction] in MR 2."""
-    return {}
+async def intake_extractor_node(
+    state: AgentState,
+    extractor: _VisionExtractorLike,
+) -> dict[str, Any]:
+    """Drive the intake-form vision extraction.
+
+    Hands the rendered pages + identifier triple to
+    ``VisionExtractor.extract`` and writes the validated
+    ``IntakeFormExtraction`` into ``state["extraction_result"]``.
+
+    Idempotent: returns an empty update without calling the extractor
+    when (a) extraction has already run this turn, (b) no pages are
+    attached, or (c) document_id / patient_id are missing. The
+    supervisor's loop-back means a worker can be re-entered up to
+    MAX_ITERATIONS times, so we must not duplicate the (expensive)
+    Anthropic call.
+    """
+    if state["extraction_result"] is not None:
+        return {}
+    if not state["pdf_pages"]:
+        return {}
+    document_id = state["document_id"]
+    patient_id = state["patient_id"]
+    if document_id is None or patient_id is None:
+        return {}
+
+    result = await extractor.extract(
+        pages=state["pdf_pages"],
+        document_id=document_id,
+        patient_id=patient_id,
+    )
+    return {"extraction_result": result.extraction}
 
 
-async def evidence_retriever_node(state: AgentState) -> dict[str, Any]:
-    """MR 1 stub. Real EvidenceRetriever wiring in MR 2."""
-    return {}
+async def evidence_retriever_node(
+    state: AgentState,
+    retriever: _EvidenceRetrieverLike,
+) -> dict[str, Any]:
+    """Drive guideline retrieval against ``state["query"]``.
+
+    Idempotent in the same way as ``intake_extractor_node`` — once
+    ``evidence_chunks`` is populated, re-entry under the supervisor's
+    loop-back is a no-op. An empty ``query`` also no-ops; we never
+    call the retriever with an empty string.
+    """
+    if state["evidence_chunks"]:
+        return {}
+    query = state["query"]
+    if not query:
+        return {}
+    results = await retriever.retrieve(query)
+    return {"evidence_chunks": results}
 
 
 async def synthesize_node(state: AgentState) -> dict[str, Any]:
@@ -143,21 +241,37 @@ def _route_from_supervisor(state: AgentState) -> str:
 
 def build_graph(
     planner: _PlannerLike,
+    *,
+    vision_extractor: _VisionExtractorLike | None = None,
+    evidence_retriever: _EvidenceRetrieverLike | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Assemble + compile the supervisor graph.
 
-    The Planner is injected so tests can pass a stub. Production
-    callers (later MRs) will inject the real Planner constructed
-    against the LLM client.
+    Workers are injected so tests can pass stubs. Production callers
+    (MR 3 cutover) will inject real instances. ``vision_extractor``
+    and ``evidence_retriever`` are optional — when None, the
+    corresponding worker is wired as a no-op pass-through (the
+    supervisor will still route to it under the placeholder rule, but
+    it produces no output).
     """
 
     async def _supervisor(state: AgentState) -> dict[str, Any]:
         return await supervisor_node(state, planner)
 
+    async def _intake_extractor(state: AgentState) -> dict[str, Any]:
+        if vision_extractor is None:
+            return {}
+        return await intake_extractor_node(state, vision_extractor)
+
+    async def _evidence_retriever(state: AgentState) -> dict[str, Any]:
+        if evidence_retriever is None:
+            return {}
+        return await evidence_retriever_node(state, evidence_retriever)
+
     graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
     graph.add_node("supervisor", _supervisor)
-    graph.add_node(RouteDecision.INTAKE_EXTRACTOR.value, intake_extractor_node)
-    graph.add_node(RouteDecision.EVIDENCE_RETRIEVER.value, evidence_retriever_node)
+    graph.add_node(RouteDecision.INTAKE_EXTRACTOR.value, _intake_extractor)
+    graph.add_node(RouteDecision.EVIDENCE_RETRIEVER.value, _evidence_retriever)
     graph.add_node(RouteDecision.SYNTHESIZE.value, synthesize_node)
     graph.add_node("terminal", terminal_node)
 

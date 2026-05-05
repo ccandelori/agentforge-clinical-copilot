@@ -1747,3 +1747,75 @@ worker dispatch lands.
 conditional-edge dispatch).
 
 ---
+
+## 2026-05-05 — Task 1 MR 2 wires VisionExtractor + EvidenceRetriever; defers synthesize / terminal
+
+**Plan:** Taskmaster Task 1.3 reads "Migrate existing iterative
+tool-use loop from `turn()` into `intake_extractor_node()`." The
+literal reading is "move the W1 catalog-tool loop into the intake
+worker." Task 1.5 calls for `synthesize_node()` using the existing
+synthesis logic to ship in the same MR as the worker bodies.
+
+**Deviation:** Two divergences:
+
+1. `intake_extractor_node` is a thin wrapper over
+   `VisionExtractor[IntakeFormExtraction]`, **not** a port of the
+   W1 catalog-tool loop from `Orchestrator.turn()`. The spec's
+   wording conflates two unrelated flows — the W1 iterative
+   tool-use loop pulls patient data via the catalog tools
+   (`get_demographics`, `get_active_problems`, etc.), while the
+   W2 intake extractor drives a *single* vision extraction call
+   against an uploaded PDF. They are not the same shape and would
+   not benefit from a literal port. The W2 reading is the only
+   one that's consistent with Tasks 11/13 (which built
+   `VisionExtractor[IntakeFormExtraction]`) and the project
+   architecture diagram in `NEXT-SESSION.md`.
+
+2. `synthesize_node` and `terminal_node` stay as pass-through
+   stubs. Real synthesis migration belongs with the production
+   cutover (MR 3 / Task 1.5–1.8) because `_turn_inner`'s synthesis
+   logic is interleaved with the W1 tool-use loop — splitting it
+   out is a bigger refactor than "wire workers" should carry.
+
+**What we got instead in MR 2:**
+
+* Worker idempotency baked into both real workers — once
+  `extraction_result` (or `evidence_chunks`) is populated, re-entry
+  under the supervisor's loop-back is a no-op. This makes the dumb
+  MR 1 routing rule safe: the loop-back fires up to
+  `MAX_ITERATIONS` times but the expensive Anthropic /
+  retrieval-model call happens at most once per turn.
+* `AgentState` extended with input fields the workers need:
+  `document_id`, `patient_id`, `pdf_pages`, `query`. The
+  entrypoint that constructs the starter state is responsible for
+  populating them — the workers never invent placeholders.
+* `build_graph` extended with optional `vision_extractor` /
+  `evidence_retriever` injections. When None, the corresponding
+  worker is a no-op pass-through (preserves MR 1's behavior for
+  callers that haven't yet wired real workers).
+
+**Why the slicing change is right:**
+
+The original three-MR plan in `NEXT-SESSION.md` had MR 2 = "wire
+workers + existing single-node logic still runs alongside" and
+MR 3 = "cut over the loop." Synthesis migration sits squarely on
+the cutover seam — it's coupled to the decision of *how* to
+preserve W1 tool-use behavior alongside the new graph. Doing the
+synthesis migration in MR 2 would have required reasoning about
+the cutover anyway, blurring the slicing. Pushing it to MR 3
+keeps each MR with one clear job.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`intake_extractor_node`, `evidence_retriever_node`,
+`_VisionExtractorLike` / `_EvidenceRetrieverLike` Protocols,
+extended `AgentState`, optional DI in `build_graph`),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestIntakeExtractorNode` + `TestEvidenceRetrieverNode` covering
+the call-through, three skip conditions per worker, and
+idempotency under loop-back; existing graph integration tests
+re-fit to inject stubs through `build_graph` instead of
+monkey-patching module-level functions — a stricter test of the
+production wiring path).
+
+---
