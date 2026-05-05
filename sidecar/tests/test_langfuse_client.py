@@ -252,6 +252,168 @@ def test_record_llm_call_omits_cost_when_not_provided() -> None:
     assert "cost_usd" not in metadata
 
 
+# ---------- record_extraction_call ----------
+
+
+def test_record_extraction_call_emits_generation_span_with_tool_name() -> None:
+    """Extraction calls share the ``"generation"`` shape with chat
+    LLM calls so Langfuse rolls up tokens and dollar spend per trace
+    consistently — the ``name`` distinguishes them in the UI
+    (``extraction:emit_lab_pdf_extraction`` vs ``llm:claude-sonnet-4-5``)
+    so ad-hoc dashboards can split or combine the two."""
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_extraction_call(
+        handle,
+        model="claude-sonnet-4-5-20250929",
+        tool_name="emit_lab_pdf_extraction",
+        input_tokens=3400,
+        output_tokens=520,
+        latency_ms=2800,
+        schema_validation="pass",
+        page_count=1,
+        unsupported_fields_count=0,
+        extraction_confidence=0.92,
+    )
+
+    parent_span.start_observation.assert_called_once()
+    kwargs = parent_span.start_observation.call_args.kwargs
+    assert kwargs["name"] == "extraction:emit_lab_pdf_extraction"
+    assert kwargs["as_type"] == "generation"
+    assert kwargs["model"] == "claude-sonnet-4-5-20250929"
+    assert kwargs["usage_details"] == {"input": 3400, "output": 520}
+    md = kwargs["metadata"]
+    assert md["tool_name"] == "emit_lab_pdf_extraction"
+    assert md["latency_ms"] == 2800
+    assert md["schema_validation"] == "pass"
+    assert md["page_count"] == 1
+    assert md["unsupported_fields_count"] == 0
+    assert md["extraction_confidence"] == pytest.approx(0.92, rel=1e-9)
+
+
+def test_record_extraction_call_does_not_accept_message_or_response_body() -> None:
+    """**Boundary discipline test.** This is the structural PHI guarantee:
+    the extraction-call API by construction has no parameter that could
+    carry prompt content or response body. If a future refactor adds
+    one, this test fails — surface the change before it ships.
+
+    Implementation: enumerate the method's signature via
+    ``inspect.signature`` and assert no parameter name suggests message
+    content. We allow ``model`` (the model identifier, not the model
+    instance), ``tool_name``, structural counts, and the confidence
+    floats — anything else with ``message``, ``content``, ``prompt``,
+    ``response``, ``body``, ``payload``, ``input_text``, or
+    ``output_text`` should not exist.
+    """
+    import inspect
+
+    sig = inspect.signature(AgentLangfuse.record_extraction_call)
+    forbidden = {
+        "messages", "message", "content", "prompt", "response_body",
+        "completion", "body", "payload", "input_text", "output_text",
+        "raw_input", "raw_output",
+    }
+    actual_params = set(sig.parameters.keys())
+    leaked = actual_params & forbidden
+    assert not leaked, (
+        f"record_extraction_call signature must not accept content-carrying "
+        f"parameters; found: {leaked!r}"
+    )
+
+
+def test_record_extraction_call_omits_optional_metadata_when_not_provided() -> None:
+    """Mirrors record_llm_call's "omit cost_usd when not provided" pattern
+    for both extraction_confidence and cost_usd. Keeps legacy traces
+    visually clean and lets the absence of a confidence number tell a
+    story (e.g. validation failed before confidence was set)."""
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_extraction_call(
+        handle,
+        model="claude-sonnet-4-5-20250929",
+        tool_name="emit_intake_form_extraction",
+        input_tokens=2200,
+        output_tokens=180,
+        latency_ms=1900,
+        schema_validation="fail",
+        page_count=2,
+        unsupported_fields_count=3,
+        # Omit extraction_confidence and cost_usd
+    )
+
+    metadata = parent_span.start_observation.call_args.kwargs["metadata"]
+    assert "extraction_confidence" not in metadata
+    assert "cost_usd" not in metadata
+    # Required fields still present.
+    assert metadata["schema_validation"] == "fail"
+    assert metadata["unsupported_fields_count"] == 3
+
+
+def test_record_extraction_call_preserves_phi_safe_metadata_shape() -> None:
+    """Every metadata field reaching the SDK must be either a primitive
+    or a closed-enum literal — never a free-form string that could carry
+    prompt content. Locks the metadata schema to the documented PHI-safe
+    set; any new metadata key added without auditing surfaces here."""
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_extraction_call(
+        handle,
+        model="claude-sonnet-4-5-20250929",
+        tool_name="emit_lab_pdf_extraction",
+        input_tokens=100,
+        output_tokens=50,
+        latency_ms=500,
+        schema_validation="pass",
+        page_count=1,
+        unsupported_fields_count=0,
+        extraction_confidence=0.85,
+        cost_usd=0.02,
+    )
+
+    metadata = parent_span.start_observation.call_args.kwargs["metadata"]
+    # Allowed keys only.
+    allowed = {
+        "tool_name",
+        "latency_ms",
+        "schema_validation",
+        "page_count",
+        "unsupported_fields_count",
+        "extraction_confidence",
+        "cost_usd",
+    }
+    leaked = set(metadata.keys()) - allowed
+    assert not leaked, f"metadata must stay within allowed PHI-safe keys; found: {leaked!r}"
+
+
+def test_record_extraction_call_returns_none_when_handle_is_null() -> None:
+    """Mirror of record_tool_call's null-handle behavior: passing a
+    handle from a different (Null) client must be a silent no-op
+    rather than an SDK call. Guards against an orchestrator wiring
+    bug crossing client boundaries."""
+    from agentforge.observability.null_client import _NULL_TRACE
+    client, sdk = _build_client()
+
+    client.record_extraction_call(
+        _NULL_TRACE,
+        model="claude-sonnet-4-5-20250929",
+        tool_name="emit_lab_pdf_extraction",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=1,
+        schema_validation="pass",
+        page_count=1,
+        unsupported_fields_count=0,
+    )
+
+    sdk.start_observation.return_value.start_observation.assert_not_called()
+
+
 # ---------- record_planner_decision ----------
 
 
@@ -370,61 +532,62 @@ def test_null_client_methods_are_noops_and_do_not_raise() -> None:
     assert handle.trace_id is None
 
     # Every span method must accept the same kwargs as the real client
-    # and return None silently.
-    assert (
-        client.record_tool_call(
-            handle,
-            tool_name="x",
-            status="ok",
-            latency_ms=1,
-            cache_hit=False,
-            args_hash=None,
-            result_hash=None,
-        )
-        is None
+    # and return silently. No-raise is what we're testing — the methods
+    # are typed as ``-> None`` so the return value is structurally None;
+    # bare calls suffice.
+    client.record_tool_call(
+        handle,
+        tool_name="x",
+        status="ok",
+        latency_ms=1,
+        cache_hit=False,
+        args_hash=None,
+        result_hash=None,
     )
-    assert (
-        client.record_llm_call(
-            handle,
-            model="m",
-            prompt_tokens=1,
-            completion_tokens=1,
-            latency_ms=1,
-        )
-        is None
+    client.record_llm_call(
+        handle,
+        model="m",
+        prompt_tokens=1,
+        completion_tokens=1,
+        latency_ms=1,
     )
-    assert (
-        client.record_verifier_decision(
-            handle,
-            claims_emitted=0,
-            claims_rejected=0,
-            by_category={},
-        )
-        is None
+    client.record_verifier_decision(
+        handle,
+        claims_emitted=0,
+        claims_rejected=0,
+        by_category={},
     )
-    assert (
-        client.record_planner_decision(
-            handle,
-            use_case="admit_synthesis",
-            tool_count=0,
-            batch_count=0,
-        )
-        is None
+    client.record_planner_decision(
+        handle,
+        use_case="admit_synthesis",
+        tool_count=0,
+        batch_count=0,
     )
-    assert (
-        client.record_parallel_batch(
-            handle,
-            batch_size=0,
-            batch_duration_ms=0,
-        )
-        is None
+    client.record_parallel_batch(
+        handle,
+        batch_size=0,
+        batch_duration_ms=0,
     )
-    assert client.flush() is None
+    client.record_extraction_call(
+        handle,
+        model="m",
+        tool_name="t",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=1,
+        schema_validation="pass",
+        page_count=1,
+        unsupported_fields_count=0,
+    )
+    client.flush()
 
 
-async def test_null_client_aclose_returns_none() -> None:
+async def test_null_client_aclose_does_not_raise() -> None:
+    """``aclose`` is typed ``-> None``; the behavioral assertion is that
+    closing the no-op client doesn't raise (e.g. on missing-config paths
+    where there's nothing to flush)."""
     client = NullLangfuseClient()
-    assert await client.aclose() is None
+    await client.aclose()
 
 
 # ---------- Protocol satisfaction ----------

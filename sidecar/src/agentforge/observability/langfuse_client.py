@@ -18,7 +18,7 @@ Boundary discipline (ARCHITECTURE.md S7.3):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from agentforge.observability.hmac_hash import pseudonymize
 from agentforge.observability.protocols import TraceHandle
@@ -168,6 +168,61 @@ class AgentLangfuse:
             usage_details={
                 "input": prompt_tokens,
                 "output": completion_tokens,
+            },
+            metadata=metadata,
+        )
+        span.end()
+
+    def record_extraction_call(
+        self,
+        trace: TraceHandle,
+        *,
+        model: str,
+        tool_name: str,
+        input_tokens: int,
+        output_tokens: int,
+        latency_ms: int,
+        schema_validation: Literal["pass", "fail"],
+        page_count: int,
+        unsupported_fields_count: int,
+        extraction_confidence: float | None = None,
+        cost_usd: float | None = None,
+    ) -> None:
+        """Emit a generation span for one vision-extraction call.
+
+        PHI-safe by construction (see Protocol docstring): nothing on
+        the parameter list can carry patient content. The span is shaped
+        as ``"generation"`` (not ``"span"``) so Langfuse's per-trace
+        token-and-cost rollups include extraction calls alongside chat
+        calls — extraction is just an LLM call with extra structural
+        metadata, not a separate cost domain.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        # Mirror record_llm_call's "omit cost when not given" pattern so
+        # legacy traces stay visually clean. extraction_confidence and
+        # cost_usd are the two optional fields here.
+        metadata: dict[str, Any] = {
+            "tool_name": tool_name,
+            "latency_ms": latency_ms,
+            "schema_validation": schema_validation,
+            "page_count": page_count,
+            "unsupported_fields_count": unsupported_fields_count,
+        }
+        if extraction_confidence is not None:
+            metadata["extraction_confidence"] = extraction_confidence
+        if cost_usd is not None:
+            metadata["cost_usd"] = cost_usd
+
+        span = parent.start_observation(
+            name=f"extraction:{tool_name}",
+            as_type="generation",
+            model=model,
+            usage_details={
+                "input": input_tokens,
+                "output": output_tokens,
             },
             metadata=metadata,
         )
