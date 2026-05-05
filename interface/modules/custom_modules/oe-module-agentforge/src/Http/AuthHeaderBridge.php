@@ -34,17 +34,44 @@ final class AuthHeaderBridge
      * $_SERVER['HTTP_AUTHORIZATION'] when Apache stripped it. Idempotent —
      * does nothing if the header is already in $_SERVER. Safe to call from
      * non-Apache SAPIs (the function_exists check covers PHP-FPM, CGI, CLI).
+     *
+     * Header lookup is case-insensitive: HTTP/1.1 (RFC 7230 §3.2) declares
+     * field names case-insensitive, and apache_request_headers() does not
+     * normalize them — depending on Apache version, mod_php vs PHP-FPM,
+     * and proxy chain, the same header surfaces as 'Authorization',
+     * 'authorization', or even 'AUTHORIZATION'. A case-sensitive check
+     * would 401 a valid request.
      */
     public static function bridgeAuthorizationHeader(): void
     {
-        if (
-            !isset($_SERVER['HTTP_AUTHORIZATION'])
-            && function_exists('apache_request_headers')
-        ) {
-            $apacheHeaders = apache_request_headers();
-            if (isset($apacheHeaders['Authorization'])) {
-                $_SERVER['HTTP_AUTHORIZATION'] = $apacheHeaders['Authorization'];
+        if (isset($_SERVER['HTTP_AUTHORIZATION']) || !function_exists('apache_request_headers')) {
+            return;
+        }
+
+        $value = self::pickAuthorizationCaseInsensitively(apache_request_headers());
+        if ($value !== null) {
+            $_SERVER['HTTP_AUTHORIZATION'] = $value;
+        }
+    }
+
+    /**
+     * Case-insensitive lookup of the Authorization header in an array of
+     * request headers. Extracted as a pure helper so the case-insensitive
+     * matching is unit-testable without mocking the apache_request_headers
+     * built-in (which is not available in CLI).
+     *
+     * @internal Public only for testability — production callers should
+     *           use {@see self::bridgeAuthorizationHeader()}.
+     *
+     * @param array<array-key, mixed> $headers
+     */
+    public static function pickAuthorizationCaseInsensitively(array $headers): ?string
+    {
+        foreach ($headers as $name => $value) {
+            if (is_string($name) && strcasecmp($name, 'Authorization') === 0 && is_string($value)) {
+                return $value;
             }
         }
+        return null;
     }
 }

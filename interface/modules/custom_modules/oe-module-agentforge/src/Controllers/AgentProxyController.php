@@ -102,11 +102,16 @@ class AgentProxyController
             );
             $statusCode = $sidecarResponse->getStatusCode();
         } catch (TransportExceptionInterface $e) {
+            // CLAUDE.md: never expose getMessage() in user-facing output —
+            // transport exceptions can leak host names, TLS details, or
+            // internal addresses. Log server-side for ops and return only
+            // the generic message to the browser.
+            ServiceContainer::getLogger()->error(
+                'agentforge sidecar transport failure',
+                ['exception' => $e],
+            );
             return new JsonResponse(
-                [
-                    'error' => 'Agent sidecar unreachable. Please retry shortly.',
-                    'detail' => $e->getMessage(),
-                ],
+                ['error' => 'Agent sidecar unreachable. Please retry shortly.'],
                 Response::HTTP_SERVICE_UNAVAILABLE
             );
         } catch (HttpClientExceptionInterface $e) {
