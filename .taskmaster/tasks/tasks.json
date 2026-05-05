@@ -6263,7 +6263,7 @@
         "testStrategy": "Unit tests: (1) Extraction call logs do not contain prompt body, (2) Extraction call logs do not contain response body, (3) Metadata fields (latency, tokens, model) are preserved, (4) Non-extraction calls are not redacted, (5) unsupported_fields list is logged, (6) extraction_confidence is logged.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
