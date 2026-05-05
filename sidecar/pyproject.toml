@@ -25,7 +25,22 @@ dependencies = [
     # PyMuPDF over pdf2image — single pip install, no Poppler system dep,
     # produces PIL-loadable bytes directly.
     "pymupdf>=1.24",
+    # W2 Task 9b: dense + cross-encoder retrieval. Pulls in PyTorch +
+    # Hugging Face transformers (~500 MB image bloat). The DenseRetriever
+    # uses all-MiniLM-L6-v2 (sentence embeddings); the
+    # CrossEncoderReranker uses bge-reranker-base (relevance scoring).
+    # Both can be lazy-loaded so cold-start cost is paid once per
+    # process, not per request.
+    "sentence-transformers>=3.0",
+    "numpy>=1.26",
 ]
+
+[project.optional-dependencies]
+# Cohere reranker — opt-in via COHERE_API_KEY. Adds ~5 MB to the
+# image vs the ~500 MB base sentence-transformers cost, but the
+# Cohere SDK is a real network service so deployments without a
+# Cohere account should not pay the dependency.
+cohere = ["cohere>=5.0"]
 
 [project.scripts]
 cost-report = "agentforge.observability.cost_report:main"
@@ -87,7 +102,7 @@ no_implicit_reexport = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["langgraph.*", "langfuse.*", "yaml"]
+module = ["langgraph.*", "langfuse.*", "yaml", "cohere", "cohere.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -13,28 +13,51 @@ Currently shipped:
     :class:`agentforge.schemas.citation.Citation`.
   * :class:`BM25Retriever` — Robertson/Sparck Jones BM25 over a fixed
     corpus, returning ranked chunks with citations attached.
+  * :class:`DenseRetriever` — cosine-sim retrieval over a
+    :class:`Encoder`-pre-embedded corpus (default
+    ``all-MiniLM-L6-v2``).
   * :class:`RRFMerger` — reciprocal-rank fusion across two ranked
     lists, with deduplication by chunk_id.
-  * :class:`Reranker` Protocol + :class:`PassthroughReranker` — the
-    abstract reordering surface plus a no-op default. The real
-    cross-encoder + Cohere implementations land alongside the
-    sentence-transformers / Cohere SDK dependencies in a follow-up
-    MR (their ML weights add ~500 MB to the sidecar image, so they
-    sit behind an optional-extra install).
+  * :class:`Reranker` Protocol + three implementations:
+    :class:`PassthroughReranker` (no-op default),
+    :class:`CrossEncoderReranker` (over ``bge-reranker-base``),
+    :class:`CohereReranker` (opt-in via ``COHERE_API_KEY``).
+  * :class:`EvidenceRetriever` — composes the above into a single
+    ``retrieve(query, top_k)`` pipeline that the orchestrator's
+    evidence-retriever LangGraph node (Task 15) calls.
 """
 
 from __future__ import annotations
 
 from agentforge.rag.bm25 import BM25Retriever
+from agentforge.rag.cohere_rerank import CohereReranker
+from agentforge.rag.cross_encoder import (
+    CrossEncoder,
+    CrossEncoderReranker,
+    SentenceTransformerCrossEncoder,
+)
+from agentforge.rag.dense import DenseRetriever, Encoder, SentenceTransformerEncoder
+from agentforge.rag.evidence_retriever import EvidenceRetriever, RetrievalConfig
+from agentforge.rag.loader import load_corpus
 from agentforge.rag.reranker import PassthroughReranker, Reranker
 from agentforge.rag.rrf import RRFMerger
 from agentforge.rag.types import GuidelineChunk, RetrievalResult
 
 __all__ = [
     "BM25Retriever",
+    "CohereReranker",
+    "CrossEncoder",
+    "CrossEncoderReranker",
+    "DenseRetriever",
+    "Encoder",
+    "EvidenceRetriever",
     "GuidelineChunk",
     "PassthroughReranker",
     "RRFMerger",
     "Reranker",
+    "RetrievalConfig",
     "RetrievalResult",
+    "SentenceTransformerCrossEncoder",
+    "SentenceTransformerEncoder",
+    "load_corpus",
 ]
