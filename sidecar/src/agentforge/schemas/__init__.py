@@ -14,10 +14,22 @@ from agentforge.schemas.citation import (
     PageBBox,
     SourceType,
 )
+from agentforge.schemas.intake import (
+    AllergyEntry,
+    Demographic,
+    FamilyHistoryEntry,
+    IntakeFormExtraction,
+    MedicationEntry,
+)
 
 __all__ = [
     "SCANNED_SOURCE_BBOX_CONFIDENCE_FLOOR",
+    "AllergyEntry",
     "Citation",
+    "Demographic",
+    "FamilyHistoryEntry",
+    "IntakeFormExtraction",
+    "MedicationEntry",
     "PageBBox",
     "SourceType",
 ]
