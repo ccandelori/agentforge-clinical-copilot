@@ -29,6 +29,7 @@ declare(strict_types=1);
 
 namespace OpenEMR\Modules\AgentForge\Controllers;
 
+use OpenEMR\BC\ServiceContainer;
 use OpenEMR\Modules\AgentForge\Services\AgentJwtService;
 use OpenEMR\Modules\AgentForge\Services\BreakglassContext;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -168,13 +169,15 @@ class AgentProxyController
 
         // Log the trace correlation record so operators can join HTTP
         // access logs to Langfuse traces without browser-side tooling.
+        // PSR-3 context array per CLAUDE.md ("never concatenate or interpolate
+        // variables into log messages") — the message stays static, fields
+        // travel as structured context.
         if ($traceId !== '') {
-            error_log(sprintf(
-                'agentforge trace_id=%s user_id=%d patient_id=%d',
-                $traceId,
-                $userId,
-                $patientId,
-            ));
+            ServiceContainer::getLogger()->info('agentforge sidecar turn', [
+                'trace_id' => $traceId,
+                'user_id' => $userId,
+                'patient_id' => $patientId,
+            ]);
         }
 
         $streamed = new StreamedResponse(function () use ($client, $sidecarResponse): void {

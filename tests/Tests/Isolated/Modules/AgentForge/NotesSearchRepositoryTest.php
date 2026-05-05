@@ -99,7 +99,6 @@ final class NotesSearchRepositoryTest extends TestCase
         $params = $captured['params'];
         self::assertSame(123, $params['pid']);
         self::assertSame('cough', $params['q']);
-        self::assertIsString($params['since']);
         self::assertMatchesRegularExpression(
             '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/',
             $params['since'],
@@ -340,12 +339,25 @@ final class NotesSearchRepositoryTest extends TestCase
     }
 
     /**
-     * @param list<array<string, mixed>> $rows
-     * @param array<string, mixed>       $captured
+     * @param list<array<string, mixed>>                                                 $rows
+     * @param array<empty>                                                               $captured
+     * @param-out array{sql: string, params: array{pid: int, q: string, since: string}}  $captured
+     *
+     * The fetchAllAssociative mock writes the executed SQL and bound params
+     * into $captured (out-parameter) so each test can assert on the wire-level
+     * query shape. The @param-out shape is what callers see after the call;
+     * input is always an empty array. The 'q' key is the trimmed search
+     * query the repository binds.
      */
     private function makeConnection(array $rows, array &$captured = []): Connection
     {
-        $captured = ['sql' => '', 'params' => []];
+        // Dummy init matching the @param-out shape so PHPStan sees a
+        // consistent type at every program point. Real values come in
+        // when fetchAllAssociative fires below.
+        $captured = [
+            'sql' => '',
+            'params' => ['pid' => 0, 'q' => '', 'since' => ''],
+        ];
 
         $connection = self::createMock(Connection::class);
         $connection
@@ -354,8 +366,8 @@ final class NotesSearchRepositoryTest extends TestCase
                 &$captured,
                 $rows
             ): array {
-                $captured['sql'] = $sql;
-                $captured['params'] = $params;
+                /** @var array{pid: int, q: string, since: string} $params */
+                $captured = ['sql' => $sql, 'params' => $params];
                 return $rows;
             });
         return $connection;

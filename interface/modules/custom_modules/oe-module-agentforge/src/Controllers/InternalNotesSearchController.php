@@ -94,8 +94,10 @@ final class InternalNotesSearchController
             );
         }
 
-        $rawQuery = $request->query->get('q', '');
-        $query = is_string($rawQuery) ? trim($rawQuery) : '';
+        // getString() narrows the InputBag value to string with no extra
+        // is_string() check — PHPStan's symfony extension already proves
+        // it. trim() then strips intake whitespace before validation.
+        $query = trim($request->query->getString('q', ''));
         if ($query === '') {
             return new JsonResponse(
                 ['error' => 'q query parameter is required and must be non-empty'],

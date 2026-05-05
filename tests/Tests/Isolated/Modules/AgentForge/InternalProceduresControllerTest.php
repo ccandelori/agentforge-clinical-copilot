@@ -222,9 +222,8 @@ final class InternalProceduresControllerTest extends TestCase
         self::assertInstanceOf(JsonResponse::class, $response);
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
 
+        /** @var array{procedures: list<array<string, mixed>>} $body */
         $body = json_decode((string) $response->getContent(), true);
-        self::assertIsArray($body);
-        self::assertArrayHasKey('procedures', $body);
         self::assertCount(1, $body['procedures']);
         self::assertSame('Depression screening (procedure)', $body['procedures'][0]['procedure_name']);
     }

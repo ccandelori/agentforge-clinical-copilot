@@ -49,6 +49,11 @@ class ForbiddenRequestGlobalsRule implements Rule
     private const ABSTRACTION_CLASSES = [
         \OpenEMR\Common\Http\HttpRestRequest::class,
         \OpenEMR\Core\OEEnvBag::class,
+        // AgentForge module — single, audited place where the sidecar
+        // entry-point scripts bridge Apache's stripped Authorization header
+        // into $_SERVER before Symfony Request construction. See class
+        // docblock for context.
+        \OpenEMR\Modules\AgentForge\Http\AuthHeaderBridge::class,
     ];
 
     public function getNodeType(): string

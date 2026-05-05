@@ -141,10 +141,16 @@ class LabsRepository
         if (!is_string($value) || $value === '') {
             return null;
         }
-        try {
-            return (new DateTimeImmutable($value))->format('Y-m-d');
-        } catch (\Throwable) {
+        // Pre-validate via strtotime() to avoid the try/catch entirely.
+        // DateTimeImmutable throws \Exception on bad input (PHP 8.2) or
+        // \DateMalformedStringException on PHP 8.3+, both of which would
+        // require catching a base type the project's ForbiddenCatchTypeRule
+        // forbids (because \Exception catches \ErrorException). strtotime
+        // returns false on bad input — no exception, no catch needed.
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
             return null;
         }
+        return (new DateTimeImmutable('@' . $timestamp))->format('Y-m-d');
     }
 }

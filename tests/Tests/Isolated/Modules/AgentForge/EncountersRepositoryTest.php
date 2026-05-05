@@ -80,7 +80,6 @@ final class EncountersRepositoryTest extends TestCase
 
         $params = $captured['params'];
         self::assertSame(123, $params['pid']);
-        self::assertIsString($params['since']);
         self::assertMatchesRegularExpression(
             '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/',
             $params['since'],
@@ -276,12 +275,21 @@ final class EncountersRepositoryTest extends TestCase
     }
 
     /**
-     * @param list<array<string, mixed>> $rows
-     * @param array<string, mixed>       $captured
+     * @param list<array<string, mixed>>                                     $rows
+     * @param array<empty>                                                   $captured
+     * @param-out array{sql: string, params: array{pid: int, since: string}} $captured
+     *
+     * The fetchAllAssociative mock writes the executed SQL and bound params
+     * into $captured (out-parameter) so each test can assert on the wire-level
+     * query shape. The @param-out shape is what callers see after the call;
+     * input is always an empty array.
      */
     private function makeConnection(array $rows, array &$captured = []): Connection
     {
-        $captured = ['sql' => '', 'params' => []];
+        // Dummy init matching the @param-out shape so PHPStan sees a
+        // consistent type at every program point. Real values come in
+        // when fetchAllAssociative fires below.
+        $captured = ['sql' => '', 'params' => ['pid' => 0, 'since' => '']];
 
         $connection = self::createMock(Connection::class);
         $connection
@@ -290,8 +298,8 @@ final class EncountersRepositoryTest extends TestCase
                 &$captured,
                 $rows
             ): array {
-                $captured['sql'] = $sql;
-                $captured['params'] = $params;
+                /** @var array{pid: int, since: string} $params */
+                $captured = ['sql' => $sql, 'params' => $params];
                 return $rows;
             });
         return $connection;

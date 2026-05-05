@@ -197,9 +197,8 @@ final class InternalNotesSearchControllerTest extends TestCase
 
         self::assertSame(200, $response->getStatusCode());
         self::assertInstanceOf(JsonResponse::class, $response);
+        /** @var array{results: list<array<string, mixed>>} $body */
         $body = json_decode((string) $response->getContent(), true);
-        self::assertIsArray($body);
-        self::assertIsArray($body['results']);
         self::assertCount(1, $body['results']);
         self::assertSame('pnote', $body['results'][0]['source']);
         self::assertSame(5, $body['results'][0]['id']);
@@ -395,13 +394,25 @@ final class InternalNotesSearchControllerTest extends TestCase
      * Connection is mocked so the test can capture the SQL/params.
      *
      * @param list<array<string, mixed>> $rows
-     * @param array<string, mixed>       $captured
+     * @param array<empty>                                                              $captured
+     * @param-out array{sql: string, params: array{pid: int, q: string, since: string}} $captured
+     *
+     * The fetchAllAssociative mock writes the executed SQL and bound params
+     * into $captured (out-parameter) so each test can assert on the wire-level
+     * query shape. The @param-out shape is what callers see after the call;
+     * input is always an empty array. 'q' is the trimmed search query.
      */
     private function makeControllerWith(
         array $rows,
         array &$captured,
     ): InternalNotesSearchController {
-        $captured = ['sql' => '', 'params' => []];
+        // Dummy init matching the @param-out shape so PHPStan sees a
+        // consistent type at every program point. Real values come in
+        // when fetchAllAssociative fires below.
+        $captured = [
+            'sql' => '',
+            'params' => ['pid' => 0, 'q' => '', 'since' => ''],
+        ];
 
         $connection = self::createMock(Connection::class);
         $connection
@@ -410,8 +421,8 @@ final class InternalNotesSearchControllerTest extends TestCase
                 &$captured,
                 $rows
             ): array {
-                $captured['sql'] = $sql;
-                $captured['params'] = $params;
+                /** @var array{pid: int, q: string, since: string} $params */
+                $captured = ['sql' => $sql, 'params' => $params];
                 return $rows;
             });
 
