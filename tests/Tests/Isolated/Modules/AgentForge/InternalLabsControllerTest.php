@@ -235,13 +235,18 @@ final class InternalLabsControllerTest extends TestCase
     /**
      * @return array<string, mixed>
      */
+    /**
+     * @return array{labs: list<array<string, mixed>>}
+     */
     private function decodeJson(Response $response): array
     {
         $content = $response->getContent();
         self::assertIsString($content);
         $decoded = json_decode($content, true);
         self::assertIsArray($decoded);
-        /** @var array<string, mixed> $decoded */
+        self::assertArrayHasKey('labs', $decoded);
+        self::assertIsArray($decoded['labs']);
+        /** @var array{labs: list<array<string, mixed>>} $decoded */
         return $decoded;
     }
 }

@@ -84,6 +84,11 @@ class ForbidDirectSessionWriteRule implements Rule
         'src/Cqm/test.php',
         // Modules with $sessionAllowWrite = true
         'oe-module-faxsms/',
+        // AgentForge module — turn.php constructs a local Session backed by
+        // MockArraySessionStorage (not the persisted PHP session) to bridge
+        // selected $_SESSION['OpenEMR'] values to the controller. Mock storage
+        // is in-memory only; the read_and_close concern doesn't apply.
+        'oe-module-agentforge/',
     ];
 
     public function getNodeType(): string

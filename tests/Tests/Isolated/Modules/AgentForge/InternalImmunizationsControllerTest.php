@@ -182,9 +182,8 @@ final class InternalImmunizationsControllerTest extends TestCase
         self::assertInstanceOf(JsonResponse::class, $response);
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
 
+        /** @var array{immunizations: list<array<string, mixed>>} $body */
         $body = json_decode((string) $response->getContent(), true);
-        self::assertIsArray($body);
-        self::assertArrayHasKey('immunizations', $body);
         self::assertCount(1, $body['immunizations']);
         self::assertSame('140', $body['immunizations'][0]['cvx_code']);
     }

@@ -180,9 +180,8 @@ final class InternalAllergiesControllerTest extends TestCase
         self::assertInstanceOf(JsonResponse::class, $response);
         self::assertSame(Response::HTTP_OK, $response->getStatusCode());
 
+        /** @var array{allergies: list<array<string, mixed>>} $body */
         $body = json_decode((string) $response->getContent(), true);
-        self::assertIsArray($body);
-        self::assertArrayHasKey('allergies', $body);
         self::assertCount(1, $body['allergies']);
         self::assertSame('Penicillin', $body['allergies'][0]['name']);
     }
