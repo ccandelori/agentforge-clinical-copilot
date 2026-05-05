@@ -1,0 +1,397 @@
+{
+	"meta": {
+		"generatedAt": "2026-04-30T00:56:24.764Z",
+		"tasksAnalyzed": 48,
+		"totalTasks": 48,
+		"analysisCount": 48,
+		"thresholdScore": 5,
+		"projectName": "Task Master",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Create Agent Module Directory Structure",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low complexity - directory structure creation with existing patterns. The codebase has clear module examples (oe-module-comlink-telehealth, oe-module-claimrev-connect) to follow. OpenEMR's module system is well-documented via existing modules. Simple file creation task with namespace registration following established PSR-4 patterns."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Implement Module Bootstrap Event Subscriptions",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. Strong reference implementation exists in oe-module-comlink-telehealth/src/Bootstrap.php showing exact event subscription patterns. EventDispatcherInterface is well-integrated. Main complexity is understanding which events to subscribe to (TwigEnvironmentEvent, RenderEvent) and patient context binding from session. Well-trodden path in codebase."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Create Agent Chat Panel Twig Template",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. OpenEMR has extensive Twig template infrastructure with card_base.html.twig pattern. Bootstrap 4.6 is already integrated. Main work is template structure and patient_id binding from session context. Testing requires rendering in actual OpenEMR environment. Isolated Twig compilation tests exist in the test suite."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Implement Agent Panel JavaScript Client",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. jQuery 3.7 integration is straightforward, but streaming response handling and citation rendering adds moderate complexity. EventSource or fetch streaming API requires careful implementation. Client-side state management for chat history. Error handling for missing patient context. Fits within OpenEMR's existing JS patterns (see telehealth module)."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Create Python Sidecar Project Structure",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low complexity - standard Python project scaffolding. pyproject.toml setup with modern dependencies (FastAPI, LangGraph, Pydantic). Well-established patterns in Python ecosystem. Main work is dependency specification and basic directory structure. No OpenEMR-specific complexity yet."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "Implement JWT Minting in PHP Module",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. JWT library integration (firebase/php-jwt) is standard, but integration with OpenEMR's AclMain for role lookup adds complexity. Secret key management from OEGlobalsBag. Breakglass context integration with OpenEMR's session. Claims structure design. Security-critical code requiring careful validation. Follows service layer patterns in src/Services/."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Create PHP Proxy Controller for Sidecar",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Controller skeleton with route registration, (2) Session validation and JWT minting integration, (3) Streaming proxy implementation with error handling",
+			"reasoning": "Medium-high complexity. StreamedResponse implementation in Symfony/HttpFoundation requires understanding of streaming patterns. Session validation, patient context checking, JWT integration. HTTP proxying to sidecar with proper error handling. Multiple integration points (session, JWT service, HTTP client). Security-critical boundary. Moderate effort but manageable with clear sub-tasks."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Implement FastAPI Auth Gateway",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) JWT validation logic with error handling, (2) Redis policy loading and caching, (3) RequestContext construction with type safety",
+			"reasoning": "Medium-high complexity. JWT validation, Redis integration for policy loading, immutable RequestContext design with frozen dataclass. Fail-closed behavior on missing policy. Security-critical code path. Multiple integration points (JWT, Redis, FastAPI dependencies). Requires careful error handling and type safety."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "Create Sensitivity Policy Schema and Loader",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. YAML schema design for sensitivity rules, Redis population logic, health check integration. Policy loading on startup with proper error handling. Schema validation. Not algorithmically complex but requires careful design of rule structure and Redis key patterns. Fail-closed requirement adds testing complexity."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Implement Record Visibility Check in Gateway",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: (1) Behavioral health category checking, (2) CFR42 pattern matching, (3) Attending-only authorization logic, (4) Performance optimization and caching",
+			"reasoning": "Medium-high complexity. Business logic for three sensitivity categories (behavioral health, CFR42, attending-only). Metadata-only checking constraint is critical - never read record content. Authorization logic with breakglass handling. Pattern matching for CFR42. Performance requirement (< 5ms). Multiple edge cases. Security-critical with audit trail requirements."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "Create LLM Client Abstraction Layer",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Protocol-based abstraction for multiple providers (Claude, OpenAI, vLLM). Async streaming implementation for each provider. Timeout handling, error propagation. Provider-specific API differences to abstract. Well-understood pattern but requires careful async implementation and testing with mocked responses."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "Implement LLM Provider Health Check and Failover",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Background health monitoring loop, (2) Failure detection and consecutive failure counting, (3) Provider selection and failover logic",
+			"reasoning": "Medium-high complexity. Background asyncio task management, consecutive failure counting, failover logic, health check endpoint design. State management for provider status. Race conditions in failover switching. Lightweight health checks vs full inference. Recovery logic when primary returns. Moderate complexity with async coordination challenges."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "Create Tool Result Data Structure",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low complexity. Frozen dataclass definitions in Python. Type-safe structure for citations and tool results. No complex logic, just data modeling. Citation string formatting is straightforward. Main work is ensuring all fields are properly typed and immutable constraints enforced."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Implement get_demographics Tool Adapter",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. First tool adapter establishes the pattern for others. FHIR Patient endpoint integration, async HTTP with httpx, timeout enforcement, Redis caching, FHIR resource parsing, CitationBoundRecord construction, error status mapping. Sets pattern but not algorithmically complex. OpenEMR's FHIR implementation is documented."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "Implement get_active_problems Tool Adapter",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. FHIR Condition endpoint with filters. Follows pattern from task 14. Handles both coded (ICD/SNOMED) and free-text diagnoses. Bundle parsing. Simpler than demographics as it follows established pattern. Main complexity is handling dual coded/free-text nature."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Implement get_active_medications Tool Adapter",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. FHIR MedicationRequest with mandatory active=1 filter (audit requirement). Complex dosage extraction from FHIR structure, frequency parsing, prescriber extraction. More complex FHIR resource than Condition. Critical audit requirement adds testing burden. Follows established pattern from task 14."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Implement get_allergies Tool Adapter",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. FHIR AllergyIntolerance endpoint. Allergen extraction, reaction parsing, severity/category handling. Simpler structure than medications. 'No known allergies' case with status='empty'. Follows established pattern. Straightforward FHIR resource."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Implement get_recent_labs Tool Adapter",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: (1) FHIR Observation query with date filtering, (2) Value extraction for numeric/text/coded results, (3) Reference range parsing, (4) Redis caching optimization for expensive query",
+			"reasoning": "Medium-high complexity. Most expensive tool per architecture doc - requires composite indexes. FHIR Observation with laboratory category, value extraction for multiple types (numeric, text, coded), reference range parsing, unit handling, date filtering. Caching is critical for performance. Complex FHIR resource structure. Performance testing required."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Implement get_vitals_trend Tool Adapter",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Uses internal endpoint instead of FHIR for specific trend shape. Multiple vital types (BP, pulse, temp, etc.). Temperature method handling. Date filtering. Depends on PHP endpoint (task 20). Trend calculation logic. More complex than simple FHIR resource but follows established adapter pattern."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Create PHP Internal Endpoint for Vitals Trend",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. PHP controller in OpenEMR module, QueryUtils integration, form_vitals table query with (pid, date) index, JWT validation, EventAuditLogger integration, localhost-only restriction. Follows OpenEMR service patterns visible in 180+ services in src/Services/. Security-critical endpoint."
+		},
+		{
+			"taskId": 21,
+			"taskTitle": "Implement get_recent_encounters Tool Adapter",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) FHIR Encounter query and parsing, (2) Metadata extraction for sensitivity checking, (3) Gateway visibility integration with filtering loop",
+			"reasoning": "Medium-high complexity. FHIR Encounter endpoint, metadata extraction for sensitivity checks (critical - metadata only, never content), gateway visibility integration, encounter type/reason/provider/location extraction. Security-critical sensitivity filtering. First tool to integrate record visibility checks. More complex than previous adapters."
+		},
+		{
+			"taskId": 22,
+			"taskTitle": "Implement get_recent_notes Tool Adapter",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: (1) Internal endpoint integration for pnotes + form_clinical_notes join, (2) Metadata-based sensitivity checking, (3) Permission_denied status handling, (4) Note body fetching only after sensitivity pass",
+			"reasoning": "High complexity. Internal endpoint for pnotes + form_clinical_notes join. Multiple sensitivity checks (CFR42, attending_only). Permission_denied status in results. Critical constraint: note body only fetched after metadata sensitivity pass. Two-phase fetch pattern. Multiple sensitivity categories. Security-critical with audit implications."
+		},
+		{
+			"taskId": 23,
+			"taskTitle": "Create PHP Internal Endpoint for Recent Notes",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) UNION query across pnotes and form_clinical_notes, (2) Deleted/inactive filtering and metadata extraction, (3) JWT validation and audit logging",
+			"reasoning": "Medium-high complexity. UNION query across two tables (pnotes + form_clinical_notes), deleted/inactive filtering, metadata extraction for sensitivity, JWT validation, EventAuditLogger integration. More complex than vitals endpoint due to two-table join. Schema differences between tables. Security-critical."
+		},
+		{
+			"taskId": 24,
+			"taskTitle": "Implement search_notes Tool Adapter",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Internal endpoint integration with FULLTEXT search, (2) Latency monitoring and slow-search handling, (3) Sensitivity filtering on search results",
+			"reasoning": "Medium-high complexity. MySQL FULLTEXT search integration, performance monitoring (≤1s p95), internal endpoint integration, result ranking, sensitivity filtering on results, latency flagging without blocking. Powers critical UC-2 contraindication query. Performance-critical. Search result relevance tuning."
+		},
+		{
+			"taskId": 25,
+			"taskTitle": "Create PHP Internal Endpoint for Note Search",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: (1) FULLTEXT index creation and verification, (2) Patient-scoped MATCH AGAINST query, (3) UNION across pnotes and form_clinical_notes, (4) SQL injection prevention and performance testing",
+			"reasoning": "Medium-high complexity. MySQL FULLTEXT MATCH AGAINST across two tables with UNION, patient_id scoping before fulltext for performance, score-based ranking, snippet extraction, SQL injection prevention, requires FULLTEXT indexes (task 40 dependency), performance-critical (1s p95). Complex SQL with security and performance implications."
+		},
+		{
+			"taskId": 26,
+			"taskTitle": "Implement LangGraph Orchestrator",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: (1) StateGraph definition with AgentState schema, (2) Parallel tool dispatcher with semaphore and timeout, (3) Node implementations for planner/synthesizer/verifier, (4) State transition logic, (5) Error propagation and graceful degradation",
+			"reasoning": "High complexity. LangGraph multi-agent orchestration, parallel tool dispatch with 3-concurrent semaphore, 4s timeout enforcement, state management across nodes, error propagation, graceful degradation on timeouts. Complex async coordination. Depends on 8 tool adapters. Central coordinating component. Testing requires mock tools and careful timing verification."
+		},
+		{
+			"taskId": 27,
+			"taskTitle": "Implement Planner Agent Node",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Use case taxonomy and classification logic, (2) Tool selection rules for each UC, (3) Parallel batch planning and JSON schema validation",
+			"reasoning": "Medium-high complexity. LLM-based planning with structured output (JSON), use case taxonomy (UC1-4), tool selection logic, parallel batch planning, cheaper model usage (4o-mini tier), prompt engineering, JSON parsing robustness. Cognitive complexity in prompt design. Classification accuracy testing required."
+		},
+		{
+			"taskId": 28,
+			"taskTitle": "Implement Streaming Verifier",
+			"complexityScore": 9,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Break down into: (1) Token stream buffering and claim boundary detection, (2) Citation parsing with regex, (3) Citation ID validation against tool result cache, (4) Claim/citation matching verification, (5) Unverified claim replacement logic, (6) Stream reconstruction and chunk emission",
+			"reasoning": "High complexity. Streaming claim-by-claim verification during synthesis (not post-pass), token buffering, claim boundary detection, citation parsing, citation ID existence checking, domain constraint verification, no-retry policy enforcement. Complex state management in streaming context. Security-critical trust boundary. Novel pattern with limited reference implementations. Testing requires recorded token streams."
+		},
+		{
+			"taskId": 29,
+			"taskTitle": "Implement Domain Constraint Checkers",
+			"complexityScore": 7,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: (1) Medication name/dose matching constraint, (2) Lab value numeric tolerance checking, (3) Note content verification, (4) Diagnosis verification, (5) Missing data/counterfactual detection",
+			"reasoning": "Medium-high complexity. Five domain-specific constraints (medications, labs, notes, diagnoses, missing data), pattern matching for medication doses, numeric tolerance for lab values, counterfactual detection, supporting evidence checking. Each domain has unique verification logic. Critical for preventing hallucinations. Extensive test cases required."
+		},
+		{
+			"taskId": 30,
+			"taskTitle": "Setup Redis for Session Memory and Tool Cache",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. Standard Redis async client (redis.asyncio), TTL management (75 min sessions, 60s tool cache), JSON serialization, key patterns for session/tool namespaces. Well-understood infrastructure component. Main complexity is TTL enforcement and proper key isolation. PHI storage implications require encryption at rest."
+		},
+		{
+			"taskId": 31,
+			"taskTitle": "Implement Session Memory Management",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Session ID generation with user+patient+time, turn counting, 6-turn soft cap, 8-turn hard cap enforcement, conversation memory structure, Redis integration. State management across turns. Cap enforcement logic. Session isolation. Not algorithmically complex but requires careful state tracking and testing of boundary conditions."
+		},
+		{
+			"taskId": 32,
+			"taskTitle": "Integrate Langfuse for Observability",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) HMAC pseudonymization implementation, (2) Trace/span structure design with metadata filtering, (3) PHI exclusion verification and testing",
+			"reasoning": "Medium-high complexity. Langfuse SDK integration, HMAC-SHA256 pseudonymization for user/patient IDs, trace/span creation, strict PHI exclusion (no prompt content, no tool args/results, no breakglass reason text, boolean flags only). Security-critical - logging PHI would create parallel PHI store. Testing requires verification of what's NOT logged."
+		},
+		{
+			"taskId": 33,
+			"taskTitle": "Create FastAPI Main Application",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: (1) FastAPI app skeleton with dependencies, (2) /turn endpoint with auth integration, (3) Streaming response with SSE format, (4) Health check with policy verification",
+			"reasoning": "Medium-high complexity. FastAPI application wiring, dependency injection (auth gateway, orchestrator, memory), /turn endpoint with streaming response, SSE formatting, conversation cap enforcement, health check with policy verification. Integration hub connecting tasks 8, 26, 28, 30, 31, 32. Multiple integration points. Testing requires full stack."
+		},
+		{
+			"taskId": 34,
+			"taskTitle": "Implement Breakglass Audit Logging",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Idempotent logging (once per session), OpenEMR EventAuditLogger integration, log.comments field population with reason text, Langfuse boolean-only flag, internal endpoint for log writing. PHI handling (reason text is PHI). Idempotency logic. Audit trail correctness critical. Integration with OpenEMR's existing audit system."
+		},
+		{
+			"taskId": 35,
+			"taskTitle": "Create Docker Compose for Agent Stack",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Multi-service compose (agent-sidecar, Redis, Langfuse, Postgres for Langfuse), network integration with existing OpenEMR dev compose, volume management, environment variable configuration, service dependencies. Standard DevOps task but multiple moving parts. Network connectivity between services. Health checks."
+		},
+		{
+			"taskId": 36,
+			"taskTitle": "Configure Reverse Proxy for Agent Routes",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. Apache or Caddy reverse proxy configuration, path-based routing for /agentforge/*, localhost-only restriction for /agentforge/internal/*, streaming response passthrough, ProxyPreserveHost. Standard reverse proxy config but requires understanding OpenEMR's existing Apache/Caddy setup. Security-critical localhost restriction."
+		},
+		{
+			"taskId": 37,
+			"taskTitle": "Create Eval Framework and Test Harness",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: (1) EvalCase and EvalResult data structures, (2) Programmatic grounding verification, (3) LLM-as-judge integration, (4) Adversarial test case categories, (5) Demo database integration and fixture management",
+			"reasoning": "High complexity. Evaluation framework design, programmatic grounding checks (citation ID existence), LLM-as-judge for relevance, adversarial categories (5 types), demo database integration, fixture management. Complex testing infrastructure. Requires running against demo dataset. Grounding verification requires database access. Judge calibration. Depends on full agent stack (task 33)."
+		},
+		{
+			"taskId": 38,
+			"taskTitle": "Create Mock Tool Layer for Testing",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Fixture capture from demo dataset, (2) Mock implementations for all 8 tools, (3) Determinism verification and fixture schema validation",
+			"reasoning": "Medium-high complexity. Deterministic mocks for 8 tool adapters, fixture loading from JSON, fixture capture against specific Docker image + demo data SHA, schema matching between mock and real output. Depends on tasks 14-22, 24. Significant fixture management. Determinism testing. Schema evolution handling."
+		},
+		{
+			"taskId": 39,
+			"taskTitle": "Implement Regression Lock Test Suite",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: (1) 8 canonical Q&A test case design, (2) 100% grounding verification implementation, (3) Must-include/must-not-include assertion logic, (4) CI integration and regression failure blocking",
+			"reasoning": "Medium-high complexity. 8 canonical test cases covering UC-1 to UC-4 with 2 patient phenotypes each, 100% grounding requirement, assertion logic (must-include, must-not-include, hallucination detection), regression lock enforcement with explicit override requirement, CI integration. Depends on eval harness (37) and mocks (38). High test design complexity."
+		},
+		{
+			"taskId": 40,
+			"taskTitle": "Add Composite Database Indexes for Performance",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. SQL migration for 7 indexes (procedure_report, procedure_order, form_vitals, FULLTEXT on pnotes/form_clinical_notes), index design for composite keys, FULLTEXT index syntax, migration verification, performance testing with EXPLAIN, pre-deploy gate enforcement. Schema modification is straightforward but requires careful testing and is a hard deployment gate."
+		},
+		{
+			"taskId": 41,
+			"taskTitle": "Implement Timeout and Retry Policies",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Centralized timeout configuration (per-tool 2s, tool-phase 4s, total 7s, max steps 7), retry policy with exponential backoff, remaining budget calculation, retryable error classification, non-retryable cases (4xx, permission_denied, empty), graceful degradation formatting. Not algorithmically complex but requires careful policy design and testing of edge cases."
+		},
+		{
+			"taskId": 42,
+			"taskTitle": "Implement Identity Ambiguity Detection",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Medium complexity. Pattern matching for patient references (name, MRN, room/bed), current patient context comparison, hard stop enforcement, error messaging. Regex patterns for different reference types. False positive prevention. Not highly complex but requires careful pattern design and testing with various input formats."
+		},
+		{
+			"taskId": 43,
+			"taskTitle": "Create Prompt Library with Version Tracking",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. Versioned prompt files (planner, synthesizer, verifier), version.json for active version tracking, prompt loading from files, version constant in Langfuse traces, rollback support. Standard artifact management. Main complexity is version management and ensuring prompts render correctly with variable substitution."
+		},
+		{
+			"taskId": 44,
+			"taskTitle": "Configure api_log_option for Agent API User",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low complexity. PHP deployment script, SQL UPDATE to users table, api_log_option flag setting. Simple database operation. Main work is documenting as mandatory deployment step and testing verification. Addresses AUDIT.md finding about api_log body logging."
+		},
+		{
+			"taskId": 45,
+			"taskTitle": "Implement Synthesis Input Truncation",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Token counting with tiktoken for all tool results, (2) Priority-based truncation logic, (3) Oldest-record-first removal within each tool result",
+			"reasoning": "Medium-high complexity. Token counting with tiktoken (cl100k_base), 12k token cap, priority-based truncation (8 tool priority order), oldest-record-first removal, preserving high-priority data, accurate token counting across multiple tool results. Not algorithmically complex but requires careful priority management and testing with various result sizes."
+		},
+		{
+			"taskId": 46,
+			"taskTitle": "Add Stale Data and Conflict Flagging",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: (1) Stale lab detection with date threshold, (2) Conflict detection between problem list and notes, (3) Inline flag formatting and integration with verifier",
+			"reasoning": "Medium-high complexity. Date-based staleness detection (30 day threshold), conflict detection between sources (problem list vs notes assessment), inline flag text generation, status mismatch detection patterns. Requires comparing multiple data sources. Low priority (nice-to-have) but moderate implementation complexity."
+		},
+		{
+			"taskId": 47,
+			"taskTitle": "Create End-to-End Integration Test Suite",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: (1) OpenEMR authentication and session fixtures, (2) Patient context setup, (3) Full UC-1 to UC-4 test flows, (4) Error case testing (no patient context, auth failures), (5) Latency verification within budget",
+			"reasoning": "High complexity. Full stack integration tests, OpenEMR authentication flow, patient chart context setup, streaming response collection, all use cases tested end-to-end, error cases, latency verification within 7s p95 budget. Depends on tasks 33, 35, 36. Docker compose environment. Complex test setup. Multiple integration points. Flakiness potential in async/streaming tests."
+		},
+		{
+			"taskId": 48,
+			"taskTitle": "Document Deployment Checklist",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low complexity. Documentation task compiling deployment requirements from ARCHITECTURE.md, creating actionable checklist, verification steps, security items. Not implementation work. Main effort is ensuring completeness and accuracy against architecture doc. Depends on task 40 (indexes) and 44 (api_log_option) for specific steps."
+		}
+	]
+}

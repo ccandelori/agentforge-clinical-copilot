@@ -44,3 +44,33 @@ docker/development-easy-redis/docker-compose.override.yml
 
 # AgentForge sidecar Redis bind-mount data (Task 30)
 docker/development-easy/redis-data/
+
+# ============================================================================
+# AgentForge — local-only artifacts (per-machine, never committed)
+# ============================================================================
+
+# AI agent / linter / language-server tool state (personal tooling)
+/.claude/
+/.clj-kondo/
+/.learning/
+/.lsp/
+
+# Taskmaster runtime state — per-machine (current-tag pointer + last-switched
+# timestamp). Task data and PRDs under .taskmaster/ ARE committed; only the
+# transient state pointer is ignored.
+/.taskmaster/state.json
+
+# PHPStan / pytest / eval ad-hoc output dumps
+/.phpstan-*
+/phpstan-*.txt
+/phpstan-*.out
+docs/eval-baseline-*.txt
+docs/eval-baseline-*.json
+
+# OpenEMR per-install secrets — never committed
+sites/default/documents/certificates/*.key
+sites/default/documents/certificates/*.pem
+
+# OpenEMR runtime artifacts under logs_and_misc — generated, regenerable
+sites/default/documents/logs_and_misc/methods/sevena
+sites/default/documents/logs_and_misc/methods/sevenb

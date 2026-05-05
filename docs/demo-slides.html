@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentForge Clinical Co-Pilot — MVP demo</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1e2530;
+    --fg: #e6edf3;
+    --fg-muted: #9da7b3;
+    --accent: #58a6ff;
+    --accent-soft: rgba(88, 166, 255, 0.12);
+    --good: #56d364;
+    --bad: #f85149;
+    --warn: #d29922;
+    --rule: #30363d;
+    --code-bg: #161b22;
+    --code-fg: #c9d1d9;
+    --serif: ui-serif, Georgia, "Times New Roman", serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: var(--sans);
+    line-height: 1.4;
+    scroll-snap-type: y mandatory;
+    overflow-y: scroll;
+    height: 100vh;
+  }
+  section.slide {
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4rem 6rem;
+    scroll-snap-align: start;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+  }
+  section.slide.center { align-items: center; text-align: center; }
+  section.slide .slide-number {
+    position: absolute;
+    bottom: 1.5rem;
+    right: 2rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+  }
+  section.slide .slide-label {
+    position: absolute;
+    top: 1.5rem;
+    left: 2rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  h1 { font-size: 4rem; margin: 0 0 1rem; line-height: 1.1; font-weight: 700; }
+  h1 .accent { color: var(--accent); }
+  h2 { font-size: 2.5rem; margin: 0 0 1.5rem; line-height: 1.15; font-weight: 600; }
+  h3 { font-size: 1.5rem; margin: 0 0 0.75rem; color: var(--accent); font-weight: 600; }
+  p { font-size: 1.35rem; margin: 0.5rem 0; max-width: 60ch; }
+  p.lede { font-size: 1.6rem; color: var(--fg); }
+  p.muted { color: var(--fg-muted); }
+  ul { font-size: 1.25rem; line-height: 1.6; padding-left: 1.5rem; max-width: 70ch; }
+  ul li { margin: 0.35rem 0; }
+  ul li strong { color: var(--accent); }
+  code { font-family: var(--mono); font-size: 0.95em; background: var(--code-bg); color: var(--code-fg); padding: 0.1em 0.3em; border-radius: 3px; }
+  pre {
+    font-family: var(--mono);
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 1.25rem;
+    border-radius: 6px;
+    border-left: 3px solid var(--accent);
+    overflow-x: auto;
+    font-size: 1rem;
+    line-height: 1.5;
+    max-width: 90ch;
+  }
+  .callout {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding: 1rem 1.25rem;
+    border-radius: 0 6px 6px 0;
+    font-size: 1.15rem;
+    max-width: 70ch;
+    margin: 1.5rem 0;
+  }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2rem; margin-top: 2rem; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; margin-top: 2rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 1.5rem;
+  }
+  .card h3 { margin-top: 0; font-size: 1.2rem; }
+  .card p { font-size: 1.05rem; }
+  table { border-collapse: collapse; font-size: 1.05rem; margin-top: 1rem; max-width: 80ch; }
+  table th, table td { text-align: left; padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule); }
+  table th { font-weight: 600; color: var(--fg-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .ok { color: var(--good); }
+  .pending { color: var(--fg-muted); }
+  .warn { color: var(--warn); }
+  .footnote { position: absolute; bottom: 2rem; left: 6rem; right: 6rem; color: var(--fg-muted); font-size: 0.95rem; }
+  svg .box rect { fill: var(--panel); stroke: var(--rule); stroke-width: 1; }
+  svg .box.accent rect { stroke: var(--accent); }
+  svg .box.danger rect { stroke: var(--bad); }
+  svg .box text { fill: var(--fg); font-family: var(--sans); }
+  svg .box .sub { fill: var(--fg-muted); font-size: 11px; }
+  svg .arrow line, svg .arrow path { stroke: var(--fg-muted); stroke-width: 1.5; fill: none; }
+  svg .arrow.accent line, svg .arrow.accent path { stroke: var(--accent); stroke-width: 2; }
+  svg .arrow text { fill: var(--fg); font-family: var(--mono); font-size: 11px; }
+  svg .arrow.accent text { fill: var(--accent); font-weight: 600; }
+  .nav-hint {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--fg-muted);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    background: var(--panel);
+    padding: 0.4rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid var(--rule);
+    pointer-events: none;
+  }
+  @media print {
+    body { scroll-snap-type: none; height: auto; overflow: visible; }
+    section.slide { break-after: page; height: 100vh; border-bottom: none; }
+    .nav-hint { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 1. TITLE -->
+<section class="slide center">
+  <span class="slide-label">MVP submission · 2026-04-30</span>
+  <h1>Agent<span class="accent">Forge</span></h1>
+  <p class="lede">A clinical co-pilot embedded in OpenEMR.</p>
+  <p class="muted" style="margin-top: 2rem; font-size: 1rem;">Cameron Candelori · Gauntlet AI</p>
+  <span class="slide-number">1 / 9</span>
+</section>
+
+<!-- 2. THE PROBLEM -->
+<section class="slide">
+  <span class="slide-label">Context</span>
+  <h2>The clinician's problem</h2>
+  <p class="lede">Open a patient chart. You have 3 minutes before the next appointment. You need to know:</p>
+  <ul>
+    <li>What's this patient's active problem list?</li>
+    <li>What are they currently on?</li>
+    <li>Anything notable since their last visit?</li>
+  </ul>
+  <p class="muted" style="margin-top: 2rem;">Today: 5+ clicks across 3 tabs. Goal: ask in natural language, get a grounded answer with citations — without leaving the chart.</p>
+  <span class="slide-number">2 / 9</span>
+</section>
+
+<!-- 3. WHAT WE'RE DEMOING -->
+<section class="slide">
+  <span class="slide-label">Tonight's demo</span>
+  <h2>What you're about to see</h2>
+  <ul>
+    <li>An OpenEMR module that adds a chat panel to the patient sidebar</li>
+    <li>A Python sidecar (FastAPI + Anthropic Claude) that runs the agent loop</li>
+    <li>Three tools wired end-to-end: <code>get_demographics</code>, <code>get_active_problems</code>, <code>get_active_medications</code></li>
+    <li>JWT-bearer auth between PHP and the sidecar — same JWT validates in both directions</li>
+  </ul>
+  <!-- <div class="callout">
+    <strong>Scope honesty:</strong> This is a vertical slice of the architecture. Verifier, session memory, and the remaining six tools are unfinished — on the roadmap, not redesigned away.
+  </div> -->
+  <span class="slide-number">3 / 9</span>
+</section>
+
+<!-- 4. SYSTEM TOPOLOGY -->
+<section class="slide" style="padding: 3rem 4rem;">
+  <span class="slide-label">Architecture</span>
+  <div style="display: flex; align-items: baseline; gap: 1.5rem; flex-wrap: wrap;">
+    <h2 style="margin: 0;">Where everything lives</h2>
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-left: auto; font-family: var(--mono); font-size: 0.7rem; color: var(--fg-muted);">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(88,166,255,.18);border:1.5px solid #58a6ff;vertical-align:middle;"></span> Browser</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(63,185,80,.18);border:1.5px solid #3fb950;vertical-align:middle;"></span> OpenEMR (PHP)</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(188,140,255,.18);border:1.5px solid #bc8cff;vertical-align:middle;"></span> Agent sidecar</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(210,153,34,.18);border:1.5px solid #d29922;vertical-align:middle;"></span> PHI stores</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(88,166,255,.10);border:1.5px dashed #58a6ff;vertical-align:middle;"></span> LLM provider</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(248,81,73,.10);border:1.5px dashed #f85149;vertical-align:middle;"></span> Observability</span>
+      <span style="margin-left: 1rem; padding-left: 1rem; border-left: 1px solid var(--rule);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#444;opacity:0.4;vertical-align:middle;"></span> faded = planned, not in MVP</span>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 1.5rem; flex: 1; min-height: 0; margin-top: 1rem; align-items: stretch;">
+    <!-- SVG -->
+    <div style="flex: 1; min-width: 0;">
+      <svg viewBox="0 0 740 540" style="display: block; width: 100%; height: 100%; max-height: calc(100vh - 220px);">
+        <defs>
+          <marker id="t-arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#444c56"/></marker>
+        </defs>
+
+        <!-- LAYER 1: BROWSER -->
+        <g>
+          <rect x="8" y="8" width="724" height="50" rx="7" fill="rgba(88,166,255,0.10)" stroke="#58a6ff" stroke-width="1.5"/>
+          <text x="370" y="27" text-anchor="middle" font-size="12" font-weight="700" fill="#58a6ff">Browser — Clinician at the patient chart</text>
+          <text x="370" y="44" text-anchor="middle" font-size="9.5" fill="#8b949e">Twig card + vanilla JS · binds to .agentforge-panel · POSTs message text only (no PHI in URL)</text>
+        </g>
+
+        <!-- Arrow 1 -->
+        <line x1="370" y1="58" x2="370" y2="80" stroke="#444c56" stroke-width="1.5" marker-end="url(#t-arr)"/>
+        <rect x="248" y="63" width="244" height="12" rx="3" fill="#0d1117" opacity="0.9"/>
+        <text x="370" y="73" text-anchor="middle" font-size="9" fill="#6e7681">HTTPS · session cookie (OpenEMR session)</text>
+
+        <!-- LAYER 2: OPENEMR PHP -->
+        <g>
+          <rect x="8" y="82" width="724" height="62" rx="7" fill="rgba(63,185,80,0.10)" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="370" y="101" text-anchor="middle" font-size="12" font-weight="700" fill="#3fb950">OpenEMR PHP host (existing infrastructure)</text>
+          <text x="370" y="116" text-anchor="middle" font-size="9.5" fill="#8b949e">Module registration · session bridge · GACL role lookup · JWT minting · proxy controller</text>
+          <text x="370" y="131" text-anchor="middle" font-size="9.5" fill="#8b949e">Internal endpoints re-validate the same JWT and serve PHI via Doctrine DBAL</text>
+        </g>
+
+        <!-- Arrow 2 -->
+        <line x1="370" y1="144" x2="370" y2="168" stroke="#444c56" stroke-width="1.5" marker-end="url(#t-arr)"/>
+        <rect x="200" y="149" width="340" height="12" rx="3" fill="#0d1117" opacity="0.9"/>
+        <text x="370" y="159" text-anchor="middle" font-size="9" fill="#6e7681">HTTP · signed JWT  (user_id, patient_id, role, breakglass_flag, reason)</text>
+
+        <!-- LAYER 3: AGENT SIDECAR (outer) -->
+        <g>
+          <rect x="8" y="170" width="724" height="148" rx="7" fill="rgba(188,140,255,0.07)" stroke="#bc8cff" stroke-width="1.5"/>
+          <text x="370" y="187" text-anchor="middle" font-size="11" font-weight="700" fill="#bc8cff">Agent sidecar — Python · FastAPI · single process</text>
+
+          <!-- Auth Gateway (★ trust boundary, BUILT) -->
+          <g>
+            <rect x="20" y="194" width="190" height="50" rx="5" fill="rgba(188,140,255,0.22)" stroke="#bc8cff" stroke-width="2"/>
+            <text x="32" y="208" font-size="13" font-weight="800" fill="#bc8cff">★</text>
+            <text x="115" y="211" text-anchor="middle" font-size="10" font-weight="700" fill="#bc8cff">Auth Gateway</text>
+            <text x="115" y="225" text-anchor="middle" font-size="8.5" fill="#8b949e">Verifies JWT · loads sensitivity rules</text>
+            <text x="115" y="237" text-anchor="middle" font-size="8.5" fill="#8b949e">Constructs typed RequestContext</text>
+          </g>
+
+          <!-- Orchestrator (BUILT, MVP shape) -->
+          <g>
+            <rect x="218" y="194" width="200" height="50" rx="5" fill="rgba(188,140,255,0.14)" stroke="rgba(188,140,255,0.5)" stroke-width="1"/>
+            <text x="318" y="211" text-anchor="middle" font-size="10" font-weight="700" fill="#bc8cff">Orchestrator</text>
+            <text x="318" y="225" text-anchor="middle" font-size="8.5" fill="#8b949e">MVP: 1-loop async dispatch (3 tools)</text>
+            <text x="318" y="237" text-anchor="middle" font-size="8.5" fill="#8b949e">Plan: LangGraph · Planner + Dispatcher</text>
+          </g>
+
+          <!-- LLM Client (BUILT) -->
+          <g>
+            <rect x="426" y="194" width="294" height="50" rx="5" fill="rgba(188,140,255,0.14)" stroke="rgba(188,140,255,0.5)" stroke-width="1"/>
+            <text x="573" y="211" text-anchor="middle" font-size="10" font-weight="700" fill="#bc8cff">LLM Client (abstraction layer)</text>
+            <text x="573" y="225" text-anchor="middle" font-size="8.5" fill="#8b949e">Protocol: ClaudeClient · OpenAIClient · VLLMClient</text>
+            <text x="573" y="237" text-anchor="middle" font-size="8.5" fill="#8b949e">Wired tonight: Claude (sonnet-4.5)</text>
+          </g>
+
+          <!-- Tool Layer (BUILT, partial) -->
+          <g>
+            <rect x="20" y="253" width="296" height="54" rx="5" fill="rgba(188,140,255,0.14)" stroke="rgba(188,140,255,0.5)" stroke-width="1"/>
+            <text x="168" y="270" text-anchor="middle" font-size="10" font-weight="700" fill="#bc8cff">Tool Layer  ·  3 of 9 wired</text>
+            <text x="168" y="284" text-anchor="middle" font-size="8.5" fill="#8b949e">Typed ToolResult adapters · zero LLM-visible inputs</text>
+            <text x="168" y="296" text-anchor="middle" font-size="8.5" fill="#8b949e">demographics ✓ · problems ✓ · medications ✓ · 6 next</text>
+          </g>
+
+          <!-- Verifier (PLANNED — DIMMED) -->
+          <g opacity="0.32">
+            <rect x="324" y="253" width="396" height="54" rx="5" fill="rgba(188,140,255,0.14)" stroke="rgba(188,140,255,0.5)" stroke-width="1" stroke-dasharray="5,3"/>
+            <text x="522" y="270" text-anchor="middle" font-size="10" font-weight="700" fill="#bc8cff">Verifier  (streaming · sentence-level)</text>
+            <text x="522" y="284" text-anchor="middle" font-size="8.5" fill="#8b949e">Buffers tokens → checks citation IDs vs. tool result cache → 5 domain constraints</text>
+            <text x="522" y="296" text-anchor="middle" font-size="8.5" fill="#8b949e">Fail → drop claim silently · never retry · no unverified text reaches the clinician</text>
+          </g>
+          <g>
+            <rect x="623" y="247" width="92" height="13" rx="3" fill="#0d1117" stroke="#bc8cff" stroke-width="0.8" opacity="0.95"/>
+            <text x="669" y="256" text-anchor="middle" font-size="8" font-weight="700" fill="#bc8cff" letter-spacing="0.06em">PLANNED · NOT IN MVP</text>
+          </g>
+        </g>
+
+        <!-- Arrows down to layer 4 -->
+        <line x1="110" y1="318" x2="110" y2="348" stroke="#444c56" stroke-width="1.5" marker-end="url(#t-arr)" opacity="0.32"/>
+        <line x1="364" y1="318" x2="364" y2="348" stroke="#444c56" stroke-width="1.5" marker-end="url(#t-arr)"/>
+        <line x1="580" y1="318" x2="580" y2="348" stroke="#444c56" stroke-width="1.5" marker-end="url(#t-arr)"/>
+        <line x1="690" y1="318" x2="665" y2="440" stroke="#444c56" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#t-arr)" opacity="0.32"/>
+        <rect x="678" y="348" width="88" height="11" rx="2" fill="#0d1117" opacity="0.9"/>
+        <text x="684" y="357" font-size="8.5" fill="#6e7681" opacity="0.5">trace metadata</text>
+
+        <!-- LAYER 4: DATA STORES -->
+        <!-- Redis (PLANNED — DIMMED) -->
+        <g opacity="0.32">
+          <rect x="8" y="350" width="208" height="74" rx="7" fill="rgba(210,153,34,0.12)" stroke="#d29922" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="112" y="370" text-anchor="middle" font-size="11" font-weight="700" fill="#d29922">Redis</text>
+          <text x="112" y="385" text-anchor="middle" font-size="9" fill="#8b949e">Tool result cache  (60s TTL · PHI)</text>
+          <text x="112" y="399" text-anchor="middle" font-size="9" fill="#8b949e">Session memory  (75min TTL · PHI)</text>
+          <text x="112" y="413" text-anchor="middle" font-size="9" fill="#8b949e">Sensitivity policy  (no PHI)</text>
+        </g>
+        <g>
+          <rect x="118" y="344" width="92" height="13" rx="3" fill="#0d1117" stroke="#d29922" stroke-width="0.8" opacity="0.95"/>
+          <text x="164" y="353" text-anchor="middle" font-size="8" font-weight="700" fill="#d29922" letter-spacing="0.06em">PLANNED · NOT IN MVP</text>
+        </g>
+
+        <!-- OpenEMR HTTP API (BUILT — internal endpoints we wrote tonight) -->
+        <g>
+          <rect x="228" y="350" width="262" height="74" rx="7" fill="rgba(63,185,80,0.10)" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="359" y="370" text-anchor="middle" font-size="11" font-weight="700" fill="#3fb950">OpenEMR HTTP API</text>
+          <text x="359" y="385" text-anchor="middle" font-size="9" fill="#8b949e">/agentforge/internal/*  (built tonight · JWT-validated)</text>
+          <text x="359" y="399" text-anchor="middle" font-size="9" fill="#8b949e">FHIR R4 /apis/fhir/r4/  (preferred future path)</text>
+          <text x="359" y="413" text-anchor="middle" font-size="9" fill="#8b949e">EventAuditLogger fires on every BaseService call</text>
+        </g>
+
+        <!-- LLM Provider (BUILT — Claude only) -->
+        <g>
+          <rect x="502" y="350" width="230" height="74" rx="7" fill="rgba(88,166,255,0.08)" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="617" y="370" text-anchor="middle" font-size="11" font-weight="700" fill="#58a6ff">LLM provider</text>
+          <text x="617" y="385" text-anchor="middle" font-size="9" fill="#8b949e">Claude Sonnet 4.5  (wired tonight)</text>
+          <text x="617" y="399" text-anchor="middle" font-size="9" fill="#8b949e">GPT-4o  (secondary failover · planned)</text>
+          <text x="617" y="413" text-anchor="middle" font-size="9" fill="#8b949e">vLLM self-hosted  (production path · planned)</text>
+        </g>
+
+        <line x1="359" y1="424" x2="359" y2="440" stroke="#444c56" stroke-width="1.5" marker-end="url(#t-arr)"/>
+
+        <!-- LAYER 5: AUDIT + OBSERVABILITY -->
+        <!-- OpenEMR Audit (BUILT — inherited) -->
+        <g>
+          <rect x="228" y="442" width="262" height="60" rx="7" fill="rgba(63,185,80,0.08)" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="359" y="461" text-anchor="middle" font-size="11" font-weight="700" fill="#3fb950">OpenEMR audit tables</text>
+          <text x="359" y="476" text-anchor="middle" font-size="9" fill="#8b949e">log  (legal record · 6yr · PHI · breakglass reason)</text>
+          <text x="359" y="491" text-anchor="middle" font-size="9" fill="#8b949e">api_log  (body suppressed via api_log_option=1)</text>
+        </g>
+
+        <!-- Langfuse (PLANNED — DIMMED) -->
+        <g opacity="0.32">
+          <rect x="502" y="442" width="230" height="60" rx="7" fill="rgba(248,81,73,0.08)" stroke="#f85149" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="617" y="461" text-anchor="middle" font-size="11" font-weight="700" fill="#f85149">Langfuse  (self-hosted)</text>
+          <text x="617" y="476" text-anchor="middle" font-size="9" fill="#8b949e">HMAC-pseudonymized IDs only · no PHI</text>
+          <text x="617" y="491" text-anchor="middle" font-size="9" fill="#8b949e">latency · tokens · tool status · verifier decisions</text>
+        </g>
+        <g>
+          <rect x="571" y="436" width="92" height="13" rx="3" fill="#0d1117" stroke="#f85149" stroke-width="0.8" opacity="0.95"/>
+          <text x="617" y="445" text-anchor="middle" font-size="8" font-weight="700" fill="#f85149" letter-spacing="0.06em">PLANNED · NOT IN MVP</text>
+        </g>
+
+        <text x="8" y="525" font-size="8" fill="#444c56">- - -  dashed border = write-only audit / external destination</text>
+      </svg>
+    </div>
+
+    <!-- Right info panel -->
+    <div style="width: 220px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0.75rem; justify-content: center;">
+      <div style="background: var(--panel); border: 1px solid #bc8cff; border-radius: 10px; padding: 1rem;">
+        <div style="font-family: var(--mono); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #bc8cff; margin-bottom: 0.6rem;">Two principles</div>
+        <div style="font-size: 0.85rem; line-height: 1.5; margin-bottom: 0.6rem;"><strong style="color: #bc8cff;">1.</strong> No direct DB reads — every call goes through OpenEMR PHP.</div>
+        <div style="font-size: 0.85rem; line-height: 1.5;"><strong style="color: #bc8cff;">2.</strong> One trust boundary — the Auth Gateway. Inside it, requests carry typed RequestContext.</div>
+        <div style="font-size: 0.7rem; color: var(--fg-muted); font-style: italic; margin-top: 0.6rem;">Parse, don't validate.</div>
+      </div>
+      <div style="background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem; font-size: 0.8rem; line-height: 1.5;">
+        <div style="font-family: var(--mono); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: 0.5rem;">Tonight's slice</div>
+        <span style="color: var(--good);">●</span> Browser, PHP host, Auth Gateway, Orchestrator (1-loop), LLM Client, 3 tools, OpenEMR API, Claude, audit tables.<br><br>
+        <span style="color: var(--fg-muted);">○</span> Verifier, Redis, Langfuse, 6 more tools — next, per the plan.
+      </div>
+    </div>
+  </div>
+  <span class="slide-number">4 / 9</span>
+</section>
+
+<!-- 5. WHY A SIDECAR -->
+<section class="slide">
+  <span class="slide-label">Design choice 1 of 3</span>
+  <h2>Why a sidecar, not "agent code in PHP"</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3>OpenEMR is a 20-year-old PHP codebase</h3>
+      <p>Strict typing now (PHPStan level 10), but heavy legacy surface. Async LLM client work doesn't belong in Apache request lifecycles.</p>
+    </div>
+    <div class="card">
+      <h3>Python is where the AI ecosystem lives</h3>
+      <p>Pydantic, Anthropic SDK, LangGraph, ruff, mypy. Better to embrace it as a separate process than try to drag it into the PHP stack.</p>
+    </div>
+  </div>
+  <div class="callout">
+    PHP's only job is <strong>session → JWT → proxy</strong>. Everything agent-shaped is in the sidecar. Clean process boundary, clean dependency boundary.
+  </div>
+  <span class="slide-number">5 / 9</span>
+</section>
+
+<!-- 6. JWT TRUST BOUNDARY -->
+<section class="slide">
+  <span class="slide-label">Design choice 2 of 3</span>
+  <h2>The JWT travels in both directions</h2>
+  <p class="lede">Most agent demos talk to a database directly. We don't.</p>
+  <ul>
+    <li>Every patient-data read goes back through OpenEMR's PHP layer via internal endpoints</li>
+    <li>The sidecar forwards the <strong>same user-bound JWT</strong> it received from the browser</li>
+    <li>The PHP internal endpoint refuses any request whose JWT <code>patient_id</code> claim doesn't match the requested pid</li>
+    <li>Every read still hits OpenEMR's existing audit-log machinery — we inherit AUDIT.md compliance for free</li>
+  </ul>
+  <div class="callout">
+    We could have read MariaDB directly from Python. We chose the more expensive path because the audit chain only works if every read flows through PHP.
+  </div>
+  <span class="slide-number">6 / 9</span>
+</section>
+
+<!-- 7. LLM NEVER PICKS THE PATIENT -->
+<section class="slide">
+  <span class="slide-label">Design choice 3 of 3</span>
+  <h2>The LLM never chooses <em>which patient</em> to look at</h2>
+  <p>Each tool spec offered to Claude has <strong>zero LLM-visible parameters</strong>:</p>
+  <pre>MEDICATIONS_TOOL_SPEC = ToolSpec(
+    name="get_active_medications",
+    description="Look up the active patient's currently active medications. ...",
+    input_schema={
+        "type": "object",
+        "properties": {},   <span style="color: var(--accent);">// no inputs</span>
+        "required": [],
+    },
+)</pre>
+  <p style="margin-top: 1rem;">Patient_id is bound at the <code>RequestContext</code> layer from the JWT, not from anything Claude says.</p>
+  <div class="callout">
+    The model decides <strong>whether</strong> to call a tool. Never <strong>who about</strong>. A jailbreak that says "look up Bob in chart 5" can't actually do anything.
+  </div>
+  <span class="slide-number">7 / 9</span>
+</section>
+
+<!-- 8. TOOL CATALOG / ROADMAP -->
+<section class="slide">
+  <span class="slide-label">What's built · what's next</span>
+  <h2>Tool catalog &amp; roadmap</h2>
+  <table>
+    <tr><th>Tool</th><th>Status</th><th>Notes</th></tr>
+    <tr><td><code>get_demographics</code></td><td class="ok">✓ shipped</td><td>Name, DOB, sex, language</td></tr>
+    <tr><td><code>get_active_problems</code></td><td class="ok">✓ shipped</td><td>Active diagnoses / problem list</td></tr>
+    <tr><td><code>get_active_medications</code></td><td class="ok">✓ shipped</td><td>Currently active meds with dates</td></tr>
+    <tr><td><code>get_allergies</code></td><td class="pending">○ next</td><td>Same shape, ~3 hours</td></tr>
+    <tr><td><code>get_recent_labs</code></td><td class="pending">○ next</td><td>Most expensive query — needs composite index</td></tr>
+    <tr><td><code>get_recent_encounters</code></td><td class="pending">○ next</td><td></td></tr>
+    <tr><td><code>get_recent_notes</code></td><td class="pending">○ next</td><td>Sensitivity-aware</td></tr>
+    <tr><td><code>get_vitals_trend</code></td><td class="pending">○ next</td><td></td></tr>
+    <tr><td><code>search_notes</code></td><td class="pending">○ next</td><td>Full-text over pnotes + clinical_notes</td></tr>
+  </table>
+  <p class="muted" style="margin-top: 1rem;">The contract is settled — each new tool follows the demographics pattern. ~3 hours apiece.</p>
+  <span class="slide-number">8 / 9</span>
+</section>
+
+<!-- 9. WHAT'S NEXT (ARCHITECTURE) -->
+<section class="slide">
+  <span class="slide-label">Roadmap</span>
+  <h2>Three pieces of the architecture aren't built yet</h2>
+  <div class="grid-3">
+    <div class="card">
+      <h3>1. Verifier</h3>
+      <p>Sentence-level grounding check. Rejects any claim whose citation isn't in this turn's tool result cache.</p>
+      <p class="muted" style="margin-top: 0.5rem; font-size: 0.95rem;">ARCHITECTURE.md §6 — "the most consequential decision in this document."</p>
+    </div>
+    <div class="card">
+      <h3>2. Redis session memory</h3>
+      <p>75-min encounter window. Multi-turn context. BAA-covered storage.</p>
+      <p class="muted" style="margin-top: 0.5rem; font-size: 0.95rem;">ARCHITECTURE.md §3 — currently every <code>/turn</code> is independent.</p>
+    </div>
+    <div class="card">
+      <h3>3. Six more tools</h3>
+      <p>Allergies, labs, encounters, notes, vitals trends, full-text note search.</p>
+      <p class="muted" style="margin-top: 0.5rem; font-size: 0.95rem;">Pattern is settled — each new tool is mechanical.</p>
+    </div>
+  </div>
+  <div class="callout" style="margin-top: 2rem;">
+    The shape of the system isn't changing. We're filling in pieces that were specified from the start.
+  </div>
+  <p class="muted" style="margin-top: 2rem; font-size: 1rem;">Live at <code>https://143.244.157.90:9300/</code> · 7 commits on <code>main</code> · 31 sidecar tests + 2776 PHP isolated tests pass</p>
+  <span class="slide-number">9 / 9</span>
+</section>
+
+<div class="nav-hint">↓ / PgDn / Space to advance · F11 fullscreen · Cmd-P to print to PDF</div>
+
+</body>
+</html>

@@ -1,0 +1,293 @@
+{
+	"meta": {
+		"generatedAt": "2026-05-05T00:15:53.370Z",
+		"tasksAnalyzed": 35,
+		"totalTasks": 35,
+		"analysisCount": 35,
+		"thresholdScore": 5,
+		"projectName": "Task Master",
+		"usedResearch": false
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Refactor Orchestrator to LangGraph Supervisor",
+			"complexityScore": 9,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Break down the LangGraph supervisor refactoring into: 1) Create orchestrator/graph.py with StateGraph definition and AgentState TypedDict, 2) Implement supervisor_node() routing logic using Planner, 3) Migrate existing turn() tool-use loop to intake_extractor_node(), 4) Create placeholder evidence_retriever_node(), 5) Create synthesize_node() with existing synthesis logic, 6) Wrap StreamingVerifier as terminal_node(), 7) Wire SynthesisInputTruncator and DataQuality warnings, 8) Add Langfuse spans per handoff and iteration bounds, 9) Update tests to run against new graph while maintaining 9 W1 regression locks",
+			"reasoning": "The orchestrator/__init__.py is 1,716 lines with a complex iterative tool-use loop, context vars, streaming, verifier integration, and retry policies. LangGraph is listed in dependencies but NOT actively used - this is a major architectural shift. Need to preserve all existing behavior (9 regression locks), maintain streaming, add new routing logic, and wire observability. High integration complexity with existing Planner, Verifier, and all 11 tool fetchers."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Implement Citation Contract Pydantic Schemas",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/src/agentforge/schemas/citation.py with SourceType enum (LAB_PDF, INTAKE_FORM, GUIDELINE, OPENEMR_RECORD), PageBBox model with page (int >=1) and normalized 0..1 coordinates plus bbox_confidence, Citation model with all fields, and @model_validator enforcing bbox_confidence >= 0.7 for scanned sources (LAB_PDF, INTAKE_FORM). Add __init__.py exports and comprehensive unit tests.",
+			"reasoning": "Greenfield task - schemas/ directory doesn't exist. The pattern is well-established in the codebase (see tools/dtos.py for frozen Pydantic models). Creating Pydantic models with validators is straightforward. Four models total with one validation rule. Low complexity but foundational for Tasks 3, 4, 9, and others."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Implement Lab Extraction Schemas",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/src/agentforge/schemas/lab.py with AbnormalFlag enum (6 values), LabValue model with test_name, optional loinc_code, value, unit, reference_range, collection_date, abnormal_flag, and Citation reference. Create LabPdfExtraction model with document_id, patient_id, ordering_provider, accession_number, values list, extraction_confidence, and unsupported_fields. Add exports and unit tests.",
+			"reasoning": "Follows directly from Task 2 pattern. Two main models (LabValue, LabPdfExtraction) plus one enum. Standard Pydantic modeling with existing Citation as dependency. No complex validation logic beyond standard field constraints. Very similar to existing ToolResult patterns in tools/dtos.py."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Implement Intake Form Extraction Schemas",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/src/agentforge/schemas/intake.py with Demographic, MedicationEntry, AllergyEntry, FamilyHistoryEntry models (each with Citation reference), and IntakeFormExtraction model aggregating all fields including chief_concern, demographics list, medications list, allergies list, family_history list, extraction_confidence, and unsupported_fields. Add exports and unit tests.",
+			"reasoning": "Very similar to Task 3. Five models total, all simple Pydantic BaseModels with Citation references. No complex validation logic. Straightforward schema definition following established patterns."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Seed AgentForge Intake Questionnaire via Doctrine Migration",
+			"complexityScore": 5,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Already has 5 subtasks defined: 1) Create migration file with proper namespace/class structure, 2) Implement SELECT-then-INSERT/UPDATE idempotency pattern in up(), 3) Define FHIR Questionnaire JSON structure matching IntakeFormExtraction, 4) Implement down() method with parameterized DELETE, 5) Verify migration integration with FhirQuestionnaireResponseFormService",
+			"reasoning": "Existing subtasks are well-defined. Doctrine migrations infrastructure exists (4 migrations present). questionnaire_repository table schema is known. The SELECT-then-INSERT pattern for idempotency (no unique index on source_url) adds complexity. Need FHIR R4 Questionnaire JSON knowledge. Integration verification with FhirQuestionnaireResponseFormService requires understanding the service layer."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "Implement Browser Upload Document Route",
+			"complexityScore": 6,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Already has 5 subtasks defined: 1) Create upload_document.php with session authentication and CSRF validation, 2) Implement session-based patient_id derivation with mismatch rejection, 3) Implement PDF file validation and Document::createDocument() integration, 4) Implement audit logging and JSON response, 5) Write security integration tests for patient_id mismatch scenarios",
+			"reasoning": "Existing subtasks cover the task well. 12 internal endpoints exist as patterns (labs.php shows exact boilerplate). Key security challenge: session-based patient_id with mismatch detection. Need to understand Document::createDocument() API and EventAuditLogger patterns. Browser upload differs from internal JWT endpoints - uses session auth + CSRF."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Implement JWT-Validated Document Bytes Endpoint",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create public/internal/get_document_bytes.php following existing internal/*.php pattern (labs.php as template). Validate JWT using AgentJwtValidator, extract patient_id from claims, accept document_id from query parameter, load Document and verify patient ownership, read bytes via Document API, return with correct Content-Type header. Handle 401/403/404 error cases.",
+			"reasoning": "Clear pattern to follow from 12 existing internal endpoints. labs.php shows exact boilerplate for JWT validation, Doctrine connection, controller wiring. Main additions: Document class integration and bytes retrieval. No caching complexity. Straightforward endpoint implementation."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Implement JWT-Validated Lab Result Persistence Endpoint",
+			"complexityScore": 7,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Already has 6 subtasks defined: 1) Create DocumentOwnershipVerifier service, 2) Create PersistLabResultController with triple patient verification, 3) Create LabResultPersistenceRepository for procedure_* table writes, 4) Create persist_lab_result.php public endpoint, 5) Integrate EventAuditLogger for lab_persist audit events, 6) Add comprehensive integration tests for patient scoping verification",
+			"reasoning": "Triple patient_id verification (JWT ↔ request ↔ document owner) adds security complexity. Need to write to procedure_order/procedure_report/procedure_result tables with proper relationships. Existing patterns help but procedure_* table relationships are complex. DocumentOwnershipVerifier is new service. Six subtasks capture the scope well."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "Implement Hybrid RAG Pipeline Components",
+			"complexityScore": 8,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "Break down into: 1) Add rank_bm25 and sentence-transformers to pyproject.toml plus cohere optional extra, 2) Create rag/bm25.py with BM25Retriever class, 3) Create rag/dense.py with DenseRetriever using all-MiniLM-L6-v2, 4) Create rag/rrf.py with RRFMerger for reciprocal rank fusion, 5) Create rag/reranker.py with Reranker Protocol and three implementations (CrossEncoder, Cohere, Passthrough), 6) Create rag/evidence_retriever.py orchestrating full pipeline, 7) Create GuidelineChunk dataclass with Citation attachment",
+			"reasoning": "Greenfield - rag/ directory doesn't exist. Multiple ML components: BM25 (rank_bm25 library), dense retrieval (sentence-transformers, requires model downloads), RRF merger (algorithmic), three reranker implementations. Protocol-based abstraction pattern. Integration with Citation contract. Significant dependency additions and model weight management."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Commit Clinical Guideline Corpus and Chunk Index",
+			"complexityScore": 5,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: 1) Create sidecar/data/guidelines/ directory structure by topic (diabetes, hypertension, lipids, renal, labs), 2) Author ~30 guideline markdown documents covering ADA, JNC8, ACC/AHA, CKD staging, and lab interpretation, 3) Create chunking script producing ~500 token chunks with metadata (doc_id, section, version, chunk_id, text), 4) Generate index.json with pre-chunked data (~600 chunks), 5) Add LICENSE/attribution for guideline sources",
+			"reasoning": "Content authoring task - requires medical/clinical knowledge for accurate guidelines. Chunking algorithm needs token counting (tiktoken available). ~30 documents producing ~600 chunks is manageable scope. Index.json schema is straightforward. Main challenge is sourcing accurate clinical content with proper attribution."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "Implement Sidecar attach_and_extract Tool for Lab PDFs",
+			"complexityScore": 7,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Already has 6 subtasks defined: 1) Add pymupdf dependency to pyproject.toml, 2) Implement render_pages() using PyMuPDF for PDF to base64 PNG, 3) Implement fetch_bytes() for document retrieval via JWT endpoint, 4) Implement extract_lab_pdf() Claude vision API call with strict-schema prompt, 5) Implement persist() method for lab results, 6) Create AttachAndExtractTool class orchestrating full pipeline",
+			"reasoning": "Multi-step pipeline: fetch bytes → render PDF pages → vision API call → validate Pydantic → persist. Integrates with Task 3 schemas, Task 7 bytes endpoint, Task 8 persist endpoint. Claude vision API integration is new pattern. PyMuPDF dependency. Memory-only processing (no disk writes). Security constraint on PHI in logs."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "Implement JWT-Validated QuestionnaireResponse Persistence Endpoint",
+			"complexityScore": 7,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Already has 6 subtasks defined: 1) Create PersistQuestionnaireResponseController with triple patient verification, 2) Assert AgentForge Intake Questionnaire seed exists at startup, 3) Transform IntakeFormExtraction to FHIR QuestionnaireResponse structure, 4) Create persist_questionnaire_response.php endpoint, 5) Integrate EventAuditLogger for questionnaire_persist events, 6) Add comprehensive integration tests for patient scoping",
+			"reasoning": "Similar complexity to Task 8 but with FHIR transformation layer. Triple patient verification pattern reused. FhirQuestionnaireResponseFormService integration. Must NOT write to patient_data/medications/allergies/family_history tables (constraint enforcement). Seed existence check adds fail-closed behavior."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "Extend attach_and_extract Tool for Intake Forms",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Extend AttachAndExtractTool from Task 11 with doc_type dispatch ('lab_pdf' | 'intake_form'), create intake-form specific Claude vision prompt requesting IntakeFormExtraction JSON with demographics/medications/allergies/family_history and citations with bbox, validate against IntakeFormExtraction Pydantic model, persist via persist_questionnaire_response.php (Task 12), return ExtractionResult with suggested_updates structure for UI.",
+			"reasoning": "Builds on Task 11 infrastructure. Main additions: doc_type dispatch, intake-specific prompt, IntakeFormExtraction validation, different persist endpoint. The pattern is established in Task 11. Focus is on prompt engineering for intake form structure and mapping to IntakeFormExtraction schema."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Implement PHI Redaction for Extraction Calls in LangfuseClient",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Extend sidecar/src/agentforge/observability/langfuse_client.py with extraction_call_type identifier, create RedactedLangfuseClient wrapper or extend existing AgentLangfuse, implement redaction logic stripping messages[*].content and response body for extraction calls while preserving latency_ms/model/tokens/schema_validation_result/extraction_confidence/page_count/unsupported_fields. Apply at adapter level with type parameter in record_llm_call.",
+			"reasoning": "LangfuseClient infrastructure exists (AgentLangfuse, 13.4KB). Protocols defined for all recording methods. Need to add redaction wrapper at adapter level to avoid call-site changes. Selective redaction based on call type. Moderate complexity - touching observability layer requires careful testing."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "Implement Evidence Retriever LangGraph Node",
+			"complexityScore": 6,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create evidence_retriever_node() function for LangGraph that accepts state with user query, instantiates EvidenceRetriever with loaded corpus, runs pipeline (BM25 top25 + Dense top25 → RRF merge top30 → Reranker top5), attaches Citation(source_type=GUIDELINE) to each result, returns evidence_chunks in state. Log retrieval_hits to Langfuse trace. Select reranker based on COHERE_API_KEY env var presence.",
+			"reasoning": "Depends on Task 1 (LangGraph graph structure) and Task 9 (RAG pipeline). Node function itself is straightforward - orchestrates EvidenceRetriever and attaches Citations. Reranker selection logic is simple env var check. Langfuse span logging follows existing patterns. Integration complexity is moderate."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Author 50-Case Week2 Eval Suite",
+			"complexityScore": 6,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: 1) Create sidecar/tests/eval/cases/week2/ directory structure by category, 2) Define YAML schema with id/category/input/expected_behavior/expected_citations/rubric_expectations, 3) Author 12 extraction cases (lab-cbc-normal, lab-cmp-with-flag, intake-clean, intake-bbox-degraded-scan, etc.), 4) Author 10 evidence-retrieval cases + 10 citation cases + 8 refusal cases + 10 missing-data cases, 5) Create YAML schema validator script and validate all 50 cases",
+			"reasoning": "Content-intensive task requiring understanding of extraction, retrieval, citation, refusal, and missing-data scenarios. Existing eval infrastructure (baseline/cases.py pattern) provides guidance. 50 cases across 5 categories. Each case needs realistic clinical scenarios. YAML schema validation adds tooling work."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Implement LLM-as-Judge Evaluation Layer",
+			"complexityScore": 6,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/tests/eval/judges/week2/ directory with factually_consistent.txt and safe_refusal.txt prompts for claude-sonnet-4-6 at temperature=0. Create LLMJudge class accepting case/response/source documents and returning boolean pass/fail. Integrate with EvalHarness: run programmatic grounding (schema_valid, citation_present, no_phi_in_logs) first, then LLM judge for applicable categories. Add retry with fresh seed on disagreement.",
+			"reasoning": "Existing grader infrastructure (baseline/grader.py) provides pattern. LLM-as-judge adds new dimension requiring prompt engineering for factual consistency and refusal evaluation. Integration with programmatic layer requires careful orchestration. Retry logic for LLM disagreement adds complexity."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Implement Eval Gate with Baseline and Thresholds",
+			"complexityScore": 7,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: 1) Create sidecar/eval_config.yaml with category_thresholds (90% each), regression_threshold (5%), llm_judge settings, 2) Create eval runner script loading all 50 cases, running through supervisor graph, scoring rubric categories, computing pass rates, 3) Implement baseline comparison against sidecar/tests/eval/baselines/week2.json, 4) Implement gate logic exiting non-zero on threshold violation, 5) Implement diff reporting for CI comments",
+			"reasoning": "Orchestrates entire eval pipeline: case loading, agent execution, scoring, baseline comparison, gate logic. Multiple integration points: Week2 cases (Task 16), LLM judge (Task 17), supervisor graph (Task 1). Gate logic with both absolute thresholds and regression detection. Diff reporting for CI adds output formatting work."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Implement Gate Self-Test (Regression Injection Probe)",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/tests/eval/test_gate_blocks_regression.py that monkey-patches intake-extractor worker to inject fabricated lab value (e.g., A1c 15.5% when actual is 8.2%), runs full 50-case suite against patched agent, asserts factually_consistent pass rate drops >5%, verifies build would fail under gate conditions. Add pytest marker 'gate_validation' for exclusion from normal CI.",
+			"reasoning": "Clever testing pattern to prove gate works. Monkey-patching intake-extractor requires understanding Task 11 structure. Running full 50-case suite is infrastructure already built in Task 18. Main work is crafting the injection and asserting expected failure. Moderate complexity."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Implement GitLab CI Eval Gate Job",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create .gitlab-ci.yml at repo root with agent-eval job: trigger on MR, use pre-baked sidecar Docker image with model weights, run eval suite script, compare to baseline, produce eval report JSON artifact. Implement MR comment posting with per-category diff showing pass rates and delta from baseline. Configure job to block merge on failure.",
+			"reasoning": "No existing .gitlab-ci.yml (file not found). 31 GitHub Actions workflows exist as reference patterns. GitLab CI syntax differs but concepts are similar. Pre-baked Docker image from Task 21. Main work: job definition, MR comment API integration, artifact handling. Moderate CI/CD complexity."
+		},
+		{
+			"taskId": 21,
+			"taskTitle": "Update Sidecar Dockerfile with Pre-baked Model Weights",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Update sidecar/Dockerfile to add RUN stage after dependencies install that downloads all-MiniLM-L6-v2 (~90MB) and bge-reranker-base (~280MB) to sentence-transformers cache. Set TRANSFORMERS_CACHE and SENTENCE_TRANSFORMERS_HOME env vars. Verify models load from cache at container start with no network request.",
+			"reasoning": "Existing Dockerfile is well-structured multi-stage build. Adding model weight download is straightforward: RUN command with sentence-transformers/transformers download. ~370MB image size increase. Cache configuration via env vars. Main risk is understanding exact cache paths for sentence-transformers library."
+		},
+		{
+			"taskId": 22,
+			"taskTitle": "Implement GitHub Actions Mirror of Eval Gate",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create .github/workflows/agent-eval.yml mirroring GitLab eval gate job: trigger on PR, use same Docker image as GitLab, run identical eval script and eval_config.yaml, same threshold logic. Post PR comment with diff using actions/github-script. Share eval runner script between both CI systems to prevent drift.",
+			"reasoning": "31 GitHub Actions workflows exist as patterns. Mirroring GitLab job means reusing same Docker image and eval script. PR comment posting via actions/github-script is documented pattern. Main work is ensuring identical behavior to GitLab job from Task 20."
+		},
+		{
+			"taskId": 23,
+			"taskTitle": "Add Pre-commit Hook for 10-Case Eval Smoke Subset",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Update .pre-commit-config.yaml to add agentforge-eval-smoke hook entry (language: python, entry: uv run pytest -m eval_smoke). Create pytest marker 'eval_smoke' for 10-case subset (2 extraction, 2 evidence-retrieval, 2 citation, 2 refusal, 2 missing-data). Ensure hook completes in <30 seconds. Document skip option.",
+			"reasoning": "Existing .pre-commit-config.yaml has 14 hooks across 4 sources. Adding another local hook is straightforward. Selecting 10 representative cases from Task 16's 50 cases. Pytest marker infrastructure exists. Low complexity - mostly configuration work."
+		},
+		{
+			"taskId": 24,
+			"taskTitle": "Implement Citation Overlay Vanilla-JS Component (with vendored pdf.js)",
+			"complexityScore": 6,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "Already has 7 subtasks defined: 1) Vendor pdf.js bundle into public/vendor/pdfjs/, 2) Add pdf.js script tag to agent panel template, 3) Create citation_overlay.js with IIFE structure following agent_panel.js pattern, 4) Implement pdf.js canvas rendering with 1-indexed page handling, 5) Implement overlay positioning from page_bbox normalized coordinates, 6) Add overlay styling and dismiss handler, 7) Create headless browser test fixture with multi-page PDF page-index test",
+			"reasoning": "Frontend task requiring vanilla JS (no React/bundler). agent_panel.js (312 lines IIFE) provides pattern. pdf.js vendoring adds distribution complexity. Coordinate math for bbox overlay positioning. 1-indexed page handling is critical correctness point. Headless browser testing (Puppeteer) for verification."
+		},
+		{
+			"taskId": 25,
+			"taskTitle": "Wire Citation Overlay into Agent Panel",
+			"complexityScore": 5,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Already has 6 subtasks defined: 1) Add patient_id data attribute to agent panel template, 2) Add script tag for citation_overlay.js in template, 3) Parse citations from agent response and render citation links with data attributes, 4) Implement citation click handler with document URL construction using as_file=false, 5) Add loading and error state handling, 6) Add overlay container styling to panel CSS",
+			"reasoning": "Integration task connecting Task 24 overlay to existing agent_panel.js. Existing panel is 312 lines with SSE streaming, message rendering, session management. Adding citation links and click handlers extends existing patterns. OpenEMR document URL construction with as_file=false is key correctness point."
+		},
+		{
+			"taskId": 26,
+			"taskTitle": "Add HTTP Cache Headers to OpenEMR Document Route",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Locate OpenEMR document serving route (likely controllers/C_Document.class.php or similar), add Cache-Control header (max-age=300, private, must-revalidate), add ETag header based on document hash or last-modified, support If-None-Match conditional requests returning 304 Not Modified. Test cache behavior in browser dev tools.",
+			"reasoning": "Standard HTTP caching implementation. OpenEMR has existing document serving infrastructure. Adding headers is straightforward once route is located. ETag calculation from document properties. Conditional request handling is well-understood pattern. Low complexity."
+		},
+		{
+			"taskId": 27,
+			"taskTitle": "Extend Observability with Vision Call Pricing and Route Metrics",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Update observability/cost.py with vision-call pricing for claude-sonnet-4-6 including image token estimation. Update observability/langfuse_client.py with record_retrieval_hits(), record_extraction_confidence(), record_route_decision() methods. Update TraceHandle to accumulate route_decisions list. Extend cost_report.py to project production spend and report p50/p95 latency with bottleneck flagging (>40% of budget).",
+			"reasoning": "Existing observability infrastructure is well-structured (protocols.py defines interfaces, langfuse_client.py implements). Adding new recording methods follows pattern. Vision pricing requires understanding Claude API pricing. Cost report extension for latency analysis adds analytical complexity."
+		},
+		{
+			"taskId": 28,
+			"taskTitle": "Implement End-to-End Lab PDF Smoke Test",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create tests/integration/test_lab_pdf_e2e.py with synthetic lab PDF (CBC, CMP, A1c values), test flow: upload via upload_document.php → trigger extraction via agent turn → verify LabPdfExtraction validates → verify procedure_result rows created with document_id → verify audit events (document_ingest, lab_persist) in correct order. Clean up test data.",
+			"reasoning": "End-to-end integration test spanning Tasks 6, 8, 11. Existing integration test patterns in sidecar/tests/integration/. Synthetic PDF creation (PyMuPDF or reportlab). Database verification against procedure_* tables. Audit event verification. Test data cleanup. Moderate integration complexity."
+		},
+		{
+			"taskId": 29,
+			"taskTitle": "Implement End-to-End Intake Form Smoke Test",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create tests/integration/test_intake_form_e2e.py with synthetic intake form PDF (demographics, medications, allergies, family_history, chief_concern), record row counts before, test flow: upload → extract → verify IntakeFormExtraction validates → verify QuestionnaireResponse created → verify NO row count changes in patient_data/medications/allergies/family_history tables. Verify audit events. Clean up.",
+			"reasoning": "Similar to Task 28 but for intake forms. Key difference: must verify clinical tables are NOT mutated (Task 12 constraint). Spans Tasks 6, 12, 13. QuestionnaireResponse verification against FHIR structure. Defensive assertions against table row counts."
+		},
+		{
+			"taskId": 30,
+			"taskTitle": "Deploy to Droplet and Run Production Smoke Tests",
+			"complexityScore": 6,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: 1) Update deployment scripts for W2 changes (module + sidecar + Docker image), 2) Deploy to droplet (143.244.157.90:9300) with database migrations, 3) Run smoke test cohort (lab PDF, intake form, RAG query), 4) Verify audit events in production logs, 5) Verify Langfuse traces show route_decisions, retrieval_hits, PHI redaction. Document verification checklist.",
+			"reasoning": "Integration task bringing all W2 components to production. Deployment scripts need updates for new components. Migration execution. Multiple smoke test scenarios. Log and trace verification. Multiple verification points across different systems (database, Langfuse, logs)."
+		},
+		{
+			"taskId": 31,
+			"taskTitle": "Author W2 Evaluation Report with Baseline Delta and Gate Results",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Run full 50-case eval suite against deployed production agent post-Task 30, export per-category pass rates with judge rationales for failures, compute delta against week2.json baseline, author docs/eval-report-2026-05-04.md with Executive Summary, Methodology, Category-by-Category Breakdown, Failed Cases Detail, Cost Analysis, Baseline Delta table, and Gate Self-Test result.",
+			"reasoning": "Documentation task requiring eval suite execution (Task 18), data aggregation, and report authoring. Structured report format is specified. Requires running eval infrastructure and capturing all outputs. LLM judge rationales for failures add detail. Cost calculation from observability. Mostly execution and documentation."
+		},
+		{
+			"taskId": 32,
+			"taskTitle": "Author W2 Cost and Latency Report with Langfuse Trace Aggregation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Aggregate Langfuse traces from post-deploy window, extend cost_report.py for per-step p50/p95 latency calculation, token counts by route_decision, cost projections at observed and projected QPS (10, 100), bottleneck analysis per 40% threshold, W1 vs W2 comparison (supervisor overhead, parallel dispatch savings). Author docs/cost-latency-report-2026-05-04.md.",
+			"reasoning": "Requires Langfuse API integration for trace aggregation. Cost_report.py extension (Task 27 related). Statistical calculations (p50/p95 percentiles). W1 vs W2 comparison requires W1 baseline metrics. Report authoring with tables and analysis. Moderate data processing complexity."
+		},
+		{
+			"taskId": 33,
+			"taskTitle": "Author Demo Video Deliverable with Script and 3-5 Minute W2 Walkthrough",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: 1) Author docs/demo-script-w2.md with pre-recording checklist, 5 segments (login, lab PDF upload, parallel workers, gate self-test, Langfuse tour) with timings and narration cues, 2) Record 3-5 minute screencast on deployed droplet showing all features, 3) Commit video to docs/demo-w2.mp4 or update README with hosted video link",
+			"reasoning": "Content creation task: script authoring then video recording. Requires deployed system from Task 30. Five demonstration segments covering key W2 features. Technical requirements: screen recording, audio narration. Deliverable is both script markdown and video file."
+		},
+		{
+			"taskId": 34,
+			"taskTitle": "Replace Root README.md with W1+W2 Submission README",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Archive existing README.md as README.w1.md (README.upstream.md already exists), create new README.md with 8 sections: one-paragraph introduction, live demo link, 60-second quickstart, W1 baseline (3-5 bullets), W2 new features (Vision/Retrieval/Supervisor subsections), Submission Artifacts table, Architecture links table, upstream acknowledgment. Ensure two-file reviewer experience.",
+			"reasoning": "Documentation task with clear structure specified in task details. README.upstream.md already exists. Eight sections with defined content. Submission Artifacts table with links to eval and cost/latency reports. Architecture table with 3 document links. Straightforward document authoring."
+		},
+		{
+			"taskId": 35,
+			"taskTitle": "Create Stakeholder Defense Q&A Primer at docs/defense-qa-w2.md",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create docs/defense-qa-w2.md with header clarifying study aid purpose, cover 7 required questions (QuestionnaireResponse not direct write, procedure_* not FHIR Observation, LangGraph timing, PHI three-boundary, gate self-test, reranker default, promotion exclusion) each with one-paragraph answer, W2_ARCHITECTURE.md link, and slide pointer. Add 5 likely follow-up questions. Include quick-reference table mapping topics to slides.",
+			"reasoning": "Documentation task compiling Q&A from W2_DEFENSE.md and W2_ARCHITECTURE.md. Seven required questions with structured format. Slide references to w2-defense-slides.html. Follow-up questions require anticipating grader concerns. Straightforward document authoring with cross-referencing."
+		}
+	]
+}

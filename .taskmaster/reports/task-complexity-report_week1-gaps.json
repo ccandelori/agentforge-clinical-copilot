@@ -1,0 +1,189 @@
+{
+	"meta": {
+		"generatedAt": "2026-05-02T23:11:49.925Z",
+		"tasksAnalyzed": 22,
+		"totalTasks": 22,
+		"analysisCount": 22,
+		"thresholdScore": 5,
+		"projectName": "Task Master",
+		"usedResearch": false
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Project README replacement",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create a project-specific README for the AgentForge Clinical Co-Pilot fork: move current README.md to README.upstream.md, then create new README.md with project description, demo links (HTTPS:9300, HTTP:8300), 60-second quickstart, 5-line architecture summary, documentation links section (AUDIT.md, USERS.md, ARCHITECTURE.md, DEPLOY.md), and upstream acknowledgment paragraph.",
+			"reasoning": "This is a straightforward documentation task. The current README.md is the upstream OpenEMR readme (~80 lines visible). The task involves renaming one file and writing a new markdown file with specific content. No code changes, no dependencies, and the test strategy is simply verifying markdown renders and links work. Low technical risk."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Wire redis_client from REDIS_URL in production",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "In sidecar/src/agentforge/main.py create_app(), construct a redis client from settings.redis_url when redis_client parameter is None. Use redis.asyncio.from_url() to create the connection. The _AppRedisProto protocol already exists (lines 60-74). Pass constructed client to AuthGateway and use in lifespan for policy loading. Verify /health returns policy_loaded=true.",
+			"reasoning": "The implementation is mostly straightforward with clear guidance. The _AppRedisProto protocol already exists (lines 60-74 of main.py). The redis_client parameter already exists but defaults to None. Key changes: add redis.asyncio import, construct client from settings.redis_url if not injected. Small scope but requires understanding the lifespan context and policy loading flow."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Multi-turn session_id in agent_panel.js",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "In interface/modules/custom_modules/oe-module-agentforge/public/js/agent_panel.js: add generateSessionId() function using crypto.randomUUID() with timestamp+random fallback, generate session_id in bind() function and store on panel.dataset.sessionId, modify send() to include session_id in the POST body JSON. Optionally add 'New Conversation' button that resets session_id.",
+			"reasoning": "This is a focused frontend-only change to agent_panel.js (~173 lines). The sidecar already accepts session_id (TurnRequest model line 82 in main.py), and Orchestrator.turn() already handles it (line 175). The JavaScript is vanilla IIFE with no complex framework. Adding UUID generation, storing in dataset, and including in POST body are standard patterns. Low complexity."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Wire Planner into Orchestrator.turn",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Integrate the existing Planner class (orchestrator/planner.py, already fully implemented with UseCase enum, Plan model, and LLM-driven classification) into Orchestrator.turn(). Add planner parameter to __init__, call planner.plan() before tool loop, store plan.use_case in trace metadata via Langfuse, optionally use plan.tool_calls for dispatch guidance. Update create_app() to construct Planner(llm=llm).",
+			"reasoning": "The Planner class is already fully implemented (planner.py, 286 lines) with UseCase enum, Plan/PlannedToolCall models, SUBMIT_PLAN_TOOL_SPEC, and plan() method. The integration requires: adding planner parameter to Orchestrator.__init__, calling plan() early in turn(), recording use_case to Langfuse trace. The complexity comes from understanding how Plan.tool_calls/parallel_batches should guide dispatch, but the fallback path keeps current sequential behavior."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Parallel tool dispatch via asyncio.gather",
+			"complexityScore": 6,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Replace the sequential tool dispatch loop in Orchestrator (lines 279-291 in orchestrator/__init__.py) with parallel dispatch using asyncio.gather. Consume Plan.parallel_batches structure from Task 4: for each batch, dispatch all tools concurrently, collect results, then proceed to next batch. Preserve error handling per-tool, ensure cache behavior remains correct, track timed_out_tools across batches.",
+			"reasoning": "This refactors the core tool dispatch loop (currently sequential for-loop lines 279-291). Requires understanding asyncio.gather semantics, error isolation (return_exceptions=True), and how to map Plan.parallel_batches to actual ToolCall objects from LLM response. The _dispatch() method (lines 353-560) returns (json, result) tuples that need parallel collection. Moderate complexity due to error handling and preserving existing observability."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "Wire SynthesisInputTruncator before LLM synthesis",
+			"complexityScore": 4,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Integrate the existing SynthesisInputTruncator (orchestrator/truncation.py) into Orchestrator.turn(). Add truncator parameter to __init__, after tool results collected (before line 265 final LLM call), call truncator.truncate(tool_results, max_tokens=policy.synthesis_input_cap). Update create_app() to construct truncator. Log truncation decisions to Langfuse.",
+			"reasoning": "The SynthesisInputTruncator already exists (truncation.py). Integration follows the same pattern as other optional components: add parameter to __init__, construct in create_app(), call after tool dispatch before synthesis. The truncation logic is already implemented with priority-based tool dropping. Moderate complexity due to understanding where to splice into the turn() flow and Langfuse telemetry."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Wire DataQualityChecker and IdentityGuard into turn",
+			"complexityScore": 6,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Integrate DataQualityChecker (verifier/data_quality.py) and IdentityGuard (orchestrator/identity_guard.py) into Orchestrator.turn(). IdentityGuard requires demographics-first fetch (Option B): early in turn(), fetch demographics synchronously, construct guard with patient name/MRN, check message before tools fire. DataQualityChecker runs after tool results: check stale labs, check conflicting sources, append quality warnings to synthesis. Add Langfuse telemetry for both.",
+			"reasoning": "This task has two independent concerns that must be carefully sequenced. IdentityGuard (already implemented, 202 lines) needs patient_name which requires demographics fetch first (Option B architecture decision). DataQualityChecker (already implemented, 189 lines) runs after tools. Both need Langfuse telemetry additions. The subtasks in the task description are well-structured and can be followed. Higher complexity due to dual concerns and ordering requirements."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Tighten latency budgets after integration pass",
+			"complexityScore": 7,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "Enforce latency budgets in Orchestrator.turn(): wrap entire turn logic in asyncio.wait_for(timeout=total_turn=7.0s), wrap each tool-phase batch in asyncio.wait_for(timeout=tool_phase=4.0s), add synthesis-phase timeout. After enforcement, measure p95 on pid=8 (Eula) before tightening. Then: change test_latency.py default from 30000ms to 7000ms, reduce PHP proxy timeouts from 30s/90s to 10s/15s, smoke test droplet.",
+			"reasoning": "This is a multi-step task with measurement dependencies. TimeoutPolicy already exists (timeouts.py:40-48) with values defined. The enforcement requires three asyncio.wait_for wrappers in turn(). Critical dependency: must measure actual p95 before tightening configs. Changes span sidecar (orchestrator, tests) and PHP (turn.php lines 92, 97). The subtasks are well-defined but execution is sequential with measurement gates."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "LLMClient streaming interface",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Add stream() method to LLMClient protocol (llm/client.py) returning AsyncIterator[str]. Implement in ClaudeClient (llm/claude.py) using anthropic SDK's messages.stream() context manager. Handle tool_use blocks collection during stream. Return final LLMResponse metadata (tokens, stop_reason) after stream completes via a wrapper that yields text and stores metadata.",
+			"reasoning": "The LLMClient protocol is minimal (28 lines, single complete() method). Adding stream() requires: protocol extension, Claude SDK streaming implementation using async with self._client.messages.stream(). The anthropic SDK has built-in streaming support. Complexity from handling tool_use blocks mid-stream and returning usage stats after completion. Well-understood pattern but requires SDK knowledge."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Sidecar /turn returns StreamingResponse",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Modify /turn endpoint in main.py to return StreamingResponse with SSE format when streaming_enabled setting is True. Add streaming_enabled: bool = False to Settings. Add stream_turn() method to Orchestrator that yields chunks. Format chunks as SSE: 'data: {json}\\n\\n'. Send [DONE] at end. Handle X-Agent-Cost-USD in final event or headers.",
+			"reasoning": "The /turn endpoint (main.py:265-274) currently returns TurnResponse. Adding streaming requires: new Settings field, conditional check for streaming, StreamingResponse import from FastAPI, async generator function, SSE formatting. The Orchestrator needs stream_turn() method that calls LLM.stream() (from Task 9). Integration pattern is standard but touches multiple layers."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "PHP turn.php proxy streams SSE to browser",
+			"complexityScore": 4,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Enhance AgentProxyController.streamSidecarResponse() to properly proxy SSE responses. Detect text/event-stream Content-Type, set appropriate headers (Cache-Control: no-cache, Connection: keep-alive, X-Accel-Buffering: no). Add ob_flush() before flush() for proper buffer clearing. Pass through X-Agent-Cost-USD header. Verify non-SSE responses still work.",
+			"reasoning": "The streamSidecarResponse() method already exists (lines 137-158 in AgentProxyController.php) using StreamedResponse. It already forwards Content-Type and calls flush(). Enhancements needed: detect SSE Content-Type, add SSE-specific headers, add ob_flush() call, pass through X-Agent-Cost-USD. The subtasks in the task description cover these well. Moderate PHP work."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "agent_panel.js consumes ReadableStream",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Update agent_panel.js send() function to consume SSE/chunked responses via fetch ReadableStream. Create streaming bubble before fetch, use response.body.getReader() and TextDecoder, parse SSE 'data: {...}\\n\\n' format, append chunks progressively to bubble. Handle non-streaming fallback for Content-Type: application/json. Add error handling for stream interruption.",
+			"reasoning": "The current send() function (lines 107-135) uses fetch().then().then() pattern with response.text(). Converting to ReadableStream requires: async/await refactor, getReader()/read() loop, TextDecoder, SSE parsing logic, progressive DOM updates. Non-streaming fallback needed for backwards compatibility. Standard web streaming pattern but requires careful SSE parsing."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "Verifier runs on finalized streamed text",
+			"complexityScore": 8,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Integrate StreamingVerifier (verifier/streaming_verifier.py) inline with LLM token stream for sentence-buffered verification. Create stream_turn() method in Orchestrator that: builds CitationIndex from tool results, pipes LLM.stream() tokens through verifier.verify_stream(), yields ONLY verified chunks (VerifiedChunk.text). Never emit unverified clinical text. Handle IdentityGuard integration. Document latency tradeoff in ARCHITECTURE.md.",
+			"reasoning": "This is a critical safety feature requiring careful integration. StreamingVerifier already exists (144 lines) with verify_stream() async generator, sentence boundary detection, and REJECTION_MARKER replacement. The complexity is in: 1) creating stream_turn() that pipes tokens through verifier BEFORE yielding, 2) ensuring unverified text NEVER reaches browser, 3) integrating with IdentityGuard, 4) handling complete rejection scenarios, 5) latency tradeoff documentation. High complexity due to safety requirements."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Cost accounting in LLM calls and traces",
+			"complexityScore": 5,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Add cost accounting: create observability/cost.py with PRICING table (claude-sonnet-4-5, claude-haiku-3-5, claude-opus-4-5 per-token rates) and calculate_cost() function. Modify Orchestrator.turn() to accumulate per-call cost, update _record_llm_call() to include cost_usd. Return (text, cost) tuple from turn(). Set X-Agent-Cost-USD response header in /turn endpoint.",
+			"reasoning": "This task involves several coordinated changes: new cost.py module with pricing constants, Orchestrator cost accumulation across multiple LLM calls, protocol extension for Langfuse, response header setting. LLMResponse already has input_tokens/output_tokens (llm/types.py:69-70). The subtasks are well-defined. Moderate complexity due to multiple touchpoints but straightforward calculation logic."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "cost_report CLI tool",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/src/agentforge/observability/cost_report.py CLI tool that reads recent Langfuse traces, extracts cost_usd from generation spans, aggregates by day/week, and prints formatted summary. Use argparse for --days and --weekly flags. Register as CLI entry point or run via python -m agentforge.observability.cost_report.",
+			"reasoning": "This is a standalone CLI utility with no integration into the main application flow. Uses Langfuse Python SDK to query traces, aggregates costs from metadata, prints formatted output. Standard Python script structure with argparse. Low complexity, isolated scope, clear requirements."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Real eval runner invoking Orchestrator.turn",
+			"complexityScore": 6,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Replace tests/eval/harness.py evaluation model with a runner that actually invokes Orchestrator.turn(). Create EvalRunner class that: builds RequestContext for each case's patient_id, calls real orchestrator.turn(), scores with DeterministicGrader (citation grounding, term presence) and LLMJudgeGrader. Support mocked LLM for deterministic CI and real LLM for manual eval. Mark tests with @pytest.mark.eval.",
+			"reasoning": "The existing EvalHarness (harness.py, 169 lines) takes pre-generated responses. This task creates a runner that drives the real Orchestrator. Requires: fixture setup for live Orchestrator, RequestContext construction per case, integration with existing grading infrastructure. Dependencies on Tasks 7 and 21 suggest iterative development. Moderate-high complexity due to test infrastructure requirements."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Five failure-mode eval case files",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create sidecar/tests/eval/cases/ directory with YAML case files: happy_path.yaml (UC-1 through UC-4 scenarios), missing_data.yaml (patient 99 with no labs), ambiguous.yaml (clarification-needed queries), unauthorized.yaml (IdentityGuard refusal), hallucination.yaml (drugs not in chart). Each case includes id, category, patient_id, query, expected behavior. Reference existing demo DB patients.",
+			"reasoning": "This is primarily content creation in YAML format. The EvalCase model already exists (harness.py:51-66). Cases must reference valid patient IDs from demo DB (pid=8 Eula, pid=4 Alena mentioned). Five files with 3-5 cases each. Low technical complexity, mostly domain knowledge and test design. Depends on Task 16 for case model compatibility."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Deterministic and LLM-judge graders",
+			"complexityScore": 5,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Implement two graders: DeterministicGrader in tests/eval/graders/deterministic.py (citation grounding via build_citation_index, required terms present, forbidden terms absent) and LLMJudgeGrader in tests/eval/graders/llm_judge.py (calls LLM to rate clinical correctness 1-5 with rationale). Pin model + temperature=0 for LLM judge. Support 3-of-3 consensus for flaky mitigation.",
+			"reasoning": "DeterministicGrader reuses existing infrastructure (build_citation_index, find_citations from verifier modules). LLMJudgeGrader requires prompt engineering and LLM call. The existing EvalHarness already has grounding check logic that can be extracted. Consensus voting adds complexity for flaky mitigation. Moderate complexity with clear patterns to follow."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Eval report writer and committed report",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Add report generation to eval runner: generate_report() produces markdown with summary (total, passed, failed), results by category with pass/fail status and failure reasons. Save to docs/eval-report-YYYY-MM-DD.md. Commit first report to main branch. Optionally add CI job to run eval and diff report changes.",
+			"reasoning": "This is markdown generation from structured EvalResult data. The EvalSummary model already exists (harness.py:85-98) with pass_rate property. Format as markdown table/list, write to file, git commit. Low technical complexity, straightforward string formatting and file I/O."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Enable verifier by default on droplet",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Set VERIFIER_ENABLED=true in droplet sidecar .env file. Redeploy sidecar. Smoke test: login to 143.244.157.90:9300 as admin/pass, open patient Eula (pid=8), ask about drugs not in chart (Xanax), verify response doesn't claim patient is taking them. Document latency impact in ARCHITECTURE.md if notable.",
+			"reasoning": "This is a configuration change and manual verification task. The verifier_enabled flag already exists and is wired into Orchestrator (orchestrator/__init__.py:135, 265). Deployment script already exists. The testing is manual smoke testing. Very low complexity, minimal code changes."
+		},
+		{
+			"taskId": 21,
+			"taskTitle": "BASELINE eval runner against current orchestrator",
+			"complexityScore": 6,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Create minimal end-to-end eval runner (sidecar/tests/eval/baseline_runner.py) that invokes real Orchestrator.turn() against live local stack. Define BaselineCase and BaselineResult dataclasses, create 8 baseline cases covering UC-1 through UC-4 plus adversarial scenarios. Use deterministic grading only (no LLM-as-judge). Mark with @pytest.mark.eval, add live_orchestrator fixture, format one-screen pass/fail summary.",
+			"reasoning": "This is a safety net for subsequent refactors. The task description provides detailed implementation code (BaselineRunner class, BaselineCase model, 8 test cases, pytest integration). It reuses existing infrastructure (Orchestrator, find_citations). No mocking - runs against live stack. Complexity from fixture setup for live Orchestrator and proper pytest marker configuration. Well-specified but requires careful integration."
+		},
+		{
+			"taskId": 22,
+			"taskTitle": "Observability acceptance pack",
+			"complexityScore": 8,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "Extend Langfuse tracing to be fully diagnostic: 1) Add span ordering with timestamps (planner, tool, truncator, llm, verifier, identity_guard spans with start/end times). 2) Enhance record_tool_call with error_type, error_message, retry_attempts, final_outcome. 3) Add X-Trace-Id header correlation between sidecar and PHP. 4) Create no-PHI assertion test against real trace payloads. 5) Create droplet Langfuse smoke test script.",
+			"reasoning": "This is a comprehensive observability enhancement spanning multiple files. Changes to: LangfuseClient protocol (new span methods), langfuse_client.py (implementations), orchestrator (span recording calls with timestamps), main.py (X-Trace-Id header), AgentProxyController.php (trace ID logging), plus two test artifacts. Dependencies on Tasks 4, 6, 8, 13 mean this runs late in the sequence. High complexity due to breadth and cross-cutting concerns."
+		}
+	]
+}
