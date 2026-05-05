@@ -1629,3 +1629,64 @@ docstring contract.
 (extraction-only, persistence absent by design).
 
 ---
+
+## 2026-05-05 — Task 14 ships sibling method, not a CallType-enum redaction wrapper
+
+**Plan:** Taskmaster Task 14's subtasks called for (14.1) a `CallType`
+enum extending `record_llm_call`'s signature with a discriminator,
+(14.2) a separate `record_extraction_call` method, and (14.3) a
+"redaction wrapper for extraction calls in AgentLangfuse" that
+strips PHI from log payloads.
+
+**Deviation:** Skipped the CallType enum and the wrapper. Shipped
+only the sibling method. Three reasons:
+
+1. The Protocol already enforces PHI-safety **structurally**, not
+   procedurally. Every `record_*` method (`record_tool_call`,
+   `record_llm_call`, `record_planner_decision`, etc.) takes only
+   primitives, hashes, and closed-enum literals — there is no
+   parameter shape that could carry message bodies. A "redaction
+   wrapper" would be a no-op because the methods accept nothing
+   to redact.
+2. Adding a `CallType` enum on top of `record_llm_call` duplicates
+   information the method-name dispatch already encodes. The
+   existing module pattern is per-domain methods (planner,
+   verifier, identity_guard, data_quality), not a single
+   discriminated `record_event`. The enum-and-extend approach
+   would have been an inconsistent shape.
+3. The structural guarantee is **testable**: a boundary-discipline
+   test enumerates the method signature and asserts no
+   content-carrying parameter names appear (`messages`, `prompt`,
+   `body`, `payload`, `input_text`, etc.). A future refactor that
+   accidentally adds a content parameter fails this test before
+   it ships. A wrapper-based design would need behavioral
+   integration tests instead, which are slower and easier to bypass.
+
+**What we learned:** Spec authors sometimes describe an
+implementation pattern that doesn't fit the existing module's
+shape. When the existing module already enforces a contract by
+type, "wrapper-redaction" framings collapse to "add the right
+method." Surface this in PR review by pointing to the structural
+guarantee, not the procedural one.
+
+**Sub-deviation: VisionExtractor wiring deferred.**
+`record_extraction_call` is the boundary primitive. Wiring it from
+`VisionExtractor.extract()` (instrumenting the actual extraction
+calls so spans land in Langfuse) belongs at the orchestrator
+layer — Task 1 (supervisor refactor) or Task 25 (citation overlay
+integration), wherever the extractor is composed with the
+LangfuseClient instance. Doing it now would couple Task 14 to the
+orchestrator's not-yet-final shape.
+
+**Artifacts:**
+[`sidecar/src/agentforge/observability/protocols.py`](../sidecar/src/agentforge/observability/protocols.py)
+(`record_extraction_call` Protocol method),
+[`sidecar/src/agentforge/observability/langfuse_client.py`](../sidecar/src/agentforge/observability/langfuse_client.py)
+(AgentLangfuse implementation),
+[`sidecar/src/agentforge/observability/null_client.py`](../sidecar/src/agentforge/observability/null_client.py)
+(no-op),
+[`sidecar/tests/test_langfuse_client.py`](../sidecar/tests/test_langfuse_client.py)
+(boundary-discipline tests, including the signature-introspection
+guard).
+
+---
