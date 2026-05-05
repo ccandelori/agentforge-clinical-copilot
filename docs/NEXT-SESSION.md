@@ -1,263 +1,251 @@
-# Where we left off — 2026-05-05 (W2 prep landed; MVP work begun)
+# Where we left off — 2026-05-05 (W2 MVP shipped end-to-end)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-**W1 is closed; W2 is in flight on the MVP track.** W1-gaps closed
-22/22 in the prior session. This session set up the W2 architecture
-+ planning surface, GitLab CI from-scratch, fixed all pre-existing
-PHPStan errors, and shipped the first MVP code task (Task 2 —
-Citation contract Pydantic schemas).
+**The W2 MVP deliverable is shipped on `main`.** All four bullets
+("Lab PDF and intake form ingestion working locally; first extraction
+and first evidence retrieval demo") are live and demoable today.
+**11/37 W2 tasks done.** Both ingestion endpoints accept JWT-validated
+JSON and write atomically into OpenEMR. The vision-extraction tool
+runs against a bundled mock lab PDF with zero setup beyond an
+Anthropic API key. The evidence retriever indexes a 5-doc /
+29-chunk corpus over BM25.
 
-**Current state: W2 task tag = 3/35 done (Tasks 36, 37, 2).**
+The session that produced this state shipped **15 MRs** today (not
+counting prep MRs from the morning). Repo state is fully clean —
+zero open MRs, zero stale branches awaiting merge.
 
-The W2 PRD lives at `.taskmaster/docs/week2-prd.md`. Architecture
-docs are `W2_ARCHITECTURE.md` (full design — authoritative) and
-`W2_DEFENSE.md` (architecture-defense summary). Slide deck at
-`docs/w2-defense-slides.html` (18 slides, scroll-snap HTML).
+## Demo recipes (zero-setup)
 
-## What shipped this session
+```bash
+# Both endpoints are live on the openemr Docker container:
+#   POST /agentforge/internal/persist_lab_result
+#   POST /agentforge/internal/persist_questionnaire_response
+# Both accept the structured JSON shape from sidecar/src/agentforge/schemas/
 
-### Architecture + planning surface (committed to main via MR !1)
+# Vision-extraction demo (extracts the bundled mock lab PDF):
+cd sidecar
+export ANTHROPIC_API_KEY=...
+uv run python scripts/extraction_demo.py
+#   → 1 page, ~3.4K input tokens, structured LabPdfExtraction output
+#   → 20 lab values across 4 panels (Diabetes, CMP, Lipid, CBC)
+#   → bbox citations on every value
 
-- `W2_ARCHITECTURE.md` — full design doc. Five load-bearing
-  decisions (intake → QuestionnaireResponse, lab → procedure_*,
-  LangGraph wiring, three PHI boundaries, eval gate is the
-  deliverable). Three explicit tradeoffs.
-- `W2_DEFENSE.md` — defense-ready summary + anticipated questions.
-- `docs/w2-defense-slides.html` — 18-slide HTML deck with SVG
-  topology + sequence diagrams (intake flow, lab flow, supervisor
-  routing, eval gate run).
-- `.taskmaster/docs/week2-prd.md` — PRD for `parse-prd`.
-- `.taskmaster/tasks/tasks.json` — week2 tag with 35 tasks, MVP
-  priority scoping applied (see "MVP scope" below).
-- `docs/agents/{domain,issue-tracker,triage-labels}.md` — agent
-  guides referenced from CLAUDE.md.
-- `AGENTS.md` — Codex-flavored sibling of CLAUDE.md.
+# Evidence-retrieval demo:
+uv run python scripts/retrieval_demo.py "ASCVD risk statin therapy"
+uv run python scripts/retrieval_demo.py "A1C target for adult diabetes"
+uv run python scripts/retrieval_demo.py "CKD stage 3 management"
+#   → BM25 top-3 with chunk metadata + excerpts
+```
 
-### GitLab CI from scratch (MR !1)
+## What shipped today
 
-- `.gitlab-ci.yml` — single `test` stage with 4 jobs: phpstan,
-  phpunit-isolated, sidecar-pytest, sidecar-regression-locks.
-- Docker executor on a self-hosted local runner (Cameron's MacBook).
-- Project-level "Pipelines must succeed" enforcement is ON via
-  GitLab Settings → Merge requests.
-
-### Tasks closed
-
-| ID | Title |
-|---|---|
-| 36 | CI Bootstrap — GitLab pipeline runs every MR from day 1 |
-| 37 | Fix 62 pre-existing PHPStan level-10 errors in W1 AgentForge |
-| 2  | W2 Citation Contract Pydantic Schemas (+ 2.1, 2.2, 2.3, 2.4, 2.5) |
-
-## Open MRs (your job to merge)
-
-| MR | Branch | Status |
+| Task | What | Where it lives |
 |---|---|---|
-| **!2** | `feat/w2-task-37-phpstan-cleanup` | Pushed; review + merge |
-| (none) | `feat/w2-task-02-citation-contract` | Pushed; **MR not yet created** |
+| 3 | Lab extraction Pydantic schemas | `sidecar/src/agentforge/schemas/lab.py` (LabValue, LabPdfExtraction, AbnormalFlag) |
+| 4 | Intake extraction Pydantic schemas | `sidecar/src/agentforge/schemas/intake.py` (IntakeFormExtraction + 4 leaf models) |
+| 5 | Canonical Questionnaire DB seed | `db/Migrations/Version20260505000001.php` |
+| 7 | JWT-validated `get_document_bytes` endpoint | `oe-module-agentforge/public/internal/get_document_bytes.php` |
+| 8 | JWT-validated `persist_lab_result` endpoint | `oe-module-agentforge/public/internal/persist_lab_result.php` (multi-table cascade in DBAL transaction) |
+| 10 | Clinical-guideline corpus + BM25 demo | `sidecar/data/guidelines/` + `sidecar/scripts/{chunk_guidelines,retrieval_demo}.py` |
+| 11 | Vision-extraction tool (Claude vision + PyMuPDF) | `sidecar/src/agentforge/tools/attach_and_extract.py` + `sidecar/scripts/extraction_demo.py` |
+| 12 | JWT-validated `persist_questionnaire_response` endpoint | `oe-module-agentforge/public/internal/persist_questionnaire_response.php` |
+| (extra) | Mock-lab PDF generator + bundled fixture | `sidecar/scripts/generate_mock_lab.py` + `sidecar/data/samples/sample-lab.pdf` |
+| (P2 fixes) | Inverted bbox, message leak, case-insensitive auth, legacy doc exceptions | MR !11 |
 
-Create the missing MR via:
-```
-glab mr create --target-branch main --fill
-```
-or
-```
-https://labs.gauntletai.com/cameroncandelori/openemr/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat/w2-task-02-citation-contract
-```
+## Reusable services extracted today
 
-After both merge, the Task 5 starter branch should be off the most
-recent main.
+These are part of the AgentForge module's DI-able service surface;
+Task 13's intake-vision variant and any future endpoint should
+import these rather than re-implement:
 
-## MVP scope (22 tasks of 35)
+- `DocumentOwnershipVerifier` (`src/Services/`) — single SELECT against
+  `documents.foreign_id` with `deleted=0` filter; returns null on
+  missing/deleted/null-owner
+- `IntakeQuestionnaireLookup` (`src/Services/`) — finds the canonical
+  Questionnaire by `source_url`; returns a `SeededIntakeQuestionnaire`
+  DTO (id + name + frozen JSON snapshot)
+- `IntakeFormFhirMapper` (`src/Services/`) — pure transform:
+  IntakeFormExtraction array → FHIR R4 QuestionnaireResponse
+- `IntakeQuestionnaireResponseWriter` (`src/Services/`) — single INSERT
+  into `questionnaire_response` with UUID generation
+- `IntakePersistAuditWriter` / `LabPersistAuditWriter` (`src/Services/`) —
+  fire `agentforge.questionnaire_persist` / `agentforge.lab_persist`
+  events on success only
+- `LabResultWriter` (`src/Services/`) — multi-table cascade INSERT
+  (procedure_order → procedure_report → N×procedure_result) inside
+  a DBAL transaction
+- `LabResultIds` / `DocumentBytesResult` / `SeededIntakeQuestionnaire` /
+  `LabValue` / `LabPdfExtraction` — frozen DTOs
 
-Per the W2 MVP review, only 22 of 35 W2 tasks are MVP-blocking.
-Priorities have been re-set in tasks.json so `task-master next`
-walks the MVP first.
+## Next moves
 
-```
-HIGH (MVP — 22):
-  Foundation:  1, 2✓, 3, 4, 14
-  Lab path:    5, 6, 7, 8, 11
-  Intake path: 12, 13
-  Hybrid RAG:  9, 10, 15, 21
-  Overlay UI:  24, 25
-  Smoke:       28, 29
-  Ship:        30, 34
+`task-master next` proposes **Task 14** (PHI Redaction at LangfuseClient).
 
-MEDIUM (soft-MVP):
-  33  demo video (sticky note for end-of-week)
+Other unblocked MVP tasks:
 
-LOW (tier-2 — defer):
-  16, 17, 18, 19  eval gate, judge, self-test
-  20, 22, 23      eval-gate CI integration
-  26              HTTP cache headers
-  27              observability extensions
-  31, 32          eval / cost-latency reports
-  35              defense Q&A primer
-```
+- **Task 13** — Intake-form vision variant (cx=5, deps 4+11+12 — all
+  met). Same renderer as Task 11; different prompt + schema
+  (IntakeFormExtraction). Mostly a copy-and-adapt of
+  `attach_and_extract.py`. **First-up if continuing the W2 path.**
+- **Task 14** — PHI redaction at LangfuseClient (cx=4). Adds a
+  redaction step on extraction-call observability so PHI from the
+  vision tool's prompts/responses doesn't leak into Langfuse traces.
+- **Task 15** — Evidence retriever LangGraph node (cx=6, deps 1+9+10
+  — needs Task 1 supervisor refactor first, NOT met). Wires the
+  Task 10 corpus into the agent loop.
+- **Task 1** — LangGraph supervisor refactor (cx=9). The
+  architectural anchor. Blocks Tasks 13's full integration into
+  the agent loop, plus Task 15.
 
-## Next moves (post-merge)
-
-`task-master next` recommends **Task 5 — Seed AgentForge Intake
-Questionnaire via Doctrine Migration** (high, complexity 5, no deps).
-
-Other unblocked MVP starters: 7, 10, 14.
-
-The dependency-aware MVP execution order is roughly:
-- **First wave (parallel)**: 5, 7, 10, 14 — no dependencies
-- **After 1 lands**: 15, 11, 13 (workers)
-- **After 2 lands** (already done): 3, 4, 9 unblock
-- **After ingest tasks land**: 24, 25 (overlay), 28, 29 (smoke)
-- **Critical path tail**: 30 (deploy), 34 (README)
-
-Task 1 (LangGraph supervisor refactor) is the architectural anchor
-— complexity 9. Worth a focused session. The 9 W1 regression locks
-must stay green through the refactor.
+Critical path for full W2 (not just MVP): Task 1 → Task 15 → eval-gate
+tasks (16-19). MVP is shippable today without those.
 
 ## Architectural decisions to honor
 
-- **Citation contract** (Task 2 done): `Citation.page_bbox` is
-  required for `LAB_PDF` and `INTAKE_FORM`; validator rejects
-  `bbox_confidence < 0.7`. Constant exported as
-  `SCANNED_SOURCE_BBOX_CONFIDENCE_FLOOR`. Lower-confidence fields
-  belong in `unsupported_fields` (handled by callers, not as
-  structured Citations).
+- **Citation contract** (Task 2): every clinical claim carries a
+  `Citation` with the bbox-confidence floor (0.7) and inverted-bbox
+  rejection enforced at the schema layer. Any new extractor MUST
+  produce Citations, not free-form text references.
 - **Page indexing is 1-indexed** throughout (`PageBBox.page >= 1`,
   matches pdf.js native semantics). Don't subtract 1 anywhere in
-  the overlay code.
-- **Migration idempotency** for Task 5: use SELECT-then-INSERT-or-
-  UPDATE on `questionnaire_repository.source_url`. That column has
-  NO unique index in this fork (verified `sql/database.sql:14342`),
-  so DB-level upsert is unavailable. Migration path is root
-  `db/Migrations/`, not under the module.
-- **Persistence endpoints** (Tasks 8, 12) must triple-check
-  `JWT.patient_id == request.patient_id == documents[doc_id].patient_id`.
-  Reject 403 on any mismatch. The third check (document-belongs-to-
-  patient) catches forged document_id replay.
-- **Browser upload route** (Task 6) derives patient_id from the
-  active OpenEMR session, NEVER from multipart payload. If both
-  present, verify they match.
-- **PDF rendering** (Task 11) uses **PyMuPDF** (`pymupdf` in
-  pyproject.toml), NOT pdf2image. PyMuPDF needs no Poppler system
-  package and is faster.
-- **Citation overlay** (Tasks 24, 25) is **vanilla JS, not React**.
-  Vendor pdf.js bundle at `oe-module-agentforge/public/vendor/pdfjs/`
-  (pinned 4.x; download official prebuilt). Document URL must
-  include `&as_file=false` so OpenEMR serves bytes inline.
-- **Three trust boundaries** for PHI: Browser↔OpenEMR (session+CSRF),
-  OpenEMR↔Sidecar (JWT, bytes in memory only), Sidecar↔Anthropic
-  (BAA, **PHI crosses here** — the load-bearing exception).
+  overlay code.
+- **Triple-check at every persistence endpoint:** `JWT.patientId ==
+  request.patient_id == documents.foreign_id`. All four mismatch
+  shapes collapse to 403 (no information disclosure about which
+  leg failed). Reuse `DocumentOwnershipVerifier`.
+- **Audit fires only on success.** 1:1 correspondence with rows
+  actually written. No orphan events on 401/403/500, no double on retry.
+- **No PHI in logs.** Validation-failure logs use `error_count`, not
+  the failing payload. Module-level loggers emit only structural
+  metadata (page count, model, tokens). Langfuse-side redaction is
+  Task 14's surface.
+- **No structured EHR table writes from AI persistence.** The
+  unapproved record (`questionnaire_response`, `procedure_*`) is
+  what the overlay reads; structured tables (`patient_data`,
+  `lists`, `medications`, `allergies`, `family_history`) only get
+  written when a clinician approves on the overlay UI.
+- **JSON-shape-as-tool pattern for vision.** The vision tool uses
+  `tool_choice={"type": "tool", "name": "..."}` to coerce structured
+  output. Inline schema (not Pydantic-reflected) so a Pydantic field
+  rename can't silently reshape the LLM emission contract.
+- **Bytes stay in memory.** PDF rendering never writes a temp file;
+  `fitz.open(stream=...)` reads from a buffer. Base64 PNG strings
+  live on the request stack and are released when the call returns.
+- **Narrow catch (DbalException | JsonException | RuntimeException)
+  on write paths.** The project's `ForbiddenCatchTypeRule` blocks
+  Throwable / Exception (those would suppress Error / ErrorException).
+  Programmer bugs propagate to the global handler.
 
-## Local dev gotchas
+## Local dev gotchas (accumulated this session)
 
-- **PHP not installed on host.** Run phpstan/phpunit via Docker:
-  ```
-  cd docker/development-easy && docker compose exec openemr bash -c 'cd /var/www/localhost/htdocs/openemr && composer phpstan'
-  ```
-  The docker container is `development-easy-openemr-1` — needs to
-  be running (`docker compose up --detach --wait`).
+- **`task-master set-status` re-stringifies task IDs** as a side
+  effect, blowing up `add-dependency` and inflating the diff to
+  ~600 lines. After every status flip, run the renormalization
+  script (committed as inline Python in every status-sync MR; see
+  e.g. !15 commit body). The recipe converts pure-digit string IDs
+  back to ints.
+- **PHPStan cache surfaces stale baseline drift inconsistently.**
+  We saw this twice: an [OK] run, then later a "Found 8 errors"
+  run with phantom "ignore pattern X was not matched" warnings on
+  legacy library files we never touched. Fix:
+  `rm -rf tmp-phpstan/cache && composer phpstan` clears it. The
+  errors don't reproduce in CI — only in the long-lived dev
+  container's cache. Don't chase them as MR-blocking.
+- **`Document::get_data()` throws BadMethodCallException +
+  RuntimeException** on legacy storage edge cases (expired, deleted,
+  missing-file, decrypt-failure). The docblock only declares one
+  of the two — the other is real but undocumented. The
+  `DocumentBytesRepository` catches both with a justified
+  `@phpstan-ignore catch.neverThrown` on the second; keep this
+  pattern when reusing the legacy class.
+- **PHP not installed on host.** All composer scripts run via
+  `docker exec development-easy-openemr-1 bash -c '...'`.
+- **`sites/default/sqlconf.php` is `--skip-worktree`** — keeps the
+  local override (host=`mysql`, `$config=1`) but hidden from
+  git status. Undo with `git update-index --no-skip-worktree`.
+- **Anthropic SDK requires 256-bit HMAC keys** in tests. A 31-char
+  test secret = 248 bits and fails JWT signing. Use a 32-char
+  alphanumeric placeholder in fixtures.
+- **PDF generator is deterministic** via ReportLab's `invariant=1`.
+  Re-running `scripts/generate_mock_lab.py` produces byte-identical
+  PDFs — safe to commit the output.
+- **CI runner is `concurrent = 1`** — back-to-back MRs serialize.
+  Pipeline timing budget: ~5–6 min when the runner is idle, ~10
+  min when contended. Worst case observed: 2-hour queue gap (rare,
+  presumably runner restart or contention).
 
-- **`sites/default/sqlconf.php` is `--skip-worktree`** on this
-  checkout. Local override (host=`mysql`, `$config=1`) is
-  preserved; git status hides it. Undo with
-  `git update-index --no-skip-worktree sites/default/sqlconf.php`.
+## Quick-start checklist
 
-- **GitLab Runner** is Homebrew user-mode service (`brew services
-  list` shows `gitlab-runner`). Config at
-  `~/.gitlab-runner/config.toml`. Two important settings:
-  - `concurrent = 1` (sequential — phpstan needs full VM RAM)
-  - `host = "unix:///Users/sheep/.docker/run/docker.sock"` under
-    `[runners.docker]` (Docker Desktop puts the socket here, not
-    `/var/run/docker.sock`)
-
-- **Docker Desktop allocated 16 GB** (bumped from 8 GB to fit
-  PHPStan's 4 GB + phpunit). Configured at
-  `~/Library/Group Containers/group.com.docker/settings-store.json`
-  → `MemoryMiB: 16384`.
-
-- **Taskmaster gotcha**: `task-master set-status` re-stringifies
-  task IDs (turns int 1 into string "1"). After running it, run:
-  ```python
-  python3 -c "
-  import json
-  p = '.taskmaster/tasks/tasks.json'
-  d = json.load(open(p))
-  for t in d['week2']['tasks']:
-    if isinstance(t.get('id'), str): t['id'] = int(t['id'])
-    deps = t.get('dependencies', [])
-    t['dependencies'] = [int(x) if isinstance(x, str) else x for x in deps]
-  json.dump(d, open(p, 'w'), indent=2)
-  "
-  ```
-  to re-normalize. Otherwise `add-dependency` chokes.
-
-- **Taskmaster gotcha #2**: `task-master update-task --id=N` uses
-  AI to regenerate the task body and can DROP sibling tasks added
-  via direct JSON edit. If you have local-only task additions, edit
-  tasks.json directly with Python, not via update-task.
-
-## Quick-start checklist for next time
-
-1. `git status` — confirm clean working tree (sqlconf.php hidden by
-   skip-worktree)
-2. `git checkout main && git pull` — pick up merged MRs !2 and
-   (eventually) the Task 2 MR
-3. `task-master tags use week2 && task-master list` — confirm 3/35
-   done with priorities applied
-4. `task-master next` — should propose Task 5 (or 7, 10, 14 if
-   you'd rather start in parallel)
-5. Pick a task, branch off main: `git checkout -b feat/w2-task-NN-<slug>`
+1. `git status` — confirm clean working tree (sqlconf.php hidden)
+2. `git checkout main && git pull` — should be clean (no open branches)
+3. `task-master tags use week2 && task-master list` — confirm 11/37 done
+4. `task-master next` — should propose Task 14
+5. Pick a task, branch off main:
+   `git checkout -b feat/w2-task-NN-<slug>`
 6. `task-master show NN` — full implementation steps
-7. `task-master set-status --id=NN --status=in-progress`
-8. Implement (TDD where applicable per the project's primary workflow)
-9. Run tests:
+7. Implement (TDD where applicable)
+8. Run tests:
    - Sidecar: `cd sidecar && uv run pytest`
-   - PHP: `docker compose exec openemr bash -c '...composer phpunit-isolated'`
-10. Verify both lint + types: `uv run ruff check && uv run mypy src/`
+   - PHP: `docker exec development-easy-openemr-1 bash -c 'cd /var/www/localhost/htdocs/openemr && composer phpunit-isolated'`
+9. Lint + types: `uv run ruff check && uv run mypy`
+10. PHPStan via Docker:
+    `docker exec development-easy-openemr-1 bash -c 'cd /var/www/localhost/htdocs/openemr && composer phpstan'`
+11. Commit, push, MR. Do NOT include tasks.json edits in feature MRs —
+    bundle status flips into a separate `chore/w2-status-sync-N` MR.
 
-## Key files for the next MVP tasks
+## Key files for the next likely tasks
 
-### Task 5 — Doctrine migration for AgentForge Intake Questionnaire
-- `db/Migrations/Version20260504000001_seed_agentforge_intake_questionnaire.php` (NEW)
-- Reference: existing migrations in `db/Migrations/`
-- Schema: `sql/database.sql:14342` (`questionnaire_repository`)
+### Task 13 — Intake-form vision variant (cx=5)
 
-### Task 7 — JWT-validated `get_document_bytes` endpoint
-- `interface/modules/custom_modules/oe-module-agentforge/public/internal/get_document_bytes.php` (NEW)
-- Pattern: existing `recent_encounters.php`, `procedures.php` etc.
-- Use `AuthHeaderBridge::bridgeAuthorizationHeader()` (added Task 37)
+- **Reuse:** `sidecar/src/agentforge/tools/attach_and_extract.py`
+  (`PdfRenderer` is shape-identical for intake forms)
+- **Adapt:** the `VisionExtractor` class — different system prompt
+  (intake-form-shaped, references chief_concern + demographics
+  + medications + allergies + family_history); different tool spec
+  (mirrors `IntakeFormExtraction` schema instead of LabPdfExtraction);
+  different return type (`IntakeFormExtraction`)
+- **Recommended layout:** either parameterize the existing
+  `VisionExtractor` over the schema/prompt pair, or extract a base
+  `_VisionExtractorBase` and subclass for lab vs intake. The latter
+  is cleaner; the former is less code. Pick based on whether Task 15
+  will introduce a third vision flow.
+- **Demo:** add `scripts/intake_extraction_demo.py` mirroring
+  `extraction_demo.py`; the mock-lab generator should grow a
+  companion `scripts/generate_mock_intake.py` if you want zero-setup
+  demoability.
 
-### Task 10 — Commit clinical-guideline corpus
-- `sidecar/data/guidelines/` (NEW directory)
-- ~30 documents, ~600 chunks of ~500 tokens each
-- ADA, JNC 8 / ACC-AHA, AHA/ACC lipids, CKD staging, common labs
+### Task 14 — PHI redaction at LangfuseClient (cx=4)
 
-### Task 14 — PHI redaction at LangfuseClient
-- `sidecar/src/agentforge/observability/langfuse_client.py` (extend)
-- Strip `messages[*].content` from log payloads on extraction-call
-  type. Preserve latency, model, tokens, schema-validation result.
+- **Locate:** `sidecar/src/agentforge/observability/langfuse_client.py`
+  (per Taskmaster spec; verify the path)
+- **Strip from log payloads on extraction-call type:**
+  `messages[*].content` (the rendered images and the structured
+  output) — preserve `model`, `latency`, `tokens`, `schema_validation_result`
+- **Test:** mock the Langfuse client, send a fake extraction call
+  through, assert the captured trace contains structural metadata
+  but NOT the prompt/response bodies
 
-## What's deployed and where
+## What's deployed where
 
-`http://143.244.157.90:9300/` — production demo. Still running W1 code.
-The droplet is now ~30+ commits behind main. Recommended: redeploy
-after Task 30 lands (the W2 MVP deploy task).
+`http://143.244.157.90:9300/` — production demo droplet. **Still
+running W1 code.** The droplet is now ~30+ commits behind main.
+**Recommended: redeploy after Task 30 lands** (the W2 MVP deploy
+task), or if you want the demo droplet to reflect today's MVP work,
+redeploy now via `docs/DEPLOYMENT.md`.
 
 ## How this session ended
 
 ```
-3 / 35 W2 tasks done (36, 37, 2 + Task 2 subtasks 2.1-2.5)
-~5 commits across 2 feature branches
-0 PHPStan errors across 4338 files (level 10)
-2996 PHP isolated tests green (no regressions)
-786 sidecar tests green + 8 pre-existing integration failures (unrelated)
-20 new schema tests in 0.01s
+11 / 37 W2 tasks done (2, 3, 4, 5, 7, 8, 10, 11, 12, 36, 37)
+15 MRs merged today (!3 through !18)
+0 phpstan errors across 4358 files
+857 PHP isolated tests + sidecar (838 baseline + 19 new)
+0 sidecar regressions (8 pre-existing integration failures unchanged)
 ```
 
-Two branches awaiting merge (MR !2, plus Task 2 needs MR creation).
-After both merge, the next session picks up at Task 5 (or any of
-the other unblocked MVP starters: 7, 10, 14).
+All four MVP deliverable bullets shipped. Both demos zero-setup. Repo
+state pristine. Pick up at Task 13 or Task 14 next session.
