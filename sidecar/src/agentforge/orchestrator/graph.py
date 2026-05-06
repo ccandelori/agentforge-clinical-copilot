@@ -50,7 +50,9 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agentforge.llm.types import LLMResponse, Message, ToolSpec
+from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.planner import Plan, UseCase
+from agentforge.prompts import load_prompt
 from agentforge.rag.types import RetrievalResult
 from agentforge.schemas.citation import Citation as W2Citation
 from agentforge.schemas.intake import IntakeFormExtraction
@@ -58,24 +60,32 @@ from agentforge.tools.attach_and_extract import (
     RenderedPage,
     VisionExtractionResult,
 )
+from agentforge.tools.dtos import ToolResult
 from agentforge.verifier.cache import CitationIndex, CitationKey
+from agentforge.verifier.data_quality import DataQualityChecker
 from agentforge.verifier.protocols import DomainConstraintChecker
 from agentforge.verifier.streaming_verifier import StreamingVerifier
 
-SYNTHESIS_SYSTEM_PROMPT: str = (
-    "You are a clinical co-pilot. Given the user's question, any "
-    "structured data extracted from uploaded documents, and the "
-    "retrieved guideline evidence, synthesize a concise answer for "
-    "the clinician. Cite extracted values and guideline chunks "
-    "explicitly so a reader can trace every clinical claim back to "
-    "its source.\n\n"
-    "If neither extracted data nor evidence is available, answer "
-    "from the conversation itself — do not invent values."
-)
+# Loaded once from prompts/<active>/graph_synthesizer.md. Distinct from
+# the W1 ``synthesizer`` component (used by ``Orchestrator.SYSTEM_PROMPT``)
+# because the W2 graph's synthesize step receives extraction + evidence,
+# not tool_use results, and so needs different grounding rules. Both
+# components coexist until the MR 6 cutover retires the W1 path.
+SYNTHESIS_SYSTEM_PROMPT: str = load_prompt("graph_synthesizer")
 
 SYNTHESIS_MAX_TOKENS: int = 2048
 
+# Token budget for the synthesizer's input edge (messages + tool_results).
+# Matches the W1 ``TimeoutPolicy.synthesis_input_cap`` default so the
+# truncator behaves identically across both code paths.
+SYNTHESIS_INPUT_CAP_TOKENS: int = 12_000
+
 MAX_ITERATIONS: int = 3
+
+# Marker used as ``from_node`` on the supervisor's first handoff span,
+# before any worker has run. Kept as a module-level constant so dashboards
+# / queries can pin it without hunting for a magic string.
+HANDOFF_START_NODE: str = "start"
 
 
 class RouteDecision(StrEnum):
@@ -109,10 +119,25 @@ class AgentState(TypedDict):
     by the synthesizer. Workers are idempotent — once an output
     field is populated, the worker no-ops if the supervisor routes
     back to it.
+
+    Cross-cutting fields:
+
+    * ``tool_results`` — W1-shaped ``dict[str, ToolResult[Any]]`` so
+      the MR 6 cutover bridge can drop W1 callers' results into the
+      graph state without re-shaping. The W2 worker bodies don't
+      populate it today; the synthesizer's truncator + DataQuality
+      hook still operate on it (no-ops on an empty dict).
+    * ``langfuse_trace`` — opaque per-turn handle for observability
+      spans. Populated by the entrypoint that opens the turn's trace;
+      ``None`` when Langfuse is not configured (NullClient path).
+    * ``last_node`` — node name of the most recent worker exit, used
+      by the supervisor to populate the ``from_node`` field on each
+      handoff span. Initialized to ``HANDOFF_START_NODE`` on the
+      starter state.
     """
 
     messages: list[dict[str, Any]]
-    tool_results: list[Any]
+    tool_results: dict[str, ToolResult[Any]]
     route_decision: RouteDecision | None
     route_reason: str
     iteration: int
@@ -122,6 +147,8 @@ class AgentState(TypedDict):
     patient_id: int | None
     pdf_pages: list[RenderedPage]
     query: str
+    langfuse_trace: TraceHandle | None
+    last_node: str
 
 
 class _PlannerLike(Protocol):
@@ -175,6 +202,21 @@ class _SynthesisLLMLike(Protocol):
     ) -> LLMResponse: ...
 
 
+class _TruncatorLike(Protocol):
+    """Subset of ``SynthesisInputTruncator`` consumed by ``synthesize_node``.
+
+    Just the one method we exercise. Promotes test stubs that don't
+    need the full tiktoken-backed implementation while keeping the
+    real ``SynthesisInputTruncator`` structurally compatible.
+    """
+
+    def truncate(
+        self,
+        results: dict[str, ToolResult[Any]],
+        max_tokens: int,
+    ) -> dict[str, ToolResult[Any]]: ...
+
+
 def _last_user_message(state: AgentState) -> str:
     for msg in reversed(state["messages"]):
         if msg.get("role") == "user":
@@ -194,20 +236,71 @@ def _decide_route(plan: Plan, iteration: int) -> tuple[RouteDecision, str]:
 async def supervisor_node(
     state: AgentState,
     planner: _PlannerLike,
+    *,
+    langfuse: LangfuseClient | None = None,
 ) -> dict[str, Any]:
     """Run the planner and emit a route decision.
 
     Pure routing — never mutates ``messages``, ``tool_results``,
     ``extraction_result``, or ``evidence_chunks``. Bumps ``iteration``
     so worker → supervisor loops eventually trip the cap.
+
+    When ``langfuse`` is provided AND ``state["langfuse_trace"]`` is a
+    non-Null handle, emits one ``handoff`` span per routing decision
+    capturing the from/to node pair, the route decision + reason, and
+    the post-bump iteration counter. The Null path skips the call
+    entirely so test stubs that don't implement Langfuse are never
+    forced to.
     """
     plan = await planner.plan(_last_user_message(state))
-    decision, reason = _decide_route(plan, state["iteration"])
+    iteration = state["iteration"]
+    decision, reason = _decide_route(plan, iteration)
+
+    next_iteration = iteration + 1
+    _maybe_record_handoff(
+        langfuse,
+        state.get("langfuse_trace"),
+        from_node=state.get("last_node") or HANDOFF_START_NODE,
+        to_node=decision.value,
+        route_decision=decision.value,
+        route_reason=reason,
+        iteration=next_iteration,
+    )
+
     return {
         "route_decision": decision,
         "route_reason": reason,
-        "iteration": state["iteration"] + 1,
+        "iteration": next_iteration,
     }
+
+
+def _maybe_record_handoff(
+    langfuse: LangfuseClient | None,
+    trace: TraceHandle | None,
+    *,
+    from_node: str,
+    to_node: str,
+    route_decision: str,
+    route_reason: str,
+    iteration: int,
+) -> None:
+    """Forward a handoff span to Langfuse when both client and trace are wired.
+
+    Either argument missing → no-op. Keeps the call sites in worker
+    bodies free of the boilerplate ``if langfuse is None or trace is
+    None`` guard while preserving the structural property that we never
+    call into the Null implementation with a fake trace.
+    """
+    if langfuse is None or trace is None:
+        return
+    langfuse.record_handoff_span(
+        trace,
+        from_node=from_node,
+        to_node=to_node,
+        route_decision=route_decision,
+        route_reason=route_reason,
+        iteration=iteration,
+    )
 
 
 async def intake_extractor_node(
@@ -226,22 +319,29 @@ async def intake_extractor_node(
     supervisor's loop-back means a worker can be re-entered up to
     MAX_ITERATIONS times, so we must not duplicate the (expensive)
     Anthropic call.
+
+    Always stamps ``last_node`` so the next supervisor pass can populate
+    ``from_node`` on its handoff span — even on the no-op short-circuit
+    paths, the conditional edge fired.
     """
+    last_node_update: dict[str, Any] = {
+        "last_node": RouteDecision.INTAKE_EXTRACTOR.value
+    }
     if state["extraction_result"] is not None:
-        return {}
+        return last_node_update
     if not state["pdf_pages"]:
-        return {}
+        return last_node_update
     document_id = state["document_id"]
     patient_id = state["patient_id"]
     if document_id is None or patient_id is None:
-        return {}
+        return last_node_update
 
     result = await extractor.extract(
         pages=state["pdf_pages"],
         document_id=document_id,
         patient_id=patient_id,
     )
-    return {"extraction_result": result.extraction}
+    return {**last_node_update, "extraction_result": result.extraction}
 
 
 async def evidence_retriever_node(
@@ -253,15 +353,20 @@ async def evidence_retriever_node(
     Idempotent in the same way as ``intake_extractor_node`` — once
     ``evidence_chunks`` is populated, re-entry under the supervisor's
     loop-back is a no-op. An empty ``query`` also no-ops; we never
-    call the retriever with an empty string.
+    call the retriever with an empty string. Stamps ``last_node`` so
+    the next supervisor handoff span knows where the loop-back came
+    from.
     """
+    last_node_update: dict[str, Any] = {
+        "last_node": RouteDecision.EVIDENCE_RETRIEVER.value
+    }
     if state["evidence_chunks"]:
-        return {}
+        return last_node_update
     query = state["query"]
     if not query:
-        return {}
+        return last_node_update
     results = await retriever.retrieve(query)
-    return {"evidence_chunks": results}
+    return {**last_node_update, "evidence_chunks": results}
 
 
 def _state_messages_to_llm_messages(
@@ -325,20 +430,55 @@ def _build_synthesis_context_block(state: AgentState) -> str | None:
 async def synthesize_node(
     state: AgentState,
     llm: _SynthesisLLMLike,
+    *,
+    truncator: _TruncatorLike | None = None,
+    max_synthesis_tokens: int = SYNTHESIS_INPUT_CAP_TOKENS,
+    data_quality_checker: DataQualityChecker | None = None,
+    langfuse: LangfuseClient | None = None,
 ) -> dict[str, Any]:
     """Compose a final answer from accumulated turn state.
 
     Calls the LLM once with the conversation messages, the
-    ``SYNTHESIS_SYSTEM_PROMPT``, and (in later MRs) a context block
-    derived from ``extraction_result`` + ``evidence_chunks``. Appends
-    the response text as an assistant message.
+    ``SYNTHESIS_SYSTEM_PROMPT``, and a context block derived from
+    ``extraction_result`` + ``evidence_chunks``. Appends the response
+    text as an assistant message.
+
+    Cross-cutting hooks (all optional):
+
+    * **Truncator.** When ``truncator`` is wired and ``state["tool_results"]``
+      is non-empty, the dict is capped at ``max_synthesis_tokens`` before
+      anything is rendered. This is dead-code wiring on a pure W2 turn
+      (no tool_results) but lights up under the MR 6 W1 bridge.
+    * **DataQualityChecker.** When ``data_quality_checker`` is wired,
+      W1-shaped tool_results are run through the stale-lab and
+      problem/note-conflict heuristics. Any warnings prepend the
+      synthesizer's system prompt as a ``<system_reminder>`` block so
+      the LLM has a chance to surface them inline. ``langfuse``, when
+      supplied alongside, receives a ``record_data_quality_metrics``
+      span carrying only the warning counts (the strings stay local).
 
     Idempotent: if the last message in state is already an assistant
     turn, the synthesizer has already run and we no-op. Same contract
     as the other workers under the supervisor's loop-back.
     """
+    last_node_update: dict[str, Any] = {
+        "last_node": RouteDecision.SYNTHESIZE.value
+    }
     if state["messages"] and state["messages"][-1].get("role") == "assistant":
-        return {}
+        return last_node_update
+
+    tool_results = state["tool_results"]
+    if truncator is not None and tool_results:
+        tool_results = truncator.truncate(tool_results, max_synthesis_tokens)
+
+    dq_warnings = _collect_data_quality_warnings(
+        tool_results,
+        data_quality_checker,
+        langfuse=langfuse,
+        trace=state.get("langfuse_trace"),
+    )
+    system_prompt = _compose_system_prompt(SYNTHESIS_SYSTEM_PROMPT, dq_warnings)
+
     messages = _state_messages_to_llm_messages(state["messages"])
     context_block = _build_synthesis_context_block(state)
     if context_block is not None:
@@ -348,7 +488,7 @@ async def synthesize_node(
         # message is the cleaner seam.
         messages.append(Message(role="user", content=context_block))
     response = await llm.complete(
-        system=SYNTHESIS_SYSTEM_PROMPT,
+        system=system_prompt,
         messages=messages,
         max_tokens=SYNTHESIS_MAX_TOKENS,
     )
@@ -356,7 +496,103 @@ async def synthesize_node(
         "role": "assistant",
         "content": response.text,
     }
-    return {"messages": [*state["messages"], new_message]}
+    return {
+        **last_node_update,
+        "messages": [*state["messages"], new_message],
+    }
+
+
+def _compose_system_prompt(base: str, dq_warnings: list[str]) -> str:
+    """Return ``base`` optionally prefixed by a data-quality reminder.
+
+    Empty warning list → unchanged base prompt. Non-empty list →
+    ``<system_reminder>`` block with one bullet per warning, prepended
+    above the base prompt with a blank line separator. The reminder
+    block is intentionally bracketed so the model can reliably ignore
+    it when answering questions unrelated to the flagged data.
+    """
+    if not dq_warnings:
+        return base
+    body = "\n".join(f"- {w}" for w in dq_warnings)
+    reminder = (
+        "<system_reminder>\n"
+        "Data quality flags for this turn:\n"
+        f"{body}\n"
+        "</system_reminder>"
+    )
+    return f"{reminder}\n\n{base}"
+
+
+def _collect_data_quality_warnings(
+    tool_results: dict[str, ToolResult[Any]],
+    checker: DataQualityChecker | None,
+    *,
+    langfuse: LangfuseClient | None,
+    trace: TraceHandle | None,
+) -> list[str]:
+    """Run the stale-lab + problem/note conflict checks over W1 tool results.
+
+    Mirrors :meth:`Orchestrator._data_quality_suffix` so warnings are
+    consistent across the W1 iterative path and the W2 graph path.
+    Returns an empty list when (a) no checker is wired, (b) no
+    tool_results match the W1 keys, or (c) no warnings fire.
+
+    Records the warning counts (NOT the strings) onto the trace via
+    ``record_data_quality_metrics`` whenever the checker ran, so
+    dashboards can roll up per-turn DQ activity even when no warning
+    surfaced. Skips the metric record entirely when the checker is
+    None — there's nothing to report.
+    """
+    if checker is None:
+        return []
+
+    warnings: list[str] = []
+    stale_count = 0
+    conflict_count = 0
+
+    labs_result = tool_results.get("get_recent_labs")
+    if labs_result is not None and hasattr(labs_result.payload, "labs"):
+        for lab in labs_result.payload.labs:
+            flag = checker.check_stale_labs(lab)
+            if flag is not None:
+                warnings.append(flag)
+                stale_count += 1
+
+    problems_result = tool_results.get("get_active_problems")
+    notes_result = tool_results.get("get_recent_notes")
+    if (
+        problems_result is not None
+        and notes_result is not None
+        and hasattr(problems_result.payload, "problems")
+        and hasattr(notes_result.payload, "notes")
+    ):
+        conflicts = checker.check_conflicting_sources(
+            problems_result.payload.problems,
+            notes_result.payload.notes,
+        )
+        warnings.extend(conflicts)
+        conflict_count = len(conflicts)
+
+    if langfuse is not None and trace is not None:
+        langfuse.record_data_quality_metrics(
+            trace,
+            stale_labs_count=stale_count,
+            conflict_count=conflict_count,
+        )
+
+    # Dedupe identical warnings — multiple labs from the same date
+    # produce the same string, so without dedup a chart with several
+    # labs from one collection date floods the prompt with copies of one
+    # notice. Preserve insertion order so the most-recently-fired check
+    # surfaces first.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for warning in warnings:
+        if warning in seen:
+            continue
+        seen.add(warning)
+        deduped.append(warning)
+    return deduped
 
 
 def build_w2_citation_index(state: AgentState) -> CitationIndex:
@@ -424,15 +660,18 @@ async def terminal_node(
     citations that don't resolve cause their containing claim to be
     replaced with the rejection marker.
 
-    No-ops when no assistant message exists (early termination paths).
+    No-ops on the messages field when no assistant message exists
+    (early termination paths) but always stamps ``last_node`` so any
+    downstream observer sees the graph terminated here.
     """
+    last_node_update: dict[str, Any] = {"last_node": "terminal"}
     last = _last_assistant_message_index(state["messages"])
     if last is None:
-        return {}
+        return last_node_update
 
     raw_text = state["messages"][last].get("content", "")
     if not isinstance(raw_text, str) or not raw_text:
-        return {}
+        return last_node_update
 
     index = build_w2_citation_index(state)
     verifier = StreamingVerifier(index, domain_checker)
@@ -443,7 +682,7 @@ async def terminal_node(
         **state["messages"][last],
         "content": verified_text,
     }
-    return {"messages": new_messages}
+    return {**last_node_update, "messages": new_messages}
 
 
 def _last_assistant_message_index(
@@ -490,6 +729,10 @@ def build_graph(
     evidence_retriever: _EvidenceRetrieverLike | None = None,
     synthesis_llm: _SynthesisLLMLike | None = None,
     domain_checker: DomainConstraintChecker | None = None,
+    truncator: _TruncatorLike | None = None,
+    max_synthesis_tokens: int = SYNTHESIS_INPUT_CAP_TOKENS,
+    data_quality_checker: DataQualityChecker | None = None,
+    langfuse: LangfuseClient | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Assemble + compile the supervisor graph.
 
@@ -503,25 +746,46 @@ def build_graph(
     ``StreamingVerifier``. When None, the verifier passes
     cited-and-resolved claims unchanged (only structural citation
     resolution is enforced).
+
+    Cross-cutting deps (all optional, default off):
+
+    * ``truncator`` — caps ``state["tool_results"]`` at
+      ``max_synthesis_tokens`` before the synthesizer's LLM call.
+    * ``data_quality_checker`` — runs DQ heuristics over W1-shaped
+      tool_results; warnings prepend the synthesizer's system prompt.
+    * ``langfuse`` — receives ``record_handoff_span`` per supervisor
+      decision and ``record_data_quality_metrics`` per synthesis call.
+      The per-turn ``TraceHandle`` lives in ``state["langfuse_trace"]``.
+
+    All four cross-cutting hooks no-op when their dependency is None
+    OR when the relevant state slice is empty, so a graph built without
+    them behaves exactly like the MR 4 graph.
     """
 
     async def _supervisor(state: AgentState) -> dict[str, Any]:
-        return await supervisor_node(state, planner)
+        return await supervisor_node(state, planner, langfuse=langfuse)
 
     async def _intake_extractor(state: AgentState) -> dict[str, Any]:
         if vision_extractor is None:
-            return {}
+            return {"last_node": RouteDecision.INTAKE_EXTRACTOR.value}
         return await intake_extractor_node(state, vision_extractor)
 
     async def _evidence_retriever(state: AgentState) -> dict[str, Any]:
         if evidence_retriever is None:
-            return {}
+            return {"last_node": RouteDecision.EVIDENCE_RETRIEVER.value}
         return await evidence_retriever_node(state, evidence_retriever)
 
     async def _synthesize(state: AgentState) -> dict[str, Any]:
         if synthesis_llm is None:
-            return {}
-        return await synthesize_node(state, synthesis_llm)
+            return {"last_node": RouteDecision.SYNTHESIZE.value}
+        return await synthesize_node(
+            state,
+            synthesis_llm,
+            truncator=truncator,
+            max_synthesis_tokens=max_synthesis_tokens,
+            data_quality_checker=data_quality_checker,
+            langfuse=langfuse,
+        )
 
     async def _terminal(state: AgentState) -> dict[str, Any]:
         return await terminal_node(state, domain_checker=domain_checker)

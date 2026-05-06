@@ -182,6 +182,18 @@ class NullLangfuseClient:
     ) -> None:
         del trace, stale_labs_count, conflict_count
 
+    def record_handoff_span(
+        self,
+        trace: TraceHandle,
+        *,
+        from_node: str,
+        to_node: str,
+        route_decision: str,
+        route_reason: str,
+        iteration: int,
+    ) -> None:
+        del trace, from_node, to_node, route_decision, route_reason, iteration
+
     def flush(self) -> None:
         return None
 
