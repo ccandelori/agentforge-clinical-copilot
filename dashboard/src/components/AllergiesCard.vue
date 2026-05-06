@@ -148,8 +148,16 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 
 function formatRecordedDate(iso: string | null): string {
   if (iso === null) return '—'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? iso : dateFormatter.format(d)
+  // Date-only strings (YYYY-MM-DD) parse as UTC midnight; in a
+  // negative-offset locale that shifts the displayed day back. Parse
+  // local-date for those; fall through to the standard parser for
+  // datetime strings (which carry timezone info).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split('-').map(Number) as [number, number, number]
+    return dateFormatter.format(new Date(y, m - 1, d))
+  }
+  const parsed = new Date(iso)
+  return Number.isNaN(parsed.getTime()) ? iso : dateFormatter.format(parsed)
 }
 </script>
 
