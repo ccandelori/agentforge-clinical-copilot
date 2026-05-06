@@ -86,12 +86,15 @@ class Settings(BaseSettings):
     # When True, ``create_app`` builds the full RAG pipeline (BM25 +
     # SentenceTransformer dense + RRF + cross-encoder reranker) at
     # startup and passes it to the W2 graph. The dense + cross-encoder
-    # models download ~190 MB of weights on first use, so unit tests
-    # set this to False (or inject a fake ``EvidenceRetriever``) to
-    # avoid the network round-trip. The graph node degrades to a
-    # no-op when the retriever is None — evidence-query turns surface
-    # an empty chunk list rather than a hard failure.
-    evidence_retriever_enabled: bool = True
+    # models load ~190 MB of weights on construction (3-5 seconds),
+    # which is meaningful enough that the default is OFF — production
+    # deployments opt in via ``.env`` (``EVIDENCE_RETRIEVER_ENABLED=true``)
+    # so unit-test fixtures and dev-time imports don't pay the cost
+    # by accident. The graph node degrades to a no-op when the
+    # retriever is None: evidence-query turns surface an empty chunk
+    # list rather than a hard failure, so the W2 graph still serves
+    # intake-extraction turns even on a deployment without a corpus.
+    evidence_retriever_enabled: bool = False
 
     # Streaming verifier on the user-visible reply (Task 28). On by
     # default — the verify-before-emit gate shipped in week1-gaps #13,

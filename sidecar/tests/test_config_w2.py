@@ -42,28 +42,27 @@ def test_guidelines_index_path_defaults_to_bundled_corpus() -> None:
     )
 
 
-def test_evidence_retriever_enabled_defaults_to_true() -> None:
-    # Default-on so production deployments with the bundled corpus
-    # light up evidence retrieval without an explicit env var. Unit
-    # tests that don't want the ML model downloads explicitly set
-    # this to False or inject a fake retriever via create_app(...).
+def test_evidence_retriever_enabled_defaults_to_false() -> None:
+    # Default-off because the dense + cross-encoder load ~190 MB of
+    # ML weights on construction (3-5 seconds) — paying that cost on
+    # every unit-test fixture or dev-time ``create_app()`` import is
+    # an unacceptable regression. Production deployments opt in via
+    # ``.env`` (``EVIDENCE_RETRIEVER_ENABLED=true``).
     settings = _settings()
 
-    assert settings.evidence_retriever_enabled is True
+    assert settings.evidence_retriever_enabled is False
 
 
-def test_evidence_retriever_enabled_can_be_disabled_via_env(
-    monkeypatch: object,
-) -> None:
-    # Pydantic-settings reads env vars case-insensitively; a deployment
-    # without an evidence corpus disables the retriever to skip the
-    # ~190 MB ML model download on startup.
+def test_evidence_retriever_enabled_can_be_enabled_via_env() -> None:
+    # Pydantic-settings reads env vars case-insensitively; production
+    # ``.env`` flips this on after confirming the bundled corpus is
+    # in place and the Hugging Face cache is warm.
     import os
 
-    os.environ["EVIDENCE_RETRIEVER_ENABLED"] = "false"
+    os.environ["EVIDENCE_RETRIEVER_ENABLED"] = "true"
     try:
         settings = _settings()
-        assert settings.evidence_retriever_enabled is False
+        assert settings.evidence_retriever_enabled is True
     finally:
         del os.environ["EVIDENCE_RETRIEVER_ENABLED"]
 
