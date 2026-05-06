@@ -129,10 +129,8 @@
 
         whenPdfjsReady(function (pdfjsLib) {
             renderPdfPage(pdfjsLib, container, pageBbox.page, pdfUrl)
-                .then(function (/* { canvas, viewport } */) {
-                    // 24.5 — overlay a positioned highlight rect using
-                    // pageBbox.{x0,y0,x1,y1} multiplied by viewport pixel
-                    // dimensions. 24.6 — styling + dismiss.
+                .then(function (rendered) {
+                    mountOverlayRect(container, rendered.canvas, pageBbox);
                 })
                 .catch(function (err) {
                     console.error(
@@ -144,6 +142,25 @@
                     );
                 });
         });
+    }
+
+    // mountOverlayRect creates an absolutely-positioned <div> over the
+    // rendered canvas, sized from the citation's normalized 0..1 bbox.
+    // Sourcing dimensions from canvas.offsetWidth/Height (rather than the
+    // viewport bitmap dimensions) means CSS rescaling of the canvas — e.g.,
+    // max-width on a parent — flows through to the overlay automatically.
+    function mountOverlayRect(container, canvas, pageBbox) {
+        var width = canvas.offsetWidth;
+        var height = canvas.offsetHeight;
+        var rect = document.createElement('div');
+        rect.setAttribute('data-role', 'overlay-rect');
+        rect.style.position = 'absolute';
+        rect.style.left = (pageBbox.x0 * width) + 'px';
+        rect.style.top = (pageBbox.y0 * height) + 'px';
+        rect.style.width = ((pageBbox.x1 - pageBbox.x0) * width) + 'px';
+        rect.style.height = ((pageBbox.y1 - pageBbox.y0) * height) + 'px';
+        container.appendChild(rect);
+        return rect;
     }
 
     window.AgentforgeCitationOverlay = {
