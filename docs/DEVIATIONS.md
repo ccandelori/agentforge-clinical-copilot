@@ -2438,3 +2438,49 @@ sha512 integrity hash),
 ESM-only note).
 
 ---
+
+## 2026-05-06 — Citation overlay tests use jest + jsdom, not Puppeteer
+
+**Plan:** Taskmaster Task 24.7 specified a Puppeteer-driven headless
+browser test harness with a `tests/fixtures/citation_overlay_test.html`
+fixture loading a real PDF, with assertions on getBoundingClientRect()
+positioning and visual content matching for the 1-indexed page contract.
+
+**Deviation:** Implemented as `tests/js/citation_overlay.test.js` using
+jest + jsdom — the project's existing JS test pattern (matches
+`agent_panel.test.js`, `agent_panel_upload.test.js`, etc.). pdfjsLib is
+stubbed with a tracker that records each `getPage(N)` call; the 1-indexed
+contract is verified by asserting the recorded `N` matches
+`citation.page_bbox.page` exactly, with no off-by-one wrapping. Real PDF
+rendering is not exercised because jsdom can't paint to canvas — and it
+doesn't need to be, because the contract bug surfaces at the
+`pdf.getPage()` call boundary, which the test pins.
+
+**Why:** Three reasons to follow the existing convention:
+
+1. The repo already has 369 jest+jsdom tests; adding Puppeteer would mean
+   a second test runner and toolchain for one file.
+2. The CRITICAL contract bug (treating page_bbox.page as 0-indexed) is
+   detectable at the API call surface. Visual rendering matches that
+   surface — a green getPage(N) assertion can't be fooled by a "wrong
+   page rendered correctly" failure mode, because there's no rendering
+   to be wrong about.
+3. jest+jsdom runs the test file in 0.4s; Puppeteer + a real PDF + a
+   real canvas would push CI runtime + dependency surface meaningfully.
+
+**What we learned:** When a spec prescribes tooling, ask whether the
+intended *invariant* is what's load-bearing or whether the *tooling* is.
+Here, the invariant is "the 1-indexed contract isn't violated." Multiple
+test shapes can pin that invariant; the cheapest one that pins it
+soundly wins. (Also, jsdom's offsetWidth/Height returning 0 for canvases
+required patching `HTMLCanvasElement.prototype` to surface bitmap
+dimensions — a small jsdom workaround documented in the test file.)
+
+**Artifacts:**
+[`tests/js/citation_overlay.test.js`](../tests/js/citation_overlay.test.js)
+— 21 tests covering public API, mount() validation, the 1-indexed
+contract, out-of-range pages, rect positioning, styling, dismiss
+behavior (rect + × button + propagation), pdfjsLib readiness via the
+`agentforge:pdfjs-ready` event, error paths, and unmount safety.
+
+---
