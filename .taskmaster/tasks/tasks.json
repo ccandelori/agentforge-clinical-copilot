@@ -5122,7 +5122,7 @@
         "dependencies": [
           36
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -5130,7 +5130,7 @@
             "description": "Create the new graph.py module defining the LangGraph StateGraph structure and AgentState TypedDict with required fields for the supervisor architecture.",
             "dependencies": [],
             "details": "Create sidecar/src/agentforge/orchestrator/graph.py with:\n1. AgentState TypedDict containing: messages (list[Message]), tool_results (dict[str, ToolResult[Any]]), route_decision (Literal['intake-extractor', 'evidence-retriever', 'both', 'synthesize']), route_reason (str), iteration (int), extraction_result (optional), evidence_chunks (list)\n2. Import StateGraph from langgraph.graph\n3. Define the graph skeleton with add_node() placeholders for supervisor, intake-extractor, evidence-retriever, synthesize, and verifier nodes\n4. Add conditional edges from supervisor based on route_decision\n5. Set entry point to supervisor and END node after verifier\n6. Compile the graph with builder.compile()\n7. Export the compiled graph and AgentState for use by main.py",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests verifying: (1) AgentState TypedDict has all required fields with correct types, (2) StateGraph compiles without errors, (3) Conditional edges route correctly based on route_decision values, (4) Graph has correct entry point and terminal node configuration.",
             "parentId": "undefined"
           },
@@ -5142,7 +5142,7 @@
               1
             ],
             "details": "Create supervisor_node(state: AgentState, llm: LLMClient) -> AgentState in graph.py:\n1. Extract user_message from state.messages[-1] if role is user\n2. Instantiate Planner with the LLMClient and call plan(user_message)\n3. Map Plan.use_case to route_decision: ADMIT_SYNTHESIS/DELTA_COMPUTATION -> 'intake-extractor', CONTRAINDICATION -> 'evidence-retriever', FOLLOWUP -> 'synthesize' (or 'both' for complex queries needing both workers)\n4. Set route_reason from Plan.use_case.value for observability\n5. Increment state.iteration counter\n6. Check iteration >= 3 and force route_decision='synthesize' for hard-stop\n7. Return updated AgentState with route_decision, route_reason, and iteration\n8. Preserve existing Planner fallback behavior (default_plan_for on validation failure)",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) supervisor routes ADMIT_SYNTHESIS to intake-extractor, (2) supervisor routes CONTRAINDICATION to evidence-retriever, (3) supervisor forces synthesize at iteration 3, (4) supervisor handles Planner validation failures gracefully, (5) route_reason reflects the use_case value.",
             "parentId": "undefined"
           },
@@ -5154,7 +5154,7 @@
               1
             ],
             "details": "Create intake_extractor_node(state: AgentState, deps: OrchestratorDeps) -> AgentState:\n1. Extract the tool dispatch logic from Orchestrator._turn_inner() lines 456-579 (the MAX_TOOL_ITERATIONS loop)\n2. Move _dispatch_batch(), _dispatch() methods to be callable from the node (either as module functions or via deps injection)\n3. Preserve all existing behavior: cache lookup, retry policy, timeout handling, parallel batch dispatch, tool_results accumulation\n4. Update state.messages with tool_use and tool_result messages as the loop progresses\n5. Accumulate results into state.tool_results dict\n6. On stop_reason != 'tool_use', populate state.extraction_result with the LLM's text response\n7. Return updated AgentState after tool loop completes or max iterations reached\n8. Preserve graceful degradation (timed_out_tools tracking) in state",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration test verifying: (1) intake_extractor_node dispatches all tools from existing test fixtures, (2) tool_results dict populated correctly, (3) cache hits work as before, (4) retry policy applied on failures, (5) timed_out_tools list populated on timeout, (6) max iterations enforced.",
             "parentId": "undefined"
           },
@@ -5166,7 +5166,7 @@
               1
             ],
             "details": "Create evidence_retriever_node(state: AgentState, deps: OrchestratorDeps) -> AgentState:\n1. Log a debug message indicating placeholder execution\n2. Initialize state.evidence_chunks as empty list if not present\n3. Return state unchanged (pass-through for now)\n4. Add TODO comment referencing Task 9 for full implementation\n5. Add docstring explaining the planned behavior: semantic search over intake PDFs, LOINC-aware lab retrieval, guideline chunk lookup\n6. Ensure the node signature matches what the graph expects for future seamless replacement\n7. Consider adding a 'placeholder' flag to state for observability during testing",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) evidence_retriever_node returns state unchanged, (2) evidence_chunks initialized to empty list, (3) node does not raise exceptions, (4) placeholder flag visible in state if added.",
             "parentId": "undefined"
           },
@@ -5179,7 +5179,7 @@
               3
             ],
             "details": "Create synthesize_node(state: AgentState, deps: OrchestratorDeps) -> AgentState:\n1. Extract synthesis logic from Orchestrator._turn_inner() lines 468-512 (the final LLM call with tool results)\n2. Build messages list from state.messages including accumulated tool_results\n3. Call LLMClient.complete() with SYSTEM_PROMPT and accumulated context\n4. Store synthesis response text in state for verifier consumption\n5. Handle stop_reason edge cases (no response, incomplete stream)\n6. Apply _record_llm_call for cost tracking via deps.langfuse\n7. Return updated AgentState with synthesis output ready for verification\n8. Ensure streaming variant compatibility (for later stream_turn migration)",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) synthesize_node calls LLM with correct system prompt, (2) tool_results are included in context, (3) response text stored in state, (4) LLM cost recorded, (5) handles empty tool_results gracefully.",
             "parentId": "undefined"
           },
@@ -5192,7 +5192,7 @@
               5
             ],
             "details": "Create verifier_node(state: AgentState, deps: OrchestratorDeps) -> AgentState:\n1. Extract verifier wiring from Orchestrator._verify_response() and _stream_turn_inner() verifier logic\n2. Build CitationIndex from state.tool_results using build_citation_index()\n3. Instantiate StreamingVerifier with the index and domain_checker from deps\n4. Run verification on the synthesis output (either streaming or batch mode)\n5. Track claims_emitted, claims_rejected, by_category counters\n6. Record verifier span via deps.langfuse.record_verifier_span()\n7. Store verified/filtered text in state.final_response\n8. Handle empty-bubble guard (fallback text if all claims rejected)\n9. Mark state as terminal (END transition)\n10. Return final AgentState with verified response",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) verifier_node rejects claims without citations, (2) verifier_node passes grounded claims, (3) rejection metrics recorded correctly, (4) empty-bubble fallback emitted when all claims rejected, (5) final_response in state after completion.",
             "parentId": "undefined"
           },
@@ -5204,7 +5204,7 @@
               5
             ],
             "details": "Modify synthesize_node to integrate truncation and data quality:\n1. Before LLM call, apply deps.truncator.truncate(state.tool_results, max_tokens) to cap synthesis input\n2. Run DataQualityChecker.check_stale_labs() over labs in tool_results\n3. Run DataQualityChecker.check_conflicting_sources() with problems and notes\n4. Format DQ warnings as a system reminder block prepended to messages\n5. Record data quality metrics via deps.langfuse.record_data_quality_metrics()\n6. Preserve existing warning deduplication logic from Orchestrator._data_quality_suffix()\n7. Append DQ suffix to final response after synthesis (for user visibility)\n8. Ensure truncator respects PRIORITY ordering and list-field shrinking",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit tests: (1) truncator caps tool_results under max_tokens, (2) stale lab warnings injected for old labs, (3) conflict warnings injected when problem/note mismatch, (4) DQ metrics recorded on trace, (5) warnings deduplicated, (6) truncation drops lowest priority tools first.",
             "parentId": "undefined"
           },
@@ -5221,7 +5221,7 @@
               6
             ],
             "details": "Create handoff observability and iteration enforcement:\n1. Add record_handoff_span() to LangfuseClient protocol and implementations with fields: route_decision, route_reason, from_node, to_node, iteration\n2. Call record_handoff_span() at each conditional edge in the graph (supervisor -> worker, worker -> synthesize)\n3. In supervisor_node, check state.iteration >= 3 and force route_decision='synthesize' (hard-stop)\n4. Add iteration field to AgentState TypedDict initialized to 0\n5. Increment iteration in supervisor_node on each routing decision\n6. Log warning when hard-stop triggers for debugging\n7. Update NullLangfuseClient to accept the new span method\n8. Add span with timing: record start time before supervisor, end time after node completion\n9. Ensure all 9 W1 regression locks pass by running tests/eval/regression_locks.py against new graph",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Integration tests: (1) handoff spans recorded for each routing decision, (2) iteration counter increments correctly across loop, (3) hard-stop at iteration 3 forces synthesize, (4) all 9 W1 regression locks pass, (5) span contains correct from_node/to_node/route_decision/route_reason.",
             "parentId": "undefined"
           }
