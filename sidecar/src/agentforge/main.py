@@ -69,10 +69,11 @@ from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.attach_and_extract import (
     INTAKE_CONTRACT,
     PdfRenderer,
+    RenderedPage,
     VisionExtractor,
 )
 from agentforge.tools.demographics import DemographicsFetcher
-from agentforge.tools.document_bytes import DocumentBytesFetcher
+from agentforge.tools.document_bytes import DocumentBytesFetcher, DocumentBytesFetchError
 from agentforge.tools.encounters import EncountersFetcher
 from agentforge.tools.immunizations import ImmunizationsFetcher
 from agentforge.tools.labs import LabsFetcher
@@ -110,6 +111,16 @@ class TurnRequest(BaseModel):
     # back on every subsequent turn to opt into persisted history.
     # ``None`` disables memory for this turn — the agent is single-shot.
     session_id: str | None = None
+    # W2 inputs (MR 7). When ``document_id`` is set the /turn handler
+    # fetches the document bytes via the JWT-validated PHP endpoint,
+    # renders them to per-page PNGs, and routes the turn through the
+    # graph's intake-extractor node. ``evidence_query`` is forwarded
+    # to the orchestrator verbatim — the graph routes to the evidence
+    # node when it is non-empty. Either field, both, or neither may be
+    # set; the orchestrator falls back to the W1 iterative loop when
+    # neither is present so chart-question turns are unaffected.
+    document_id: int | None = None
+    evidence_query: str = ""
 
 
 class TurnResponse(BaseModel):
@@ -124,6 +135,38 @@ def get_orchestrator(request: Request) -> Orchestrator:
             detail="Orchestrator is not configured on app.state",
         )
     return orchestrator
+
+
+def get_document_bytes_fetcher(request: Request) -> DocumentBytesFetcher:
+    """Pull the request-scoped DocumentBytesFetcher off app.state.
+
+    Exposed as a FastAPI dependency so the W2 /turn path injects it
+    via ``Depends`` and tests can override it via
+    ``app.dependency_overrides``. The instance itself is process-wide
+    (one ``httpx.AsyncClient`` shared across requests).
+    """
+    fetcher = request.app.state.document_bytes_fetcher
+    if not isinstance(fetcher, DocumentBytesFetcher):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="DocumentBytesFetcher is not configured on app.state",
+        )
+    return fetcher
+
+
+def get_pdf_renderer(request: Request) -> PdfRenderer:
+    """Pull the request-scoped PdfRenderer off app.state.
+
+    Same pattern as :func:`get_document_bytes_fetcher` — process-wide
+    instance, request-scoped dependency injection.
+    """
+    renderer = request.app.state.pdf_renderer
+    if not isinstance(renderer, PdfRenderer):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="PdfRenderer is not configured on app.state",
+        )
+    return renderer
 
 
 async def _sse_stream(
@@ -543,15 +586,27 @@ def create_app(
         body: TurnRequest,
         ctx: Annotated[RequestContext, Depends(get_request_context)],
         orchestrator: Annotated[Orchestrator, Depends(get_orchestrator)],
+        fetcher: Annotated[
+            DocumentBytesFetcher, Depends(get_document_bytes_fetcher)
+        ],
+        renderer: Annotated[PdfRenderer, Depends(get_pdf_renderer)],
         response: Response,
     ) -> TurnResponse | StreamingResponse:
+        # W2 inputs route through the LangGraph rather than the W1
+        # iterative loop (see Orchestrator.turn). The graph path
+        # produces a single final assistant string — streaming the
+        # tokens incrementally is deferred (DEVIATIONS.md 2026-05-05),
+        # so a request with W2 inputs gets the buffered JSON response
+        # regardless of the streaming setting.
+        has_w2_input = body.document_id is not None or body.evidence_query
+
         # Streaming path (week1-gaps Task #10). Off by default; production
         # flips ``STREAMING_ENABLED=true`` only after the verify-BEFORE-emit
         # gate ships in #13. The cost header is emitted as a "final"
         # SSE frame instead of an HTTP header because the cost isn't
         # known until the body completes — by which time the response
         # headers have already been sent.
-        if settings.streaming_enabled:
+        if settings.streaming_enabled and not has_w2_input:
             return StreamingResponse(
                 _sse_stream(orchestrator, ctx, body),
                 media_type="text/event-stream",
@@ -565,9 +620,75 @@ def create_app(
                 },
             )
 
-        reply = await orchestrator.turn(
-            ctx, body.message, session_id=body.session_id
-        )
+        # Resolve ``document_id`` to ``pdf_pages`` by chaining the
+        # fetcher and the renderer. Errors map to HTTP statuses the
+        # JS panel can act on:
+        #   503 — sidecar can't reach OpenEMR (transport-level)
+        #   502 — OpenEMR returned an error (auth, scope, missing)
+        #   422 — the document is not a PDF or won't parse as one
+        pdf_pages: list[RenderedPage] | None = None
+        if body.document_id is not None:
+            try:
+                document = await fetcher.fetch(
+                    document_id=body.document_id,
+                    raw_token=ctx.raw_token,
+                )
+            except DocumentBytesFetchError as exc:
+                if exc.status_code == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Document fetch failed: sidecar unreachable.",
+                    ) from exc
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={
+                        "error": "Document fetch failed.",
+                        # ``sidecar_upstream_status`` lets the panel
+                        # distinguish 401/403/404 visually without
+                        # exposing the raw upstream body.
+                        "sidecar_upstream_status": exc.status_code,
+                    },
+                ) from exc
+
+            if document.mimetype != "application/pdf":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Document {body.document_id} is not a PDF "
+                        f"(mimetype: {document.mimetype})."
+                    ),
+                )
+
+            try:
+                pdf_pages = renderer.render_pages(document.content)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Document {body.document_id} could not be "
+                        f"rendered as a PDF."
+                    ),
+                ) from exc
+
+        if has_w2_input:
+            # W2 path — pass the new kwargs through. The orchestrator
+            # decides graph routing internally based on which inputs
+            # are populated.
+            reply = await orchestrator.turn(
+                ctx,
+                body.message,
+                session_id=body.session_id,
+                pdf_pages=pdf_pages,
+                document_id=body.document_id,
+                evidence_query=body.evidence_query,
+            )
+        else:
+            # W1 path — byte-identical to the legacy contract so
+            # existing chart-question fixtures (and any orchestrator
+            # stub that doesn't accept the W2 kwargs) keep working.
+            reply = await orchestrator.turn(
+                ctx, body.message, session_id=body.session_id
+            )
         # Surface accumulated LLM cost as a response header so the
         # PHP module can log it next to the user/pid for the request
         # (Week 1 Task #14). Read AFTER turn() returns and within the
