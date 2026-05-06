@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useFhirResource } from '@/composables/useFhirResource'
 import { useAuthStore } from '@/stores/auth'
+import AllergiesCard from '@/components/AllergiesCard.vue'
 import ClinicalCard from '@/components/ClinicalCard.vue'
 import PatientHeader from '@/components/PatientHeader.vue'
 
@@ -11,11 +12,9 @@ const { status, data, error } = useFhirResource<fhir4.Patient>(
   `/api/fhir/Patient/${encodeURIComponent(props.pid)}`,
 )
 
-// Card placeholders — each one is filled in by a later subtask. The
-// title + the upcoming-subtask pointer together are the seam every
-// card-implementation commit will land against.
-const cards: ReadonlyArray<{ title: string; subtask: string }> = [
-  { title: 'Allergies', subtask: 'T38.4' },
+// Card placeholders for the cards still to come. AllergiesCard (T38.4)
+// landed; the rest get replaced as their subtasks land.
+const placeholders: ReadonlyArray<{ title: string; subtask: string }> = [
   { title: 'Problem List', subtask: 'T38.5' },
   { title: 'Medications', subtask: 'T38.6' },
   { title: 'Prescriptions', subtask: 'T38.7' },
@@ -73,11 +72,13 @@ async function signOut(): Promise<void> {
     <template v-else-if="data">
       <PatientHeader :patient="data" />
       <main class="container py-4">
+        <AllergiesCard :pid="props.pid" />
         <ClinicalCard
-          v-for="card in cards"
+          v-for="card in placeholders"
           :key="card.title"
           :title="card.title"
           state="empty"
+          collapsible
         >
           <template #empty>
             <div class="text-muted small">

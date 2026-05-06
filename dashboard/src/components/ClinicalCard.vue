@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 // Layout wrapper used by every chart card (T38.4–T38.9). Owns the
 // loading/empty/error chrome so per-card setup blocks stay focused on
 // data shaping. Default slot renders when state === 'ready' (or unset).
+//
+// Collapse/expand is opt-in via `collapsible`. The header becomes a
+// button that toggles body visibility. `defaultCollapsed` controls the
+// initial state. Header-actions stay outside the toggle button so a
+// per-card refresh / kebab control doesn't fold the card.
 
 type CardState = 'loading' | 'empty' | 'error' | 'ready'
 
@@ -12,11 +17,24 @@ const props = defineProps<{
   count?: number | null
   state?: CardState
   error?: Error | null
+  collapsible?: boolean
+  defaultCollapsed?: boolean
 }>()
+
+const collapsed = ref<boolean>(props.defaultCollapsed ?? false)
+
+function toggle(): void {
+  if (props.collapsible === true) {
+    collapsed.value = !collapsed.value
+  }
+}
 
 const resolvedState = computed<CardState>(() => props.state ?? 'ready')
 const showCount = computed<boolean>(
   () => props.count !== null && props.count !== undefined,
+)
+const bodyVisible = computed<boolean>(
+  () => props.collapsible !== true || !collapsed.value,
 )
 </script>
 
@@ -25,7 +43,22 @@ const showCount = computed<boolean>(
     <header
       class="card-header bg-white d-flex justify-content-between align-items-center"
     >
-      <div>
+      <button
+        v-if="collapsible"
+        type="button"
+        class="btn btn-link p-0 text-start text-decoration-none text-body flex-grow-1 d-flex align-items-center"
+        :aria-expanded="!collapsed"
+        @click="toggle"
+      >
+        <i
+          class="bi me-2"
+          :class="collapsed ? 'bi-chevron-right' : 'bi-chevron-down'"
+          aria-hidden="true"
+        ></i>
+        <strong>{{ title }}</strong>
+        <span v-if="showCount" class="text-muted ms-2 small">({{ count }})</span>
+      </button>
+      <div v-else>
         <strong>{{ title }}</strong>
         <span v-if="showCount" class="text-muted ms-2 small">({{ count }})</span>
       </div>
@@ -33,7 +66,7 @@ const showCount = computed<boolean>(
         <slot name="header-actions" />
       </div>
     </header>
-    <div class="card-body">
+    <div v-show="bodyVisible" class="card-body">
       <template v-if="resolvedState === 'loading'">
         <slot name="loading">
           <div class="d-flex align-items-center text-muted small">

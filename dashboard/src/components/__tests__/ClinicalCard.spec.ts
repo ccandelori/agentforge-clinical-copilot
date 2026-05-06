@@ -98,4 +98,64 @@ describe('<ClinicalCard>', () => {
     })
     expect(wrapper.find('[data-test="body"]').exists()).toBe(false)
   })
+
+  describe('collapse/expand', () => {
+    it('does not render a toggle button when collapsible is false (or unset)', () => {
+      const wrapper = mount(ClinicalCard, { props: { title: 'X' } })
+      expect(wrapper.find('button[aria-expanded]').exists()).toBe(false)
+    })
+
+    it('renders a toggle button when collapsible is true', () => {
+      const wrapper = mount(ClinicalCard, {
+        props: { title: 'X', collapsible: true },
+      })
+      const btn = wrapper.find('button[aria-expanded]')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('aria-expanded')).toBe('true')
+    })
+
+    // v-show writes `display: none` to the inline style attribute. We
+    // assert against that directly rather than rely on
+    // `wrapper.isVisible()` — JSDOM's `getComputedStyle` /
+    // `offsetParent` are flaky for v-show ancestors and produce false
+    // positives.
+    function bodyHidden(wrapper: ReturnType<typeof mount>): boolean {
+      const style = wrapper.find('.card-body').element.getAttribute('style')
+      return (style ?? '').includes('display: none')
+    }
+
+    it('starts expanded by default', () => {
+      const wrapper = mount(ClinicalCard, {
+        props: { title: 'X', collapsible: true },
+        slots: { default: '<p>visible</p>' },
+      })
+      expect(bodyHidden(wrapper)).toBe(false)
+    })
+
+    it('starts collapsed when defaultCollapsed=true', () => {
+      const wrapper = mount(ClinicalCard, {
+        props: { title: 'X', collapsible: true, defaultCollapsed: true },
+        slots: { default: '<p>visible</p>' },
+      })
+      expect(bodyHidden(wrapper)).toBe(true)
+      const btn = wrapper.find('button[aria-expanded]')
+      expect(btn.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('toggles body visibility on header click', async () => {
+      const wrapper = mount(ClinicalCard, {
+        props: { title: 'X', collapsible: true },
+        slots: { default: '<p>visible</p>' },
+      })
+      const btn = wrapper.find('button[aria-expanded]')
+      expect(btn.attributes('aria-expanded')).toBe('true')
+      expect(bodyHidden(wrapper)).toBe(false)
+      await btn.trigger('click')
+      expect(btn.attributes('aria-expanded')).toBe('false')
+      expect(bodyHidden(wrapper)).toBe(true)
+      await btn.trigger('click')
+      expect(btn.attributes('aria-expanded')).toBe('true')
+      expect(bodyHidden(wrapper)).toBe(false)
+    })
+  })
 })
