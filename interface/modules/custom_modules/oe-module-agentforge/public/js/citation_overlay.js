@@ -11,11 +11,14 @@
  * touch GlobalWorkerOptions.
  *
  * Public API (window.AgentforgeCitationOverlay):
- *   mount(container, citation, pdfUrl)
+ *   mount(container, citation, pdfUrl, onClose?)
  *     Render the citation's PDF page into `container` and overlay a
  *     highlight rect on the cited region. `citation.page_bbox.page` is
  *     1-indexed per the W2_ARCHITECTURE.md PageBBox schema (and pdf.js
- *     itself uses 1-indexed pages — never subtract 1).
+ *     itself uses 1-indexed pages — never subtract 1). The optional
+ *     `onClose` callback fires when the user dismisses the highlight
+ *     (by clicking the rect or its × button); the caller decides whether
+ *     to also unmount the canvas (e.g. via unmount()) or leave it visible.
  *   unmount(container)
  *     Remove the rendered page and overlay; safe to call repeatedly.
  *
@@ -110,7 +113,7 @@
         });
     }
 
-    function mount(container, citation, pdfUrl) {
+    function mount(container, citation, pdfUrl, onClose) {
         if (!container || !citation || !pdfUrl) {
             console.warn(
                 '[AgentforgeCitationOverlay] mount() requires container, citation, pdfUrl'
@@ -122,15 +125,15 @@
             showError(container, 'Citation is missing page_bbox.page');
             return;
         }
-        // Container hosts an absolutely-positioned overlay rect (24.5+),
-        // so it must establish a positioning context.
+        // Container hosts an absolutely-positioned overlay rect, so it
+        // must establish a positioning context.
         unmount(container);
         container.style.position = 'relative';
 
         whenPdfjsReady(function (pdfjsLib) {
             renderPdfPage(pdfjsLib, container, pageBbox.page, pdfUrl)
                 .then(function (rendered) {
-                    mountOverlayRect(container, rendered.canvas, pageBbox);
+                    mountOverlayRect(container, rendered.canvas, pageBbox, onClose);
                 })
                 .catch(function (err) {
                     console.error(
@@ -144,21 +147,78 @@
         });
     }
 
+    // dismissRect removes the highlight + close button and fires onClose
+    // (if provided) so the caller can decide whether to also tear down
+    // the rendered canvas.
+    function dismissRect(rect, onClose) {
+        if (rect.parentNode) {
+            rect.parentNode.removeChild(rect);
+        }
+        if (typeof onClose === 'function') {
+            onClose();
+        }
+    }
+
     // mountOverlayRect creates an absolutely-positioned <div> over the
     // rendered canvas, sized from the citation's normalized 0..1 bbox.
     // Sourcing dimensions from canvas.offsetWidth/Height (rather than the
     // viewport bitmap dimensions) means CSS rescaling of the canvas — e.g.,
     // max-width on a parent — flows through to the overlay automatically.
-    function mountOverlayRect(container, canvas, pageBbox) {
+    // Click anywhere on the rect (or the × button) dismisses the highlight
+    // and fires onClose.
+    function mountOverlayRect(container, canvas, pageBbox, onClose) {
         var width = canvas.offsetWidth;
         var height = canvas.offsetHeight;
         var rect = document.createElement('div');
         rect.setAttribute('data-role', 'overlay-rect');
+        rect.setAttribute('role', 'button');
+        rect.setAttribute('tabindex', '0');
+        rect.setAttribute('aria-label', 'Dismiss citation highlight');
         rect.style.position = 'absolute';
         rect.style.left = (pageBbox.x0 * width) + 'px';
         rect.style.top = (pageBbox.y0 * height) + 'px';
         rect.style.width = ((pageBbox.x1 - pageBbox.x0) * width) + 'px';
         rect.style.height = ((pageBbox.y1 - pageBbox.y0) * height) + 'px';
+        rect.style.background = 'rgba(255, 230, 0, 0.35)';
+        rect.style.border = '2px solid rgba(255, 180, 0, 0.8)';
+        rect.style.cursor = 'pointer';
+        rect.style.pointerEvents = 'auto';
+        rect.style.zIndex = '10';
+        rect.style.boxSizing = 'border-box';
+        rect.addEventListener('click', function () {
+            dismissRect(rect, onClose);
+        });
+
+        // × button anchored to the rect's top-right gives a clearer
+        // dismiss affordance than relying on the user to discover that
+        // the whole rect is clickable. Stops propagation so its click
+        // handler fires once, not twice.
+        var closeBtn = document.createElement('button');
+        closeBtn.setAttribute('type', 'button');
+        closeBtn.setAttribute('data-role', 'overlay-close');
+        closeBtn.setAttribute('aria-label', 'Dismiss citation highlight');
+        closeBtn.textContent = '×';
+        closeBtn.style.position = 'absolute';
+        closeBtn.style.top = '-10px';
+        closeBtn.style.right = '-10px';
+        closeBtn.style.width = '20px';
+        closeBtn.style.height = '20px';
+        closeBtn.style.padding = '0';
+        closeBtn.style.lineHeight = '18px';
+        closeBtn.style.fontSize = '14px';
+        closeBtn.style.fontWeight = 'bold';
+        closeBtn.style.border = '1px solid rgba(0, 0, 0, 0.2)';
+        closeBtn.style.borderRadius = '50%';
+        closeBtn.style.background = 'white';
+        closeBtn.style.color = 'rgba(0, 0, 0, 0.7)';
+        closeBtn.style.cursor = 'pointer';
+        closeBtn.style.zIndex = '11';
+        closeBtn.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            dismissRect(rect, onClose);
+        });
+        rect.appendChild(closeBtn);
+
         container.appendChild(rect);
         return rect;
     }
