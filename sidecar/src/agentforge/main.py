@@ -22,11 +22,18 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, cast
 
+import httpx
 import redis.asyncio as redis_async
 from anthropic import AsyncAnthropic
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from agentforge.dashboard_auth import (
+    OAuthClient,
+    SessionStore,
+    make_dashboard_routers,
+)
 
 from agentforge.breakglass import BreakglassAuditTool
 from agentforge.config import Settings, get_settings
@@ -373,6 +380,37 @@ def create_app(
 
     storage = redis_storage or AgentRedisClient(redis_url=settings.redis_url)
 
+    # ------------------------------------------------------------------
+    # Dashboard BFF wiring (W2 Task 38.2 v2). When the OAuth2 client is
+    # configured (dashboard_oauth_client_id non-empty), construct the
+    # OAuth client + FHIR-proxy httpx client; otherwise leave both
+    # ``None`` so the routes mount but return 503 — keeps the routing
+    # surface stable across configurations and lets tests run without
+    # touching env vars.
+    # ------------------------------------------------------------------
+    session_store = SessionStore(
+        redis_client=cast(Any, redis_client),
+        session_ttl_seconds=settings.dashboard_session_ttl_seconds,
+        pending_ttl_seconds=settings.dashboard_pending_auth_ttl_seconds,
+    )
+    dashboard_oauth_http: httpx.AsyncClient | None = None
+    dashboard_fhir_http: httpx.AsyncClient | None = None
+    dashboard_oauth_client: OAuthClient | None = None
+    if settings.dashboard_oauth_client_id and settings.dashboard_oauth_client_secret:
+        # ``verify=False`` is required against dev-easy's self-signed
+        # cert. Production deploys serve OpenEMR with a real cert and
+        # this should be flipped (or removed) — tracked as a T38.14
+        # follow-up in PATIENT_DASHBOARD_MIGRATION.md.
+        dashboard_oauth_http = httpx.AsyncClient(timeout=15.0, verify=False)
+        dashboard_fhir_http = httpx.AsyncClient(timeout=15.0, verify=False)
+        dashboard_oauth_client = OAuthClient(
+            authority=settings.dashboard_oauth_authority,
+            client_id=settings.dashboard_oauth_client_id,
+            client_secret=settings.dashboard_oauth_client_secret,
+            redirect_uri=settings.dashboard_oauth_redirect_uri,
+            http=dashboard_oauth_http,
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Sensitivity policy loads at startup so a bad policy fails the
@@ -400,6 +438,11 @@ def create_app(
             # then release the Redis connection pool.
             await _app.state.langfuse.aclose()
             await storage.aclose()
+            # Dashboard BFF httpx clients (created above when configured).
+            if dashboard_oauth_http is not None:
+                await dashboard_oauth_http.aclose()
+            if dashboard_fhir_http is not None:
+                await dashboard_fhir_http.aclose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -597,6 +640,23 @@ def create_app(
     # consumes by chaining fetcher → renderer.
     app.state.pdf_renderer = pdf_renderer_instance
     app.state.document_bytes_fetcher = document_bytes_fetcher_instance
+    # Dashboard BFF state — surfaced for tests / introspection.
+    app.state.dashboard_session_store = session_store
+    app.state.dashboard_oauth_client = dashboard_oauth_client
+
+    # ------------------------------------------------------------------
+    # Dashboard BFF routers — mounted unconditionally; the routes
+    # themselves return 503 when the client is unconfigured so the
+    # routing surface is stable across deployment shapes.
+    # ------------------------------------------------------------------
+    dashboard_auth_router, dashboard_fhir_router = make_dashboard_routers(
+        settings=settings,
+        session_store=session_store,
+        oauth_client=dashboard_oauth_client,
+        fhir_http=dashboard_fhir_http,
+    )
+    app.include_router(dashboard_auth_router)
+    app.include_router(dashboard_fhir_router)
 
     @app.get("/health")
     async def health() -> dict[str, object]:
