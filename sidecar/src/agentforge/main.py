@@ -66,6 +66,7 @@ from agentforge.rag import (
     load_corpus,
 )
 from agentforge.storage.redis_client import AgentRedisClient
+from agentforge.timeouts import TimeoutPolicy
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.attach_and_extract import (
     INTAKE_CONTRACT,
@@ -471,6 +472,18 @@ def create_app(
         now=lambda: datetime.now(UTC),
     )
 
+    # Production timeout policy (MR 7 follow-up). The default
+    # ``total_turn=60`` is tuned for chart-question turns (one or
+    # two tool fetches + a synthesis call) and is too tight for
+    # the W2 INTAKE chain — vision extraction on a multi-page PDF
+    # alone routinely takes 30-60s, plus a planner call up front
+    # and a synthesizer call at the end. 120s gives ~30s headroom
+    # over the worst-case W2 path while keeping chart-question
+    # turns (typically <10s) on the same envelope. The default
+    # remains 60s so the unit-test suite's tighter assertions
+    # don't have to be retuned.
+    production_timeout_policy = TimeoutPolicy(total_turn=120.0)
+
     # ------------------------------------------------------------------
     # W2 graph wiring (Task 1, MR 7). Each collaborator below is a
     # thin construction site behind an injection kwarg; tests pass
@@ -571,6 +584,7 @@ def create_app(
         data_quality=data_quality_instance,
         identity_guard_enabled=True,
         agent_graph=agent_graph_instance,
+        timeout_policy=production_timeout_policy,
     )
 
     app.state.auth_gateway = auth_gateway
