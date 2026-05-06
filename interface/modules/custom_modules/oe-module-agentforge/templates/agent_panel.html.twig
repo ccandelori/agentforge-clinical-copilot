@@ -25,7 +25,8 @@ Expected variables (provided by the controller in Task 2):
 
 {% block content %}
     <div class="agentforge-panel d-flex flex-column" data-module="oe-module-agentforge"
-         data-turn-url="/interface/modules/custom_modules/oe-module-agentforge/public/turn.php">
+         data-turn-url="/interface/modules/custom_modules/oe-module-agentforge/public/turn.php"
+         data-upload-url="/interface/modules/custom_modules/oe-module-agentforge/public/upload_document.php">
         {# Chat surface is rendered by public/js/ on mount. #}
         <div class="agentforge-messages border rounded p-2 mb-2 bg-light"
              data-role="messages"
@@ -44,6 +45,33 @@ Expected variables (provided by the controller in Task 2):
                     title="{{ "Start a new conversation; the Co-Pilot will not remember previous messages."|attr }}">
                 {{ "New conversation"|text }}
             </button>
+        </div>
+        {# W2 upload + guidelines row (MR 7). The hidden file input is fanned-out
+           by the visible button so we control its styling. The pending-doc
+           indicator surfaces the attached document_id between upload and
+           the next /turn send so the user can confirm what they're about
+           to send. #}
+        <div class="d-flex align-items-center mb-2 small">
+            <input type="file"
+                   data-role="upload-input"
+                   accept="application/pdf"
+                   hidden>
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm mr-2"
+                    data-role="upload-button"
+                    title="{{ "Attach a PDF intake form for extraction."|attr }}">
+                {{ "Attach intake form"|text }}
+            </button>
+            <span class="text-muted mr-3"
+                  data-role="pending-doc-indicator"
+                  hidden></span>
+            <label class="form-check-label mb-0 ml-auto"
+                   title="{{ "Search the bundled clinical-guideline corpus when sending the next message."|attr }}">
+                <input type="checkbox"
+                       class="form-check-input"
+                       data-role="guidelines-toggle">
+                {{ "Search guidelines"|text }}
+            </label>
         </div>
         <form class="agentforge-form" data-role="form" autocomplete="off">
             <div class="input-group">

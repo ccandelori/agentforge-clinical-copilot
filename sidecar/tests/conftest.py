@@ -26,6 +26,13 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("JWT_SECRET", "test-jwt-secret")
     monkeypatch.setenv("HMAC_KEY", "test-hmac-key-32-bytes-aaaaaaaaaaaaa")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    # The default is already ``False``, but we re-set it here so a
+    # developer with ``EVIDENCE_RETRIEVER_ENABLED=true`` exported in
+    # their shell (typical when iterating on the W2 evidence path)
+    # doesn't accidentally trigger a 190 MB ML-weight load on every
+    # client-fixture test. Tests that DO want a retriever construct
+    # their own ``create_app(evidence_retriever=...)`` call.
+    monkeypatch.setenv("EVIDENCE_RETRIEVER_ENABLED", "false")
     get_settings.cache_clear()
 
     redis_mock = AsyncMock()

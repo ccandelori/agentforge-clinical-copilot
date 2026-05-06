@@ -1,163 +1,180 @@
-# Where we left off — 2026-05-05 (Task 1 fully shipped, MR 7 wiring gap remains)
+# Where we left off — 2026-05-06 (MR 7 shipped, droplet redeployed, demo lit up)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-**Task 1 — LangGraph supervisor refactor — is DONE.** All six MRs
-landed this session:
+**MR 7 — production cutover wiring — is DONE and DEPLOYED.** The
+upload → extract → synthesize flow now runs end-to-end through the
+OpenEMR UI on the production droplet. The W2 evidence-retriever is
+live (BM25 + SentenceTransformer dense + RRF + cross-encoder rerank),
+loaded from the bundled guideline corpus.
 
-| MR | Branch | Title |
+| MR | Branch | Status |
 |---|---|---|
-| !30 | feat/w2-task-1d-terminal-citation-index | LangGraph supervisor refactor (MRs 1-4: skeleton + workers + synthesize + terminal + W2 citation index) |
-| !31 | feat/w2-task-1e-truncator-dq-langfuse | Synth truncator + DataQuality + Langfuse handoff spans (MR 5) |
-| !32 | feat/w2-task-1f-production-cutover | Graph cutover seam + W1 bridge + real routing (MR 6) |
-| !33 | chore/w2-status-sync-task1 | Mark Task 1 + 1.1-1.8 done in tasks.json |
+| !35 | `feat/w2-mr7-cutover-wiring` | open, awaiting review |
 
-`task-master list` now shows Task 1 + every subtask as done.
 `task-master next` proposes **Task 24** (Citation Overlay vanilla-JS
 with vendored pdf.js) as the next pickup.
 
-## ⚠️ The MVP demo gap — read this before celebrating
+## What runs end-to-end on the droplet now
 
-**The W2 graph is reachable from Python callers, but NOT yet wired
-through the production HTTP path.** This means **the upload → extract →
-synthesize demo still does not run end-to-end through the OpenEMR
-UI**. MR 6 deliberately stopped at the cutover seam and deferred the
-HTTP wiring so reviewers could see one focused diff at a time.
+1. **Chart questions** (W1 path, unchanged): "show recent labs",
+   "what meds is she on", etc. → orchestrator's iterative tool-use
+   loop hits the existing fetchers.
+2. **Intake-form extraction** (W2 graph, INTAKE flow): user clicks
+   "Attach intake form", picks a PDF, types a message → frontend
+   POSTs the upload to OpenEMR's `upload_document.php`, gets a
+   `document_id` back, attaches it to the next /turn → sidecar
+   fetches the bytes via `DocumentBytesFetcher`, renders pages with
+   `PdfRenderer`, hands them to the graph's intake-extractor node →
+   final assistant text returned through the existing chat panel.
+3. **Guideline retrieval** (W2 graph, EVIDENCE flow): user toggles
+   "Search guidelines", types a clinical-knowledge question → next
+   /turn ships the message as `evidence_query` → graph's
+   evidence-retriever node runs the full RAG pipeline against the
+   bundled corpus → synthesize node grounds the answer in retrieved
+   chunks.
 
-What's missing for the demo to work end-to-end (call this work "MR 7"):
+Mixed turns (both upload AND evidence) sequence-dispatch in the
+graph: INTAKE first, then EVIDENCE, then SYNTHESIZE.
 
-1. **`sidecar/src/agentforge/main.py`** — construct the graph at app
-   startup and pass to Orchestrator.
-   * Build `VisionExtractor[IntakeFormExtraction]` against the existing
-     Anthropic LLM client + `INTAKE_CONTRACT`.
-   * Build `EvidenceRetriever` against BM25 + Dense + RRFMerger +
-     Reranker. Needs the corpus loader — check the Task 9 RAG pipeline
-     wiring for how main.py constructs these elsewhere.
-   * Call `build_graph(planner=planner_instance,
-     vision_extractor=..., evidence_retriever=...,
-     synthesis_llm=llm, truncator=truncator_instance,
-     data_quality_checker=data_quality_instance, langfuse=langfuse,
-     domain_checker=None)`. Pass result as `agent_graph=...` to
-     `Orchestrator(...)`.
-2. **`TurnRequest` schema** — extend with optional fields:
-   * `document_id: int | None = None`
-   * `evidence_query: str = ""`
-   * (Skip `pdf_pages` over the wire — bytes belong on a separate
-     upload endpoint. The orchestrator's `pdf_pages` kwarg is filled
-     server-side by a `DocumentBytesRepository` + `PdfRenderer` pair
-     once `document_id` is resolved.)
-3. **`/turn` route handler in `main.py`** — pass the new fields
-   through to `orchestrator.turn(...)`.
-4. **Document fetch + render glue** — when `document_id` is supplied,
-   fetch the PDF via `DocumentBytesRepository`, render to pages via
-   `PdfRenderer`, and pass `pdf_pages=[...]` to the orchestrator.
-5. **PHP `AgentProxyController`** — pass `document_id` /
-   `evidence_query` from the JSON body straight through to the
-   sidecar (one or two new lines of payload forwarding).
-6. **Frontend / chat UI** — when an upload triggered the turn, attach
-   the new `document_id` to the next chat send.
+## Deploy state
 
-This is mostly mechanical. The hard architectural question (W2 graph
-shape, citation bridge, routing semantics) is settled. MR 7 is
-plumbing — but it IS a real session of plumbing.
+* **Commits on branch (8):** 5 feature slices (DocumentBytesFetcher,
+  Settings, create_app graph wiring, /turn route W2 inputs,
+  frontend upload + toggle) + 3 supporting (DEVIATIONS,
+  DEPLOYMENT, Dockerfile corpus-bake fix).
+* **Droplet (`http://143.244.157.90:9300/`):** sidecar container
+  running the MR-7 image. Boot logs confirm `Loading weights:
+  100%` for both the SentenceTransformer encoder (~80 MB) and the
+  cross-encoder reranker (~110 MB). `/health` returns
+  `{"status":"healthy","policy_loaded":true}` from inside the
+  openemr container.
+* **Sidecar `.env` on droplet:** `EVIDENCE_RETRIEVER_ENABLED=true`
+  added. (See `docs/DEPLOYMENT.md` for the full env-var list.)
+* **PHP module:** unchanged (the `AgentProxyController` already
+  forwarded JSON bodies verbatim — see `docs/DEVIATIONS.md`
+  2026-05-05).
+* **Containers running:** 5 (matches the canonical layout per the
+  memory note) — agentforge-sidecar, agentforge-redis, openemr,
+  mysql, phpmyadmin.
+
+## Caveats for the next operator
+
+* **Deploy script's 30 s health check is too tight for the W2 path.**
+  On a clean container start, the retriever build loads ~190 MB of
+  ML weights synchronously, which takes 30-60 s on the droplet's
+  bandwidth. The deploy script reports an error exit, but the
+  container is fine — verify with `docker ps` and
+  `docker logs agentforge-sidecar`. Fixing this properly means
+  either bumping the timeout or mounting a Hugging Face cache
+  volume so the weights persist across redeploys (see "Follow-ups"
+  below).
+* **HF cache is not mounted as a volume.** Every `docker rm -f &&
+  docker run` cycle re-downloads the weights. ~1 minute per
+  redeploy is the current cost.
+* **Disk pressure on the droplet.** `/dev/vda1` was at 79 % after
+  the second build. Consider a `docker system prune -f` if a
+  future deploy hangs in the export phase — buildkit may stall
+  silently when storage runs short.
 
 ## Pick up here
 
-Two choices for next session:
+Two choices for the next session:
 
-* **Option A — finish the MVP demo (recommended for demo-day prep).**
-  Do MR 7 in one branch (probably `feat/w2-mr7-cutover-wiring`).
-  Tight scope, tested incrementally. Once green, redeploy to the
-  droplet (Task 30) and the upload → extract → synthesize flow
-  actually works in the browser.
-* **Option B — `task-master next` proposes Task 24.** Citation Overlay
-  vanilla-JS component with vendored pdf.js. Independent of MR 7;
-  could be done in parallel on the frontend track. Useful for the
-  demo's polish (clickable citations to a highlighted PDF region) but
-  the demo runs without it.
+* **Option A — Task 24 (recommended).** Citation Overlay vanilla-JS
+  component with vendored pdf.js. The W2 graph already produces
+  citations with bbox coordinates; this MR makes them clickable
+  in the chat surface (overlay highlights the cited region of the
+  source PDF). Independent of any backend work; high leverage on
+  demo polish. Branch: `feat/w2-task-24-citation-overlay`. Run
+  `task-master show 24` for the spec; `task-master expand --id=24`
+  if more detail helps.
+* **Option B — MR-7 follow-ups.** Several small things would
+  smooth out production behavior:
+  * Bump deploy script's health-check timeout to 120 s OR mount
+    `/opt/agentforge/hf_cache:/home/agentforge/.cache/huggingface`
+    on the sidecar container so the model weights survive redeploys.
+  * `chart_question_node` wrapping the W1 iterative loop — once
+    that lands, every turn flows through the graph and the W1
+    code path can retire.
+  * Streaming integration on the W2 path — today /turn forces
+    non-streaming when `document_id` or `evidence_query` is set.
+  * Identity guard / breakglass / cost / retry promotion into
+    the graph path.
+  * Iterative-loop drop (the spec's "one release as fallback").
 
 Memory note (`feedback_task_ordering.md`): "When `task-master next`
 proposes a context switch and a depth-first alternative exists,
-surface the choice; tiebreaker goes to staying in current context
-unless critical-path leverage is significantly higher." Here Task 24
-IS a context switch out of the W2 backend; MR 7 is the critical-path
-continuation. Recommend MR 7 unless the user wants to context-switch.
+surface the choice; tiebreaker goes to staying in current context."
+Both options are roughly equal-leverage today: Task 24 ships a
+visible demo win, follow-ups harden the path that just shipped.
+The recommendation is Task 24 unless you want to fortify the W2
+path before showing it.
 
-## What shipped this session (MRs 30-33)
+## What shipped this session (MR !35)
 
-### MR 30 — LangGraph supervisor refactor (Task 1, MRs 1-4 collapsed)
+### Slice A — `DocumentBytesFetcher` (sidecar Python)
 
-Pushed and merged the four locally-implemented branches as a single
-MR after confirming "no one will look closely" with the user.
+JWT-authed httpx GET against the existing PHP
+`InternalDocumentBytesController`. Forwards the user-bound JWT
+verbatim so the patient-scope check on the PHP side stays
+load-bearing. Returns `DocumentBytes(content, mimetype)`. Errors
+carry an HTTP status (or 0 for transport failures) so the route
+handler can map cleanly to 502 vs 503.
 
-* `AgentState` TypedDict, `RouteDecision` StrEnum, `MAX_ITERATIONS = 3`.
-* `supervisor_node`, `intake_extractor_node`, `evidence_retriever_node`,
-  `synthesize_node`, `terminal_node`.
-* `build_w2_citation_index` (W2-only at this MR).
-* 30 graph tests, ruff + mypy strict clean.
+### Slice B — Settings additions
 
-### MR 31 — synth truncator + DataQuality + Langfuse handoff spans
+`guidelines_index_path` (default points at the bundled corpus) and
+`evidence_retriever_enabled` (default **off**, see DEVIATIONS for
+why).
 
-* `prompts/v1/graph_synthesizer.md` (NEW component, distinct from W1
-  `synthesizer`).
-* `SynthesisInputTruncator` wired at synthesize input edge (no-op on
-  pure W2 turns until MR 6 bridge).
-* `DataQualityChecker` warnings prepended to system prompt as
-  `<system_reminder>` block; counts ride trace via
-  `record_data_quality_metrics`.
-* `LangfuseClient.record_handoff_span` (new Protocol method) — real
-  impl + Null impl. Supervisor emits one span per routing decision.
-* `AgentState.tool_results` schema flipped from `list[Any]` to
-  `dict[str, ToolResult[Any]]` (W1-shape, ready for MR 6 bridge).
-* Workers stamp `last_node` so handoff spans show real
-  `from_node → to_node` paths.
+### Slice C — `create_app` graph wiring
 
-### MR 32 — graph cutover seam + W1 bridge + real routing
+Builds `PdfRenderer`, `DocumentBytesFetcher`, `VisionExtractor`
+(only when an Anthropic key is set), and `EvidenceRetriever`
+(gated on flag + corpus presence). The graph itself is wrapped
+in `_LazyAgentGraph` so the langgraph compile defers to the first
+W2-routed /turn — keeps test-fixture setup fast.
 
-* `build_w2_citation_index` walks `state["tool_results"]` via the
-  existing W1 `build_citation_index` and merges. The 9 W1 regression
-  locks now pass when graded against the W2 index.
-* `_decide_route(plan, state)` replaces the MR 1 placeholder. Real
-  routing: pdf pending → INTAKE; query pending → EVIDENCE; both →
-  sequential dispatch via loop-back; nothing pending → SYNTHESIZE.
-* `Orchestrator` gains optional `agent_graph` constructor param +
-  `pdf_pages` / `document_id` / `evidence_query` kwargs on `turn()`.
-  When the graph is wired AND any W2 input is supplied,
-  `_run_graph_turn` builds the AgentState and awaits ainvoke; W1
-  chart-question turns are unchanged.
+### Slice D — `/turn` route accepts W2 inputs
 
-### MR 33 — Taskmaster status sync
+`TurnRequest` extended with `document_id` and `evidence_query`.
+When `document_id` is set, the route chains
+`DocumentBytesFetcher` → `PdfRenderer` → `orchestrator.turn`.
+Errors map to 503 (transport) / 502 (upstream) / 422 (non-PDF).
+Streaming SSE is suppressed on W2 turns. Chart-question turns
+take the byte-identical W1 code path so existing stub
+orchestrators (which don't accept the new kwargs) keep working.
 
-Surgical edits on `tasks.json` (NOT `task-master set-status`, per
-project convention) flipping Task 1 + 1.1-1.8 to done. Used Python
-over JSON for the 9 identical `"pending" → "done"` flips.
+### Slice E — Frontend upload + send wiring
 
-## What deliberately did NOT ship (deferred to MR 7)
+Twig template grows a file-input + "Attach intake form" button +
+"Search guidelines" toggle + pending-doc indicator. JS handles
+upload → stash `document_id` on panel dataset → next send attaches
+it (and clears immediately so a follow-up message doesn't
+re-attach). Guidelines toggle is sticky-on so a clinician can
+ask several research questions in a row.
 
-Per `docs/DEVIATIONS.md` 2026-05-05 entry on MR 6:
+### Supporting commits
 
-* `main.py` graph construction. The seam is in place; main.py wiring
-  is mechanical.
-* `TurnRequest` schema extension + `/turn` route handler change + PHP
-  `AgentProxyController` change.
-* Document fetch (`DocumentBytesRepository`) + render (`PdfRenderer`)
-  glue.
-* `chart_question_node` wrapping the W1 iterative loop so the graph
-  can absorb every turn shape (today the W1 loop still runs for
-  chart questions OUTSIDE the graph).
-* Iterative loop drop (kept as the spec's "one release as fallback").
-* W2 path picks up identity guard / breakglass / cost / retry (today
-  it only wraps timeout, memory, trace, final-text extraction).
+* `docs/DEVIATIONS.md` entry on the `EVIDENCE_RETRIEVER_ENABLED`
+  default-off rationale.
+* `docs/DEPLOYMENT.md` documents the new env var + the cold-start
+  caveat.
+* `sidecar/Dockerfile` patched to `COPY data/ ./data/` so the
+  guideline corpus ships in the image. Caught after the first
+  droplet deploy showed "guideline corpus missing" in the logs;
+  fix verified with the second deploy.
 
-Test posture across all merged MRs: **967 sidecar unit tests pass**
-(was 948 at session start), 7 deselected (live-stack integration
-tests excluded). ruff clean + mypy strict clean on every touched
+Test posture across the MR: 993 sidecar unit tests pass (was 967),
+9 new jsdom tests cover the upload widget + W2 send paths (366
+total tests/js). ruff clean + mypy strict clean on every touched
 file.
 
-## Demo recipes (still zero-setup)
+## Demo recipes (still zero-setup, plus one new browser flow)
 
 ```bash
 cd sidecar
@@ -172,128 +189,126 @@ uv run python scripts/retrieval_demo.py "ASCVD risk statin therapy"
 uv run python scripts/retrieval_demo.py --mode dense "CKD stage 3 management"
 uv run python scripts/retrieval_demo.py --mode hybrid "A1C target adult diabetes"
 
-# Graph end-to-end (in tests, until MR 7 wires HTTP):
+# Graph end-to-end via tests:
 uv run pytest tests/test_orchestrator_graph.py tests/test_orchestrator_w2_cutover.py
 ```
 
-Browser demo (upload → extract → synthesize end-to-end through the
-OpenEMR UI) is **blocked on MR 7**.
+**NEW: browser demo at http://143.244.157.90:9300/** — open a
+patient chart, click "Attach intake form" in the Co-Pilot panel,
+upload a PDF, type "extract this", send. Or toggle "Search
+guidelines" and type a clinical-knowledge question.
 
 ## Reusable surfaces the next session should know
 
-### `Orchestrator` (NEW in MR 32)
+### `Orchestrator` (unchanged from MR 6)
 
 * Constructor: `agent_graph: _AgentGraphLike | None = None` (kwarg-only).
 * `turn(ctx, user_message, *, session_id, pdf_pages, document_id,
   evidence_query)`. The three new W2 kwargs default to None / "".
-* `_run_graph_turn` is the inner method that builds AgentState and
-  awaits `agent_graph.ainvoke`. Wraps the call in the per-turn
-  timeout, memory load/persist, trace open, and final-text extraction
-  via `_last_assistant_text`.
+* `_run_graph_turn` builds the AgentState and awaits `agent_graph.ainvoke`.
 * `_AgentGraphLike` Protocol — narrow ainvoke surface; the langgraph
-  CompiledStateGraph satisfies it structurally.
+  CompiledStateGraph satisfies it structurally; `_LazyAgentGraph`
+  (in `agentforge.main`) does too.
 
-### `graph.py` (mature surfaces)
+### `agentforge.main` (NEW in MR 7)
 
-* `build_graph(planner, *, vision_extractor=None,
-  evidence_retriever=None, synthesis_llm=None, domain_checker=None,
-  truncator=None, max_synthesis_tokens=12_000,
-  data_quality_checker=None, langfuse=None)` — every dep optional;
-  no-op when None.
-* `build_w2_citation_index(state)` walks W1 tool_results + W2
-  evidence_chunks + extraction citations into one CitationIndex.
-* `_decide_route(plan, state)` — real routing per state inputs.
+* `create_app(...)` adds five injectable kwargs:
+  `pdf_renderer`, `document_bytes_fetcher`, `vision_extractor`,
+  `evidence_retriever`, `agent_graph`. Each is built from settings
+  by default; tests inject overrides.
+* `get_document_bytes_fetcher` and `get_pdf_renderer` are FastAPI
+  dependencies that pull instances off `app.state` so the /turn
+  handler and tests can override them via
+  `app.dependency_overrides`.
+* `_build_evidence_retriever(settings)` — returns None when the
+  flag is off OR the corpus file is missing. The graph node
+  no-ops on None.
+* `_LazyAgentGraph(builder)` — defers `build_graph()` until the
+  first `ainvoke` call. Keeps create_app cheap.
+
+### `agentforge.tools.document_bytes` (NEW)
+
+* `DocumentBytesFetcher(base_url, *, http_client=None, path=...)`.
+* `fetch(*, document_id, raw_token) -> DocumentBytes`.
+* `DocumentBytes(content: bytes, mimetype: str)`.
+* `DocumentBytesFetchError(status_code, message)` — `status_code=0`
+  means transport failure.
 
 ## Architectural decisions to honor
 
 * **`graph_synthesizer` is the W2 prompt**, distinct from the W1
   `synthesizer`. Both coexist until the chart-question worker MR
-  retires the W1 path. When you wire main.py for MR 7, the W1
-  `Orchestrator.SYSTEM_PROMPT` (loaded from `synthesizer`) and the
-  graph's `SYNTHESIS_SYSTEM_PROMPT` (loaded from `graph_synthesizer`)
-  serve different turn shapes.
-* **Workers stamp `last_node` even on no-op short-circuit paths** so
-  the supervisor's next handoff span has the correct `from_node`.
+  retires the W1 path.
+* **Workers stamp `last_node` even on no-op short-circuit paths.**
   Any new worker must follow this pattern.
-* **`AgentState.tool_results` is `dict[str, ToolResult[Any]]`** and
-  the W1 bridge in `build_w2_citation_index` walks it. When a
-  chart-question worker lands in MR 7+, populate this dict, not a
+* **`AgentState.tool_results` is `dict[str, ToolResult[Any]]`.**
+  When a chart-question worker lands, populate this dict, not a
   list.
 * **The cutover seam routes by W2-input presence, not plan use_case.**
-  The orchestrator's `turn()` hands off to the graph when
-  `pdf_pages or evidence_query`; FOLLOWUP / ADMIT / etc. determinations
-  happen INSIDE the graph via `_decide_route`. Don't reintroduce
-  use-case-based routing at the orchestrator surface.
+  `turn()` hands off to the graph when `pdf_pages or evidence_query`;
+  FOLLOWUP / ADMIT / etc. happens INSIDE the graph via
+  `_decide_route`. Don't reintroduce use-case-based routing at the
+  orchestrator surface.
+* **`EVIDENCE_RETRIEVER_ENABLED` defaults off.** Production opts
+  in via `.env`. Tests don't pay the ML-weight load. See
+  `docs/DEVIATIONS.md` 2026-05-05 for the full rationale.
 
 ## Local dev gotchas (additions to last session)
 
-* **JSON tasks.json edits via Python, not Edit tool.** When flipping
-  9 identical `"status": "pending"` lines to `"done"`, the Edit tool's
-  uniqueness requirement makes individual edits painful. Use a small
-  Python script that loads tasks.json, mutates the right keys, writes
-  back. The Bash hook flow accepts this. Just be sure to preserve
-  the trailing newline (`json.dumps(...) + "\n"`).
-* **Don't let "this is W1 work" make you skip an Orchestrator test
-  pass when changing it.** MR 6 added a Protocol + 3 new turn kwargs
-  + a helper method to Orchestrator. Even though the change was
-  scoped to the W2 path, ALL Orchestrator tests must pass — the W1
-  path mustn't regress on the new kwarg defaults.
+* **Deploy script's 30 s health check is too tight for first-time
+  W2 startup.** When the script exits non-zero, verify the
+  container manually before assuming a real failure:
+  ```bash
+  ssh root@143.244.157.90 "docker ps; docker logs agentforge-sidecar | tail -20"
+  ```
+* **The corpus must be in the container image, not just on disk.**
+  `Dockerfile` now `COPY data/ ./data/` — easy to forget when
+  adding a new bundled-data layer.
+* **Test runtime is sensitive to eager ML loads.** When adding any
+  feature that pulls Hugging Face weights at construction, gate
+  it behind a flag that defaults off, OR wrap it in a lazy holder
+  like `_LazyAgentGraph`.
 
 ## How this session ended
 
 ```
-Task 1 fully shipped across 4 merged MRs (30, 31, 32, 33).
-967 sidecar unit tests pass. ruff clean + mypy strict clean on
-every touched file.
+MR !35 (feat/w2-mr7-cutover-wiring) shipped 8 commits and is
+deployed to the droplet. The upload → extract → synthesize flow
+runs end-to-end through the OpenEMR UI for the first time.
 
-Subtasks status (per task-master):
-  1.1 — done
-  1.2 — done
-  1.3 — done
-  1.4 — done
-  1.5 — done
-  1.6 — done
-  1.7 — done
-  1.8 — done
-  Task 1 — done
+Test posture:
+  993 sidecar unit tests pass (was 967)
+  366 JS tests pass (added 9)
+  ruff clean + mypy strict clean
+  Droplet container healthy; corpus loaded; ML weights loaded.
 
-MR 7 (main.py + TurnRequest + PHP + chart-question worker)
-remains the work that lights up the upload → extract →
-synthesize demo through the OpenEMR UI.
-
-Production /turn endpoint still routes through Orchestrator.turn()
-which still runs the W1 iterative loop for chart questions. The
-graph is reachable via Python callers (tests) but not via HTTP.
+Production /turn endpoint now routes W2-input turns through the
+LangGraph supervisor; chart-question turns continue through the
+W1 iterative loop until ``chart_question_node`` lands.
 ```
 
 ## Quick-start checklist for next session
 
-1. `git status` — confirm clean working tree (sqlconf.php hidden).
-2. `git log --oneline -5` — verify the three feature MRs and the
-   chore are on main.
-3. Decide: MR 7 (depth-first; lights up the demo) or Task 24
-   (frontend; runs in parallel).
-4. **For MR 7**: branch `feat/w2-mr7-cutover-wiring`, then:
-   * Read `sidecar/src/agentforge/main.py` `create_app` for the
-     Orchestrator construction site.
-   * Read `sidecar/src/agentforge/rag/` for how `EvidenceRetriever`
-     is built elsewhere (Task 9 ML wiring landed last week).
-   * Read the PHP `AgentProxyController` for the JSON body shape
-     it forwards.
-   * TDD as usual — small wiring tests for each piece.
-5. **For Task 24**: branch `feat/w2-task-24-citation-overlay`, then
-   `task-master show 24` to read the spec and `task-master expand
-   --id=24` if more detail is helpful.
+1. `git status` — confirm clean working tree.
+2. `git log --oneline -5` — verify the latest is on main.
+3. Decide: Task 24 (frontend, demo polish) or MR-7 follow-ups
+   (HF cache volume, deploy timeout bump, chart_question_node).
+4. **For Task 24**: branch `feat/w2-task-24-citation-overlay`,
+   `task-master show 24` for spec, vendor pdf.js if not already
+   pulled.
+5. **For follow-ups**: `feat/sidecar-hf-cache-volume` is a quick
+   win — adds `-v /opt/agentforge/hf_cache:/home/agentforge/.cache/huggingface`
+   to the deploy script's docker run. ~30 min including verification.
 6. Tests after either branch:
    * `cd sidecar && uv run pytest --ignore=tests/integration`
    * `cd sidecar && uv run ruff check && uv run mypy src tests`
+   * `npx jest tests/js/` (if JS changed)
    * `composer phpunit-isolated` (if PHP changed)
 7. Commit, push, MR. Repeat for the next slice.
 
 ## What's deployed where
 
-`http://143.244.157.90:9300/` — production demo droplet. **Still
-running W1 code.** Now ~60+ commits behind main and won't reflect any
-of this session's Task 1 work until MR 7 ships AND a redeploy runs
-(Task 30). After MR 7 + redeploy, the upload → extract → synthesize
-demo runs end-to-end through the OpenEMR UI on the droplet.
+`http://143.244.157.90:9300/` — production demo droplet, now
+running the MR-7 image. The upload → extract → synthesize demo
+runs end-to-end through the OpenEMR UI. Sidecar logs confirm
+the W2 evidence retriever is loaded and serving.

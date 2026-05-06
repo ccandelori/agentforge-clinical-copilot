@@ -159,6 +159,17 @@ _LAST_TRACE_ID_VAR: ContextVar[str | None] = ContextVar(
     "agentforge_last_trace_id", default=None
 )
 
+# Per-turn extraction snapshot (W2 INTAKE flow, MR 7 follow-up).
+# ``_run_graph_turn`` populates this after the graph completes when
+# ``state["extraction_result"]`` is set; the /turn endpoint reads it
+# to include the structured extraction in :class:`TurnResponse` so
+# the browser can render a confirm-able panel below the chat bubble.
+# ``None`` for chart-question turns and for evidence-only turns where
+# no PDF was attached.
+_TURN_EXTRACTION_VAR: ContextVar[dict[str, Any] | None] = ContextVar(
+    "agentforge_turn_extraction", default=None
+)
+
 
 def get_turn_cost_usd() -> float:
     """Return the accumulated LLM cost for the current asyncio task.
@@ -179,6 +190,19 @@ def get_last_trace_id() -> str | None:
     :meth:`Orchestrator.turn` returns and within the same asyncio task.
     """
     return _LAST_TRACE_ID_VAR.get()
+
+
+def get_last_turn_extraction() -> dict[str, Any] | None:
+    """Return the structured extraction from the most recent turn.
+
+    Populated by ``_run_graph_turn`` when the W2 INTAKE flow ran on
+    this task; ``None`` for chart-question turns, evidence-only
+    turns, and turns that fell through to the W1 iterative loop.
+    Read AFTER :meth:`Orchestrator.turn` returns and within the same
+    asyncio task — same ContextVar isolation contract as cost and
+    trace-id getters.
+    """
+    return _TURN_EXTRACTION_VAR.get()
 
 
 class _AgentGraphLike(Protocol):
@@ -333,6 +357,10 @@ class Orchestrator:
         # Reset the per-turn trace ID so a failed/null turn never
         # exposes the previous turn's trace ID via X-Trace-Id.
         _LAST_TRACE_ID_VAR.set(None)
+        # Reset the per-turn extraction snapshot so an evidence-only
+        # turn (or a W1 chart-question turn) doesn't surface the
+        # previous turn's extracted fields back to the browser.
+        _TURN_EXTRACTION_VAR.set(None)
 
         # W2 cutover: route through the graph when its surface is wired
         # AND the caller has W2 inputs. Same total-turn timeout envelope
@@ -435,6 +463,16 @@ class Orchestrator:
 
         assert self._agent_graph is not None  # narrowed by caller
         result = await self._agent_graph.ainvoke(state)
+
+        # Stash the structured extraction so the /turn route can
+        # surface it in TurnResponse for the browser's confirm
+        # panel. Pydantic's ``model_dump(mode="json")`` walks
+        # nested PageBBox / Citation submodels into JSON-safe
+        # primitives (datetime → ISO, etc.) so the dict
+        # round-trips through FastAPI's response serializer.
+        extraction = result.get("extraction_result")
+        if extraction is not None and hasattr(extraction, "model_dump"):
+            _TURN_EXTRACTION_VAR.set(extraction.model_dump(mode="json"))
 
         final_text = _last_assistant_text(result.get("messages") or [])
         await self._maybe_persist_turn(session_id, user_message, final_text)

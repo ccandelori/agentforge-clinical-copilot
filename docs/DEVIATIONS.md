@@ -2337,3 +2337,51 @@ no-W2-inputs synthesize fallthrough),
 preserves the 9 W1 lock verdicts).
 
 ---
+
+## 2026-05-05 — `EVIDENCE_RETRIEVER_ENABLED` defaults to `false` (MR 7)
+
+**Plan:** MR 7 wires `EvidenceRetriever` into `create_app` by default so
+the W2 evidence node lights up in production without an explicit toggle.
+NEXT-SESSION.md framed slice C as "build the retriever and pass it
+through"; the assumption was a default-on flag.
+
+**Deviation:** `Settings.evidence_retriever_enabled` defaults to **False**.
+Production deployments opt in via `.env` (`EVIDENCE_RETRIEVER_ENABLED=true`).
+
+**Why:** The retriever's collaborators include `SentenceTransformerEncoder`
+and `SentenceTransformerCrossEncoder`, both of which load ~190 MB of ML
+weights on construction (3-5 seconds wall-clock). Eager construction in
+`create_app` bumped the unit-test runtime from ~3.5 s to ~50 s — every
+test that built a fresh app via the conftest `client` fixture (or its
+own factory) paid the cost, and several test files (test_main_streaming,
+test_main_cost_header, test_orchestrator_planner) construct create_app
+multiple times per file. A 15× regression in dev-loop test time was the
+breaking concern, not the per-process production startup hit.
+
+The cleaner alternative (lazy-wrap the retriever) was prototyped — see
+the `_LazyAgentGraph` pattern shipped alongside the graph compile — but
+adds another defer-and-cache class, and the deployment burden of
+"set one env var" is genuinely small (the droplet's `.env` already
+encodes ~10 such opt-ins).
+
+**What we learned:** "Default-on production" is a goal, not a default-
+implementation rule. When a feature pulls heavy resources (ML weights,
+network calls, disk caches) into app construction, the default should
+match the resource posture of the *common caller* (unit tests in dev,
+not the droplet). Production deployments already track env-var changes
+in `docs/DEPLOYMENT.md`, so opt-in there costs us nothing. Generalizes:
+prefer config-driven opt-in over default-on whenever the cost of the
+"on" state would change a different caller's runtime profile.
+
+**Artifacts:**
+[`sidecar/src/agentforge/config.py`](../sidecar/src/agentforge/config.py)
+(default flipped to `False`; docstring rationale),
+[`sidecar/src/agentforge/main.py`](../sidecar/src/agentforge/main.py)
+(`_build_evidence_retriever` returns None when the flag is off),
+[`sidecar/tests/test_config_w2.py`](../sidecar/tests/test_config_w2.py)
+(default-False asserted; env-var enablement covered),
+[`sidecar/tests/conftest.py`](../sidecar/tests/conftest.py) (defensive
+re-set against shell-env contamination by developers iterating on the
+W2 evidence path).
+
+---

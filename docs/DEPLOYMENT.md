@@ -102,7 +102,7 @@ Two `.env` files, never committed to git, dropped via SSH:
 | Path | Owner of secrets |
 |---|---|
 | `/opt/agentforge/module/.env` (also `docker cp`'d into container at the module path) | `AGENTFORGE_JWT_SECRET`, `AGENTFORGE_SIDECAR_URL` |
-| `/opt/agentforge/sidecar/.env` (read by container via `docker run --env-file`) | `JWT_SECRET` (must match), `HMAC_KEY`, `ANTHROPIC_API_KEY`, `OPENEMR_BASE_URL`, `VERIFIER_ENABLED=true` |
+| `/opt/agentforge/sidecar/.env` (read by container via `docker run --env-file`) | `JWT_SECRET` (must match), `HMAC_KEY`, `ANTHROPIC_API_KEY`, `OPENEMR_BASE_URL`, `VERIFIER_ENABLED=true`, `EVIDENCE_RETRIEVER_ENABLED=true` (W2 retriever; see note below) |
 
 The sidecar's `JWT_SECRET` and the module's `AGENTFORGE_JWT_SECRET` **must be
 byte-identical** — that's how the sidecar verifies tokens minted by the PHP
@@ -110,6 +110,24 @@ module.
 
 To rotate: generate a new value with `openssl rand -base64 32`, update both
 files, restart the sidecar container.
+
+### `EVIDENCE_RETRIEVER_ENABLED` (W2 opt-in, MR 7)
+
+Default-off in the sidecar `Settings`. When set to `true` in the droplet's
+`/opt/agentforge/sidecar/.env`, ``create_app`` builds the full W2 RAG
+pipeline (BM25 + SentenceTransformer dense + RRF + cross-encoder rerank)
+at startup. The dense + cross-encoder models load ~190 MB of ML weights
+on construction; on a fresh container without a Hugging Face cache this
+adds ~30-60 s to the first startup as the weights download. Subsequent
+container starts re-download unless the HF cache is mounted as a docker
+volume (planned follow-up). The deploy script's health-check polls
+`/health` for 30 s — if a clean redeploy fails the health check, that's
+the model download still finishing; check `docker logs agentforge-sidecar`
+for the FastAPI "Application startup complete" line and re-run
+`./scripts/deploy-droplet.sh check` once it appears.
+
+See `docs/DEVIATIONS.md` 2026-05-05 for the rationale behind the
+default-off choice.
 
 ## How to deploy a new version of the code
 
