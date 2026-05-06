@@ -2167,3 +2167,173 @@ and supervisor handoff span content under start/loop-back/no-trace
 conditions).
 
 ---
+
+## 2026-05-05 — Task 1, MR 6: graph cutover seam (foundation, not full production cutover)
+
+**Plan:** MR 6 of the LangGraph supervisor refactor — "Replace
+``Orchestrator.turn()`` callers with ``graph.ainvoke(...)``. Wire the
+FastAPI ``/turn`` route through. Build the bridge from W1 tool-result
+citations into the W2 ``CitationIndex``. Real PDF-vs-evidence routing
+intelligence in ``_decide_route``. Run the 9 W1 regression locks
+against the graph. Drop the iterative loop (or keep one release as
+fallback)."
+
+**Deviation:** This MR ships the **foundation** for the cutover — the
+bridge, the real routing, and an opt-in graph seam on
+``Orchestrator.turn`` — but does NOT flip the production ``/turn`` route
+through the graph or drop the iterative loop. Three concrete
+deferrals:
+
+### 1. ``main.py`` graph wiring deferred to MR 7
+
+**Spec:** "Wire the FastAPI ``/turn`` route through" the graph.
+
+**Deviation:** The orchestrator gains an optional ``agent_graph``
+constructor param and a ``_run_graph_turn`` helper, but ``main.py``
+still constructs ``Orchestrator(agent_graph=None, ...)``. The graph
+surface is therefore reachable only by tests today, not by HTTP
+traffic.
+
+**Why:** Wiring ``main.py`` requires building three new heavyweight
+collaborators at app startup (``VisionExtractor`` against the Anthropic
+LLM client, ``EvidenceRetriever`` against BM25 + Dense + RRFMerger +
+Reranker, plus a corpus loader for the latter two). Each is tested
+independently and constructable, but composing them at app boot in a
+way that survives test fixtures, missing-dep paths, and the existing
+``main.py`` factory's settings-validation order is multi-hour scope on
+its own. With the cutover seam in place, MR 7 is a tight
+``main.py``-only patch — no new abstractions needed in the orchestrator.
+
+### 2. ``TurnRequest`` schema unchanged; PHP module untouched
+
+**Spec implied:** End-to-end demo runs PDF upload → extract →
+synthesize through OpenEMR.
+
+**Deviation:** ``TurnRequest`` still carries only ``message`` +
+``session_id``. The orchestrator's new ``pdf_pages`` / ``document_id`` /
+``evidence_query`` ``turn()`` kwargs are reachable from Python callers
+(tests, future endpoints) but no HTTP path populates them today. The
+PHP ``AgentProxyController`` is unchanged.
+
+**Why:** Same gating as #1 — without ``main.py`` wiring, schema
+extensions ship dead-code request fields. MR 7 lands the schema +
+controller change in one commit alongside the wiring so reviewers see
+the full request-to-response path in one diff.
+
+### 3. Iterative loop NOT dropped
+
+**Spec:** "Drop the iterative loop (or keep one release as fallback —
+reviewer's call)."
+
+**Deviation:** Took the "keep one release as fallback" escape hatch.
+The W1 iterative loop in ``Orchestrator._turn_inner`` continues to
+handle every turn that doesn't carry W2 inputs — chart questions
+(the original W1 demo path) still flow through it. The graph fires
+only when the caller supplies ``pdf_pages`` or ``evidence_query``.
+
+**Why:** The W2 graph has no chart-question worker today — every
+worker is W2-flavored (intake extraction, guideline retrieval). A
+chart question routed through the graph would either (a) fall through
+to ``synthesize_node`` with no tool data and produce a pure-LLM answer
+(losing the W1 tool catalog entirely) or (b) need a brand-new
+``chart_question_node`` that wraps the iterative loop body. Both are
+substantial work better isolated to a follow-up MR.
+
+**What we learned:** The original "Replace Orchestrator.turn() with
+graph.ainvoke()" framing assumed the graph could absorb ALL turn
+shapes. In practice the graph is W2-flavored; absorbing W1 turns
+requires either a chart-question worker or a deliberate decision to
+let chart questions run pure-LLM. Either is a real product call worth
+its own MR.
+
+### 4. W2 path skips identity guard, breakglass, retry policy, parallel dispatch
+
+**Spec:** Implicit — ``Orchestrator.turn`` runs through the W1
+machinery (Memory, Breakglass, IdentityGuard, retry policy, parallel
+dispatch, timeout policy, cost tracking).
+
+**Deviation:** ``_run_graph_turn`` only wraps the graph in:
+* the per-turn timeout envelope (``asyncio.timeout(total_turn)``),
+* memory load + persist (so multi-turn conversations work),
+* trace open (so handoff spans land under the right Langfuse trace),
+* final-text extraction.
+
+It does NOT run identity guard, breakglass audit, or the cost / retry
+machinery that wraps the W1 loop.
+
+**Why:** Identity guard binds to the chart owner's name + MRN — used
+to catch cross-patient references in the user's question. The W2 demo
+flows (intake-PDF + evidence-query) don't have a meaningful
+"reference patient B from patient A's chart" attack surface because
+the extractor reads the uploaded form (not chart prose) and the
+evidence retriever is patient-independent. Breakglass / cost /
+retry are wired to the W1 tool-dispatch machinery; the graph workers
+manage their own LLM calls outside that surface. MR 7+ can promote
+each cross-cutting concern into a graph node or a wrapper as the W2
+surface grows.
+
+**What MR 6 ships:**
+
+* ``build_w2_citation_index(state)`` walks ``state["tool_results"]``
+  via the existing W1 ``build_citation_index`` and merges the W1
+  records into the same index the W2 evidence + extraction
+  citations populate. Single ``(record_type, record_id) -> dict``
+  shape across both paths.
+* ``_decide_route(plan, state)`` replaces the MR 1 placeholder
+  (cap → SYNTHESIZE; FOLLOWUP → SYNTHESIZE; otherwise →
+  INTAKE_EXTRACTOR). New behavior: iteration cap → SYNTHESIZE;
+  FOLLOWUP → SYNTHESIZE; pdf pending → INTAKE_EXTRACTOR; query
+  pending → EVIDENCE_RETRIEVER; nothing pending → SYNTHESIZE. Sequential
+  dispatch handles the both-inputs case via worker-then-supervisor
+  loop-back; idempotent workers no-op on re-entry.
+* ``Orchestrator`` gains optional ``agent_graph: _AgentGraphLike``
+  constructor param plus ``pdf_pages`` / ``document_id`` /
+  ``evidence_query`` kwargs on ``turn()``. When the graph is wired AND
+  any W2 input is supplied, ``_run_graph_turn`` builds the starter
+  ``AgentState``, awaits ``ainvoke``, and returns the final assistant
+  text via ``_last_assistant_text`` (sentinel-safe on empty results).
+  W1 chart-question turns are unchanged.
+* ``_AgentGraphLike`` Protocol — narrow ainvoke surface so the
+  orchestrator doesn't import langgraph directly.
+* New test file ``test_orchestrator_w2_cutover.py`` (7 tests) — pins
+  the routing decision (W1 vs graph), starter-state construction,
+  final-text extraction including the no-assistant-message sentinel.
+* ``test_regression_lock_via_graph_citation_index`` (9
+  parametrized cases) — the same 9 W1 locks pass when graded against
+  ``build_w2_citation_index`` instead of the W1 ``build_citation_index``.
+  Locks the bridge.
+
+**What's not in MR 6 (deferred to MR 7):**
+
+* ``main.py`` constructs the graph and passes it to ``Orchestrator``.
+* ``TurnRequest`` extended with ``document_id`` / ``evidence_query``
+  fields; ``/turn`` route handler forwards them.
+* PHP ``AgentProxyController`` passes the new fields through.
+* Document fetch (``DocumentBytesRepository``) + render
+  (``PdfRenderer``) wired into the request path so the orchestrator
+  receives ``pdf_pages`` from a ``document_id``.
+* Chart-question worker (``chart_question_node``) wrapping the W1
+  iterative loop, so the graph can handle every turn shape.
+* Identity guard / breakglass / cost / retry promoted into the graph
+  path.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(W1 bridge in ``build_w2_citation_index``, real
+``_decide_route``),
+[`sidecar/src/agentforge/orchestrator/__init__.py`](../sidecar/src/agentforge/orchestrator/__init__.py)
+(``_AgentGraphLike`` Protocol, ``agent_graph`` constructor param,
+``turn()`` W2 kwargs, ``_run_graph_turn`` helper,
+``_last_assistant_text`` module helper),
+[`sidecar/tests/test_orchestrator_w2_cutover.py`](../sidecar/tests/test_orchestrator_w2_cutover.py)
+(NEW; 7 tests covering routing decision × 4, state construction,
+final-text extraction × 2),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(updated tests for the new ``_decide_route`` + 1 new test for
+no-W2-inputs synthesize fallthrough),
+[`sidecar/tests/eval/regression_locks.py`](../sidecar/tests/eval/regression_locks.py)
+(NEW parametrized
+``test_regression_lock_via_graph_citation_index`` proving the bridge
+preserves the 9 W1 lock verdicts).
+
+---

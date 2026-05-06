@@ -331,3 +331,89 @@ def test_regression_lock_set_size_pinned() -> None:
     # Bumped 7 -> 9 in Task 51.4 with the out-of-scope guardrail pair
     # (positive OOS-BILLING + adversarial ADV-OOS-HEDGE).
     assert len(REGRESSION_LOCKS) == 9
+
+
+# ---------- Graph-path locks: same 9, but graded via the W2 citation index ----------
+#
+# Task 1, MR 6 — the W2 graph's terminal_node uses
+# ``build_w2_citation_index`` (graph.py) which now bridges W1
+# ``tool_results`` into the same ``CitationIndex`` shape the W1 verifier
+# already understands. These tests prove the bridge: the existing 9
+# canned (response, fixture) pairs must produce the same pass/fail
+# verdict whether the index is built from W1 ``build_citation_index``
+# (the original `test_regression_lock` above) or from
+# ``build_w2_citation_index`` against an AgentState carrying the same
+# W1 tool_results.
+#
+# When MR 7 lands a chart-question worker that produces real responses
+# inside the graph, this test class becomes the lock that catches drift
+# between the two index builders. Today it locks the bridge.
+
+
+def _starter_state_with_tool_results(
+    tool_results: dict[str, Any],
+) -> Any:
+    """Build a minimal AgentState carrying ``tool_results``.
+
+    Returned as Any to avoid leaking AgentState into this file's
+    surface — the regression_locks file's job is grading, not graph
+    schema. The state shape is exercised cross-cuttingly in
+    ``test_orchestrator_graph.py``.
+    """
+    from agentforge.orchestrator.graph import HANDOFF_START_NODE, AgentState
+
+    return AgentState(
+        messages=[],
+        tool_results=tool_results,
+        route_decision=None,
+        route_reason="",
+        iteration=0,
+        extraction_result=None,
+        evidence_chunks=[],
+        document_id=None,
+        patient_id=None,
+        pdf_pages=[],
+        query="",
+        langfuse_trace=None,
+        last_node=HANDOFF_START_NODE,
+    )
+
+
+@pytest.mark.parametrize(
+    "lock",
+    REGRESSION_LOCKS,
+    ids=[f"graph-{lock.case.id}" for lock in REGRESSION_LOCKS],
+)
+async def test_regression_lock_via_graph_citation_index(
+    lock: RegressionLock,
+) -> None:
+    # Same 9 locks, but graded against the W2 citation index. The
+    # grounding part of the grade comes from build_w2_citation_index
+    # (which now bridges W1 tool_results). The behavior_check part is
+    # response-only and identical across paths.
+    from agentforge.orchestrator.graph import build_w2_citation_index
+    from agentforge.verifier import find_citations
+
+    layer = MockToolLayer()
+    tool_results = await _all_tool_results(layer, lock.case.patient_id)
+    state = _starter_state_with_tool_results(tool_results)
+
+    index = build_w2_citation_index(state)
+    citations = find_citations(lock.response)
+    unresolved = tuple(
+        c for c in citations if not index.contains(c.record_type, c.record_id)
+    )
+    grounded = len(unresolved) == 0
+    behavior_pass = (
+        True
+        if lock.case.grounding_check is None
+        else lock.case.grounding_check(lock.response)
+    )
+    passed = grounded and behavior_pass
+
+    assert passed is lock.expect_pass, (
+        f"{lock.case.id} (graph path): expected passed={lock.expect_pass}, "
+        f"got passed={passed} (grounded={grounded}, "
+        f"behavior_pass={behavior_pass}, "
+        f"unresolved={[c.raw for c in unresolved]})"
+    )

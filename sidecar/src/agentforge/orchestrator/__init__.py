@@ -25,7 +25,7 @@ import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from agentforge.breakglass import BreakglassAuditTool
 from agentforge.gateway.auth_gateway import RequestContext
@@ -59,6 +59,7 @@ from agentforge.tools.allergies import (
     AllergiesFetcher,
     AllergiesResult,
 )
+from agentforge.tools.attach_and_extract import RenderedPage
 from agentforge.tools.demographics import (
     DEMOGRAPHICS_TOOL_SPEC,
     DemographicsFetcher,
@@ -180,6 +181,18 @@ def get_last_trace_id() -> str | None:
     return _LAST_TRACE_ID_VAR.get()
 
 
+class _AgentGraphLike(Protocol):
+    """Minimal surface the orchestrator needs from the W2 graph.
+
+    The compiled LangGraph satisfies this structurally via its
+    ``ainvoke`` method. Narrowed to a Protocol so the orchestrator
+    doesn't import langgraph directly — keeps the W1 path runnable
+    even in deployments that ship without the langgraph dependency.
+    """
+
+    async def ainvoke(self, state: Any, config: Any = None) -> dict[str, Any]: ...
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -210,6 +223,7 @@ class Orchestrator:
         truncator: SynthesisInputTruncator | None = None,
         data_quality: DataQualityChecker | None = None,
         identity_guard_enabled: bool = False,
+        agent_graph: _AgentGraphLike | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -273,12 +287,24 @@ class Orchestrator:
         # don't stub demographics) keep working unchanged.
         self._identity_guard_enabled = identity_guard_enabled
 
+        # Optional W2 LangGraph (Task 1, MR 6 cutover). When wired AND
+        # ``turn()`` is called with W2 inputs (``pdf_pages`` and/or
+        # ``evidence_query``), the W1 iterative tool-use loop is
+        # skipped and the graph drives the turn instead. None → the
+        # W2 surface is unavailable on this orchestrator and W2 inputs
+        # are treated as no-ops. Wiring lives in main.py at app
+        # startup; tests inject a stub via the constructor kwarg.
+        self._agent_graph = agent_graph
+
     async def turn(
         self,
         ctx: RequestContext,
         user_message: str,
         *,
         session_id: str | None = None,
+        pdf_pages: list[RenderedPage] | None = None,
+        document_id: int | None = None,
+        evidence_query: str = "",
     ) -> str:
         """Run one user turn through the model + tools, return final text.
 
@@ -287,6 +313,16 @@ class Orchestrator:
         history and the user/assistant pair is persisted after the
         model finishes. The hard cap from memory.py becomes a refusal
         before the model is invoked at all.
+
+        The W2 cutover (Task 1, MR 6): when ``agent_graph`` is wired AND
+        the caller supplies ``pdf_pages`` (intake extraction) or
+        ``evidence_query`` (guideline retrieval), the turn routes
+        through the LangGraph supervisor instead of the W1 iterative
+        loop. ``document_id`` is the OpenEMR document the pages were
+        rendered from (carried into state for the extractor). When
+        neither W2 input is present, the turn falls through to the
+        W1 iterative path unchanged — no behavior change for chart-
+        question flows.
         """
         # Reset the per-turn cost accumulator so callers reading
         # ``get_turn_cost_usd()`` after this turn returns see only the
@@ -297,6 +333,24 @@ class Orchestrator:
         # Reset the per-turn trace ID so a failed/null turn never
         # exposes the previous turn's trace ID via X-Trace-Id.
         _LAST_TRACE_ID_VAR.set(None)
+
+        # W2 cutover: route through the graph when its surface is wired
+        # AND the caller has W2 inputs. Same total-turn timeout envelope
+        # as the W1 path so the upstream cost / trace contract is
+        # identical from the caller's perspective.
+        if self._agent_graph is not None and (pdf_pages or evidence_query):
+            try:
+                async with asyncio.timeout(self._timeout_policy.total_turn):
+                    return await self._run_graph_turn(
+                        ctx,
+                        user_message,
+                        session_id=session_id,
+                        pdf_pages=pdf_pages or [],
+                        document_id=document_id,
+                        evidence_query=evidence_query,
+                    )
+            except TimeoutError:
+                return _TURN_BUDGET_EXCEEDED_TEXT
 
         # Total-turn budget enforcement (week1-gaps Task #8). We use
         # ``asyncio.timeout`` (Python 3.11+) rather than wrapping
@@ -314,6 +368,77 @@ class Orchestrator:
                 )
         except TimeoutError:
             return _TURN_BUDGET_EXCEEDED_TEXT
+
+    async def _run_graph_turn(
+        self,
+        ctx: RequestContext,
+        user_message: str,
+        *,
+        session_id: str | None,
+        pdf_pages: list[RenderedPage],
+        document_id: int | None,
+        evidence_query: str,
+    ) -> str:
+        """Drive the W2 graph for one turn and return the final assistant text.
+
+        The graph is built once at app startup with all of its
+        cross-cutting deps (truncator, data quality checker, langfuse,
+        synthesizer LLM). Here we just construct the starter
+        ``AgentState`` from the request and let the graph run.
+
+        Memory + persistence still wraps the call: prior session turns
+        ride as conversation messages and the new (user, assistant)
+        pair is appended on completion. Identity guard / breakglass /
+        the W1-specific machinery in ``_turn_inner`` do NOT run on the
+        graph path yet — those are deferred to MR 7+ when the W2 graph
+        gets a chart-question worker that needs them. The MVP demo
+        path (intake-PDF + guideline-evidence) does not exercise
+        identity-guard checks against the user message because there's
+        no patient-name disambiguation surface in extraction-driven
+        turns.
+        """
+        # Local import keeps langgraph out of the W1 hot path's
+        # import budget; this method only fires when the graph is wired.
+        from agentforge.orchestrator.graph import HANDOFF_START_NODE, AgentState
+
+        prior_messages: list[dict[str, Any]] = []
+        if self._memory is not None and session_id is not None:
+            existing = await self._memory.get_memory(session_id)
+            for entry in existing:
+                role_raw = entry.get("role")
+                content_raw = entry.get("content")
+                if not isinstance(role_raw, str) or not isinstance(content_raw, str):
+                    continue
+                if role_raw not in ("user", "assistant"):
+                    continue
+                prior_messages.append({"role": role_raw, "content": content_raw})
+
+        prior_messages.append({"role": "user", "content": user_message})
+
+        trace = self._open_trace(ctx)
+
+        state: AgentState = {
+            "messages": prior_messages,
+            "tool_results": {},
+            "route_decision": None,
+            "route_reason": "",
+            "iteration": 0,
+            "extraction_result": None,
+            "evidence_chunks": [],
+            "document_id": document_id,
+            "patient_id": ctx.patient_id,
+            "pdf_pages": pdf_pages,
+            "query": evidence_query,
+            "langfuse_trace": trace,
+            "last_node": HANDOFF_START_NODE,
+        }
+
+        assert self._agent_graph is not None  # narrowed by caller
+        result = await self._agent_graph.ainvoke(state)
+
+        final_text = _last_assistant_text(result.get("messages") or [])
+        await self._maybe_persist_turn(session_id, user_message, final_text)
+        return final_text
 
     async def _turn_inner(
         self,
@@ -1713,3 +1838,24 @@ _RESULT_CLASSES: Final[dict[str, type[ToolResult[Any]]]] = {
 
 def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
+
+
+def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
+    """Return the text of the most recent assistant message, or a sentinel.
+
+    Used by the W2 graph cutover path: the graph appends the synthesizer
+    output as an ``{"role": "assistant", "content": <text>}`` dict and
+    the terminal node may rewrite that text after verification. This
+    helper pulls the final visible string out of the resulting state.
+
+    Returns ``"(no response)"`` when the graph terminated without an
+    assistant message — matches the W1 path's ``return "(no response)"``
+    sentinel so callers see a stable contract across both paths.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str) and content:
+            return content
+    return "(no response)"
