@@ -49,6 +49,12 @@
         );
     }
 
+    // Render scale. 1.5 produces a readable canvas without forcing the
+    // browser to paint at full PDF resolution; the overlay rect sizes off
+    // the resulting viewport so the scale only affects sharpness, not
+    // positioning correctness.
+    var RENDER_SCALE = 1.5;
+
     function unmount(container) {
         if (!container) {
             return;
@@ -58,9 +64,52 @@
         }
     }
 
-    // Implementation lands in 24.4 (rendering), 24.5 (positioning), 24.6
-    // (styling + dismiss). For now mount() validates inputs and surfaces
-    // a console warning so an early caller doesn't fail silently.
+    // showError replaces container contents with a single element carrying
+    // the message. Caller can pattern-match on `[data-role="overlay-error"]`
+    // for testing.
+    function showError(container, message) {
+        unmount(container);
+        var err = document.createElement('div');
+        err.setAttribute('data-role', 'overlay-error');
+        err.className = 'agentforge-citation-overlay-error text-danger small p-2';
+        err.textContent = message;
+        container.appendChild(err);
+    }
+
+    // renderPdfPage fetches the PDF, asks for the cited page, and paints
+    // it onto a canvas appended to `container`. Returns a Promise that
+    // resolves with { canvas, viewport } on success.
+    //
+    // CRITICAL: citation.page_bbox.page is 1-indexed per W2_ARCHITECTURE.md
+    // §2.2 (PageBBox.page: int = Field(ge=1)). pdf.js getPage() is also
+    // 1-indexed. Pass the value through directly — never subtract 1.
+    function renderPdfPage(pdfjsLib, container, pageNumber, pdfUrl) {
+        var loadingTask = pdfjsLib.getDocument(pdfUrl);
+        return loadingTask.promise.then(function (pdf) {
+            if (pageNumber < 1 || pageNumber > pdf.numPages) {
+                throw new Error(
+                    'Citation page ' + pageNumber + ' out of range (PDF has '
+                    + pdf.numPages + ' pages)'
+                );
+            }
+            return pdf.getPage(pageNumber);
+        }).then(function (page) {
+            var viewport = page.getViewport({ scale: RENDER_SCALE });
+            var canvas = document.createElement('canvas');
+            canvas.setAttribute('data-role', 'overlay-canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            container.appendChild(canvas);
+            var ctx = canvas.getContext('2d');
+            return page.render({
+                canvasContext: ctx,
+                viewport: viewport
+            }).promise.then(function () {
+                return { canvas: canvas, viewport: viewport };
+            });
+        });
+    }
+
     function mount(container, citation, pdfUrl) {
         if (!container || !citation || !pdfUrl) {
             console.warn(
@@ -68,13 +117,32 @@
             );
             return;
         }
-        whenPdfjsReady(function (/* pdfjsLib */) {
-            // 24.4+ — render citation.page_bbox.page from pdfUrl into
-            // container, then overlay a positioned highlight rect.
-            console.info(
-                '[AgentforgeCitationOverlay] mount() pending implementation (T24.4+)',
-                { citation: citation, pdfUrl: pdfUrl }
-            );
+        var pageBbox = citation.page_bbox;
+        if (!pageBbox || typeof pageBbox.page !== 'number') {
+            showError(container, 'Citation is missing page_bbox.page');
+            return;
+        }
+        // Container hosts an absolutely-positioned overlay rect (24.5+),
+        // so it must establish a positioning context.
+        unmount(container);
+        container.style.position = 'relative';
+
+        whenPdfjsReady(function (pdfjsLib) {
+            renderPdfPage(pdfjsLib, container, pageBbox.page, pdfUrl)
+                .then(function (/* { canvas, viewport } */) {
+                    // 24.5 — overlay a positioned highlight rect using
+                    // pageBbox.{x0,y0,x1,y1} multiplied by viewport pixel
+                    // dimensions. 24.6 — styling + dismiss.
+                })
+                .catch(function (err) {
+                    console.error(
+                        '[AgentforgeCitationOverlay] render failed', err
+                    );
+                    showError(
+                        container,
+                        'Could not render citation: ' + (err.message || err)
+                    );
+                });
         });
     }
 
