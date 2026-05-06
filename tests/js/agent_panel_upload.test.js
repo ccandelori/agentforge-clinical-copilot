@@ -45,6 +45,17 @@ async function flush(rounds = 30) {
     }
 }
 
+// OpenEMR exposes the per-session CSRF token as ``top.csrf_token_js``
+// from interface/main/tabs/main.php. Multipart POSTs to
+// upload_document.php require it as a ``csrf_token_form`` field —
+// matching the existing pattern in library/js/dwv/dicom_gui.js. The
+// jsdom harness has no top frame, so we set the global directly.
+function setTopCsrfToken(token) {
+    // ``top`` is the same Window in jsdom; assigning the property
+    // mirrors what production gets from main.php's inline script.
+    top.csrf_token_js = token;
+}
+
 // Panel HTML mirrors the post-MR-7 agent_panel.html.twig: chat surface
 // plus an upload row with a file input, button, and pending-doc badge,
 // plus a "Search guidelines" toggle.
@@ -131,7 +142,13 @@ describe('agent_panel upload widget', () => {
         expect(clickSpy).toHaveBeenCalledTimes(1);
     });
 
-    test('selecting a file POSTs multipart to upload-url with doc_type=intake_form', async () => {
+    test('selecting a file POSTs multipart to upload-url with doc_type=intake_form and CSRF token', async () => {
+        // upload_document.php's CsrfUtils::verifyCsrfToken check rejects
+        // any request whose ``csrf_token_form`` field doesn't match the
+        // active OpenEMR session. The token rides as a multipart field,
+        // not a header — same shape as library/js/dwv/dicom_gui.js does.
+        setTopCsrfToken('test-csrf-token');
+
         let capturedUrl = '';
         let capturedBody = null;
         global.fetch = jest.fn().mockImplementation((url, opts) => {
@@ -151,6 +168,7 @@ describe('agent_panel upload widget', () => {
         expect(capturedUrl).toBe('/agentforge/upload_document');
         expect(capturedBody).toBeInstanceOf(FormData);
         expect(capturedBody.get('doc_type')).toBe('intake_form');
+        expect(capturedBody.get('csrf_token_form')).toBe('test-csrf-token');
         const file = capturedBody.get('file');
         expect(file).toBeInstanceOf(File);
         expect(file.name).toBe('intake.pdf');

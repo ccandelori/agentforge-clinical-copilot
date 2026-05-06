@@ -251,6 +251,23 @@
             var formData = new FormData();
             formData.append('file', file);
             formData.append('doc_type', 'intake_form');
+            // OpenEMR's globals-loaded endpoints reject any POST that
+            // doesn't carry a session-bound CSRF token. The OpenEMR top
+            // frame exposes the token as ``top.csrf_token_js`` (set in
+            // interface/main/tabs/main.php); upload_document.php reads
+            // it from the ``csrf_token_form`` multipart field. Same
+            // shape as library/js/dwv/dicom_gui.js.
+            var csrfToken = '';
+            try {
+                if (typeof top !== 'undefined' && top && typeof top.csrf_token_js === 'string') {
+                    csrfToken = top.csrf_token_js;
+                }
+            } catch (e) {
+                // Cross-origin top access throws — fall through to the
+                // empty-token path; upload_document.php will return 403
+                // with a clear error bubble for the user.
+            }
+            formData.append('csrf_token_form', csrfToken);
 
             fetch(uploadUrl, {
                 method: 'POST',
