@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import ClinicalCard from '@/components/ClinicalCard.vue'
 import { useFhirResource } from '@/composables/useFhirResource'
+import { formatFhirDate } from '@/utils/formatDate'
 
 // First chart card built against <ClinicalCard>. T38.5–T38.9 follow
 // the same shape: take a pid, fetch a search-result Bundle via
@@ -139,26 +140,6 @@ function clinicalStatusLabel(s: string | null): string {
   if (s === null || s === '') return ''
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-})
-
-function formatRecordedDate(iso: string | null): string {
-  if (iso === null) return '—'
-  // Date-only strings (YYYY-MM-DD) parse as UTC midnight; in a
-  // negative-offset locale that shifts the displayed day back. Parse
-  // local-date for those; fall through to the standard parser for
-  // datetime strings (which carry timezone info).
-  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const [y, m, d] = iso.split('-').map(Number) as [number, number, number]
-    return dateFormatter.format(new Date(y, m - 1, d))
-  }
-  const parsed = new Date(iso)
-  return Number.isNaN(parsed.getTime()) ? iso : dateFormatter.format(parsed)
-}
 </script>
 
 <template>
@@ -217,7 +198,7 @@ function formatRecordedDate(iso: string | null): string {
             Status: {{ clinicalStatusLabel(a.clinicalStatus) }}
           </span>
           <span v-if="a.recordedDate !== null">
-            Recorded: {{ formatRecordedDate(a.recordedDate) }}
+            Recorded: {{ formatFhirDate(a.recordedDate) }}
           </span>
         </div>
       </li>

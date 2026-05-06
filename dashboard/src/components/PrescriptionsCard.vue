@@ -4,24 +4,25 @@ import ClinicalCard from '@/components/ClinicalCard.vue'
 import { useFhirResource } from '@/composables/useFhirResource'
 import { formatFhirDate } from '@/utils/formatDate'
 
-// Active medications. T38.6 sources from MedicationRequest filtered
-// by status=active because OpenEMR doesn't expose MedicationStatement
-// (see DEVIATIONS.md for the rationale). T38.7 reuses the same
-// endpoint for the historical statuses (completed/stopped/cancelled).
+// Prescription history. Same /MedicationRequest endpoint as
+// MedicationsCard (T38.6) but client-filters out the active rows
+// — those live in MedicationsCard. Surfaces dispenseRequest.
+// numberOfRepeatsAllowed (refills) per the T38.7 spec.
 
 const props = defineProps<{ pid: string }>()
 
 const { status, data, error } = useFhirResource<fhir4.Bundle>(
-  `/api/fhir/MedicationRequest?patient=${encodeURIComponent(props.pid)}&status=active`,
+  `/api/fhir/MedicationRequest?patient=${encodeURIComponent(props.pid)}`,
 )
 
-interface MedicationRow {
+interface PrescriptionRow {
   id: string
   medication: string
   dosageInstruction: string | null
   status: string | null
   authoredOn: string | null
   requester: string | null
+  refills: number | null
 }
 
 function isMedicationRequest(
@@ -50,16 +51,25 @@ function pickMedicationName(m: fhir4.MedicationRequest): string {
   return '(unknown medication)'
 }
 
-const meds = computed<MedicationRow[]>(() => {
+const STATUS_BADGE: Record<string, string> = {
+  completed: 'bg-success',
+  stopped: 'bg-warning text-dark',
+  cancelled: 'bg-secondary',
+  'on-hold': 'bg-info text-dark',
+  draft: 'bg-secondary',
+  'entered-in-error': 'bg-secondary',
+  unknown: 'bg-secondary',
+}
+
+const prescriptions = computed<PrescriptionRow[]>(() => {
   const bundle = data.value
   if (!bundle || !bundle.entry) return []
-  const rows: MedicationRow[] = []
+  const rows: PrescriptionRow[] = []
   for (const entry of bundle.entry) {
     const r = entry.resource
     if (!isMedicationRequest(r)) continue
-    // Server may ignore the status filter and return all rows; enforce
-    // it client-side to keep the demo card honest.
-    if (r.status !== 'active') continue
+    // Active prescriptions live in MedicationsCard.
+    if (r.status === 'active') continue
     if (r.id === undefined) continue
     rows.push({
       id: r.id,
@@ -68,9 +78,9 @@ const meds = computed<MedicationRow[]>(() => {
       status: r.status ?? null,
       authoredOn: r.authoredOn ?? null,
       requester: r.requester?.display ?? null,
+      refills: r.dispenseRequest?.numberOfRepeatsAllowed ?? null,
     })
   }
-  // Most recently authored first.
   rows.sort((a, b) => {
     const ad = a.authoredOn ?? ''
     const bd = b.authoredOn ?? ''
@@ -82,9 +92,14 @@ const meds = computed<MedicationRow[]>(() => {
 const cardState = computed<'loading' | 'empty' | 'error' | 'ready'>(() => {
   if (status.value === 'idle' || status.value === 'loading') return 'loading'
   if (status.value === 'error') return 'error'
-  if (meds.value.length === 0) return 'empty'
+  if (prescriptions.value.length === 0) return 'empty'
   return 'ready'
 })
+
+function statusBadgeClass(s: string | null): string {
+  if (s === null) return 'bg-secondary'
+  return STATUS_BADGE[s] ?? 'bg-secondary'
+}
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
@@ -93,8 +108,8 @@ function capitalize(s: string): string {
 
 <template>
   <ClinicalCard
-    title="Medications"
-    :count="cardState === 'ready' ? meds.length : null"
+    title="Prescription history"
+    :count="cardState === 'ready' ? prescriptions.length : null"
     :state="cardState"
     :error="error"
     collapsible
@@ -108,27 +123,30 @@ function capitalize(s: string): string {
     </template>
 
     <template #empty>
-      <div class="text-muted small">No active medications on file.</div>
+      <div class="text-muted small">No prescription history on file.</div>
     </template>
 
     <ul class="list-unstyled mb-0 d-flex flex-column gap-3">
-      <li v-for="m in meds" :key="m.id">
+      <li v-for="p in prescriptions" :key="p.id">
         <div class="d-flex align-items-baseline justify-content-between gap-2">
-          <div class="fw-semibold">{{ m.medication }}</div>
-          <span v-if="m.status !== null" class="badge bg-primary">
-            {{ capitalize(m.status) }}
+          <div class="fw-semibold">{{ p.medication }}</div>
+          <span
+            v-if="p.status !== null"
+            class="badge"
+            :class="statusBadgeClass(p.status)"
+          >
+            {{ capitalize(p.status) }}
           </span>
         </div>
-        <div v-if="m.dosageInstruction !== null" class="small mt-1">
-          {{ m.dosageInstruction }}
+        <div v-if="p.dosageInstruction !== null" class="small mt-1">
+          {{ p.dosageInstruction }}
         </div>
         <div class="small text-muted mt-1 d-flex flex-wrap gap-3">
-          <span v-if="m.authoredOn !== null">
-            Started: {{ formatFhirDate(m.authoredOn) }}
+          <span v-if="p.authoredOn !== null">
+            Prescribed: {{ formatFhirDate(p.authoredOn) }}
           </span>
-          <span v-if="m.requester !== null">
-            Prescribed by: {{ m.requester }}
-          </span>
+          <span v-if="p.requester !== null">By: {{ p.requester }}</span>
+          <span v-if="p.refills !== null">Refills: {{ p.refills }}</span>
         </div>
       </li>
     </ul>

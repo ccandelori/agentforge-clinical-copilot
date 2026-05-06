@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import ClinicalCard from '@/components/ClinicalCard.vue'
 import { useFhirResource } from '@/composables/useFhirResource'
+import { formatFhirDate } from '@/utils/formatDate'
 
 // Problem List card. Queries /Condition?patient=&category=problem-
 // list-item; also filters client-side because some FHIR servers
@@ -145,26 +146,6 @@ function statusBadgeClass(s: ClinicalStatus | null): string {
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-})
-
-function formatDate(iso: string | null): string {
-  if (iso === null) return '—'
-  // Date-only strings (YYYY-MM-DD) parse as UTC midnight in modern JS;
-  // formatting in a negative-offset locale shifts them back one day.
-  // Parse them as local-date instead. Datetime strings (with tz info)
-  // fall through to the standard parser.
-  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const [y, m, d] = iso.split('-').map(Number) as [number, number, number]
-    return dateFormatter.format(new Date(y, m - 1, d))
-  }
-  const parsed = new Date(iso)
-  return Number.isNaN(parsed.getTime()) ? iso : dateFormatter.format(parsed)
-}
 </script>
 
 <template>
@@ -212,10 +193,10 @@ function formatDate(iso: string | null): string {
         </div>
         <div class="small text-muted mt-1 d-flex flex-wrap gap-3">
           <span v-if="c.onset !== null">
-            Onset: {{ formatDate(c.onset) }}
+            Onset: {{ formatFhirDate(c.onset) }}
           </span>
           <span v-if="c.recordedDate !== null">
-            Recorded: {{ formatDate(c.recordedDate) }}
+            Recorded: {{ formatFhirDate(c.recordedDate) }}
           </span>
         </div>
       </li>
