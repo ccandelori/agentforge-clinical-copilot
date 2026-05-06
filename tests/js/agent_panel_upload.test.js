@@ -307,6 +307,88 @@ describe('agent_panel send with W2 inputs', () => {
 });
 
 
+describe('agent_panel extraction-confirm panel', () => {
+    let panel;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        panel = buildPanelWithUpload();
+    });
+
+    test('extraction in response renders a collapsed <details> below the bubble', async () => {
+        const extraction = {
+            chief_concern: 'chest pain at rest',
+            medications: [
+                { name: 'lisinopril', dose: '10 mg' },
+            ],
+        };
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            text: () => Promise.resolve(JSON.stringify({
+                reply: 'Here is what I extracted.',
+                extraction: extraction,
+            })),
+        });
+
+        submitMessage(panel, 'extract this');
+        await flush();
+
+        // Panel uses a <details> element so the user can click to
+        // expand. Default is collapsed (open === false).
+        const details = panel.querySelector(
+            '[data-role="messages"] details[data-role="extraction-panel"]'
+        );
+        expect(details).not.toBeNull();
+        expect(details.open).toBe(false);
+        // The pretty-printed JSON shows up inside the <pre>.
+        const pre = details.querySelector('pre');
+        expect(pre.textContent).toContain('chief_concern');
+        expect(pre.textContent).toContain('chest pain at rest');
+        expect(pre.textContent).toContain('lisinopril');
+    });
+
+    test('null extraction (W1 path) does NOT render the extraction panel', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            text: () => Promise.resolve(JSON.stringify({
+                reply: 'patient is on lisinopril.',
+                extraction: null,
+            })),
+        });
+
+        submitMessage(panel, 'medication list?');
+        await flush();
+
+        const details = panel.querySelector(
+            '[data-role="messages"] details[data-role="extraction-panel"]'
+        );
+        expect(details).toBeNull();
+    });
+
+    test('legacy response without an extraction field still renders the bubble', async () => {
+        // Defensive: an upstream that returns {"reply": "..."} without
+        // an explicit ``extraction`` key (e.g. an SSE final-frame
+        // bridge) must not throw on access. The panel should silently
+        // skip rendering.
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            headers: { get: () => 'application/json' },
+            text: () => Promise.resolve(JSON.stringify({ reply: 'ok' })),
+        });
+
+        submitMessage(panel, 'hi');
+        await flush();
+
+        const details = panel.querySelector(
+            '[data-role="messages"] details[data-role="extraction-panel"]'
+        );
+        expect(details).toBeNull();
+    });
+});
+
+
 describe('agent_panel without W2 widgets (regression)', () => {
     test('panel without upload elements still binds the form and sends', async () => {
         global.fetch = jest.fn().mockResolvedValue({

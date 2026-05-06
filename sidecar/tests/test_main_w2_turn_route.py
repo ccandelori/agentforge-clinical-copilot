@@ -150,7 +150,7 @@ def test_turn_w1_path_unchanged_when_no_w2_inputs(
     response = client.post("/turn", json={"message": "what's the plan?"})
 
     assert response.status_code == 200
-    assert response.json() == {"reply": "stub-reply"}
+    assert response.json() == {"reply": "stub-reply", "extraction": None}
     assert len(orchestrator.calls) == 1
     call = orchestrator.calls[0]
     # W1 contract preserved: pdf_pages omitted (default None),
@@ -298,3 +298,66 @@ def test_turn_returns_422_when_renderer_rejects_bytes(
     )
 
     assert response.status_code == 422
+
+
+def test_turn_response_carries_extraction_when_orchestrator_populates_contextvar(
+    w2_client: tuple[TestClient, _StubOrchestrator, AsyncMock, MagicMock],
+) -> None:
+    """When the orchestrator's _run_graph_turn populates
+    ``_TURN_EXTRACTION_VAR``, the /turn endpoint must surface it in
+    ``TurnResponse.extraction`` so the browser can render the
+    confirm-able panel below the chat bubble. The W1 path leaves
+    the ContextVar at None, so chart-question turns still get
+    ``extraction: null``."""
+    from agentforge.orchestrator import _TURN_EXTRACTION_VAR
+
+    client, orchestrator, fetcher, renderer = w2_client
+    fetcher.fetch.return_value = DocumentBytes(
+        content=b"%PDF-1.4\nstub", mimetype="application/pdf"
+    )
+    renderer.render_pages.return_value = [_rendered_page(1)]
+
+    # Drive the stub orchestrator to populate the ContextVar from
+    # within its ``turn`` call so the ``/turn`` handler reads the
+    # populated value (matching ``_run_graph_turn``'s real behavior).
+    expected_extraction = {
+        "document_id": 99,
+        "patient_id": 7,
+        "chief_concern": "chest pain at rest",
+        "demographics": [],
+        "medications": [
+            {"name": "lisinopril", "dose": "10 mg", "frequency": "daily"},
+        ],
+    }
+
+    original_turn = orchestrator.turn
+
+    async def _turn_with_extraction(*args: Any, **kwargs: Any) -> str:
+        _TURN_EXTRACTION_VAR.set(expected_extraction)
+        return await original_turn(*args, **kwargs)
+
+    orchestrator.turn = _turn_with_extraction  # type: ignore[method-assign]
+
+    response = client.post(
+        "/turn",
+        json={"message": "extract", "document_id": 99},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reply"] == "stub-reply"
+    assert payload["extraction"] == expected_extraction
+
+
+def test_turn_response_extraction_is_null_for_w1_chart_question(
+    w2_client: tuple[TestClient, _StubOrchestrator, AsyncMock, MagicMock],
+) -> None:
+    """Chart-question turns never populate the extraction ContextVar,
+    so the response must serialize ``extraction: null`` rather than
+    leaking a stale value from a prior turn on the same task."""
+    client, _, _, _ = w2_client
+
+    response = client.post("/turn", json={"message": "what's the plan?"})
+
+    assert response.status_code == 200
+    assert response.json()["extraction"] is None

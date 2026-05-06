@@ -148,7 +148,7 @@ class TestStreamingFlagFallback:
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/json")
-        assert response.json() == {"reply": "hello"}
+        assert response.json() == {"reply": "hello", "extraction": None}
         assert "x-agent-cost-usd" in response.headers
 
 

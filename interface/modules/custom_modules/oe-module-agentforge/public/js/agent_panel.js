@@ -49,6 +49,57 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    /**
+     * Render the structured extraction beneath the agent's chat
+     * bubble (W2 INTAKE flow, MR 7 follow-up).
+     *
+     * The synthesized chat reply is a clinician-facing summary; this
+     * panel is the receipts — every field the vision extractor
+     * produced, pretty-printed, so a clinician can confirm the
+     * underlying data before acting on the summary. Default-collapsed
+     * via the native ``<details>`` element so the chat scroll stays
+     * compact; the user clicks to expand.
+     *
+     * No-ops on null / undefined / empty extraction so the JS-side
+     * call is safe for chart-question turns and evidence-only turns
+     * where the backend returns ``extraction: null``.
+     */
+    function appendExtractionPanel(messagesEl, extraction) {
+        if (extraction === null || extraction === undefined) {
+            return;
+        }
+        if (typeof extraction !== 'object') {
+            return;
+        }
+        var details = document.createElement('details');
+        details.className = 'agentforge-extraction-panel mb-2 small';
+        details.setAttribute('data-role', 'extraction-panel');
+        // Default-collapsed; the user opts into the JSON dump.
+        details.open = false;
+
+        var summary = document.createElement('summary');
+        summary.className = 'text-muted';
+        summary.style.cursor = 'pointer';
+        summary.textContent = 'Extracted fields (click to expand)';
+        details.appendChild(summary);
+
+        var pre = document.createElement('pre');
+        pre.className = 'bg-light border rounded p-2 mt-1 mb-0';
+        pre.style.maxHeight = '320px';
+        pre.style.overflowY = 'auto';
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.wordBreak = 'break-word';
+        try {
+            pre.textContent = JSON.stringify(extraction, null, 2);
+        } catch (e) {
+            pre.textContent = String(extraction);
+        }
+        details.appendChild(pre);
+
+        messagesEl.appendChild(details);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
     function setBusy(panel, busy) {
         var input = $(panel, 'input');
         var send = $(panel, 'send');
@@ -82,6 +133,30 @@
             // not JSON — fall through to raw text
         }
         return text;
+    }
+
+    /**
+     * Pull the structured extraction off the parsed JSON body, if
+     * present. Returns null on missing-field / non-object / parse
+     * errors so the caller can guard with a null check rather than
+     * a try/catch.
+     */
+    function extractExtraction(rawBody) {
+        var text = (rawBody || '').trim();
+        if (text === '') {
+            return null;
+        }
+        try {
+            var parsed = JSON.parse(text);
+            if (parsed && typeof parsed === 'object' && parsed.extraction) {
+                if (typeof parsed.extraction === 'object') {
+                    return parsed.extraction;
+                }
+            }
+        } catch (e) {
+            // not JSON — fall through; no extraction to render
+        }
+        return null;
     }
 
     function extractError(status, rawBody) {
@@ -370,8 +445,12 @@
                 return consumeSseStream(response.body.getReader(), bubble, messagesEl);
             }
             // Non-streaming fallback — render full reply at once.
+            // W2 INTAKE turns also append the structured-extraction
+            // panel beneath the bubble so the clinician can confirm
+            // what was actually parsed from the PDF.
             return response.text().then(function (rawBody) {
                 appendMessage(messagesEl, 'agent', extractReply(rawBody));
+                appendExtractionPanel(messagesEl, extractExtraction(rawBody));
             });
         }).catch(function (err) {
             var msg = (err && err.message) ? err.message : 'Network error';

@@ -48,6 +48,7 @@ from agentforge.orchestrator import (
     Orchestrator,
     _AgentGraphLike,
     get_last_trace_id,
+    get_last_turn_extraction,
     get_turn_cost_usd,
 )
 from agentforge.orchestrator.graph import build_graph
@@ -125,6 +126,16 @@ class TurnRequest(BaseModel):
 
 class TurnResponse(BaseModel):
     reply: str
+    # Structured extraction snapshot from the W2 INTAKE flow (MR 7
+    # follow-up). Populated when the request supplied a
+    # ``document_id`` and the graph's intake-extractor node ran;
+    # ``None`` for chart-question turns, evidence-only turns, and
+    # turns that fell through to the W1 iterative loop. The browser
+    # renders this beneath the synthesized chat bubble so a
+    # clinician can confirm what was actually parsed from the PDF
+    # before relying on it (the chat reply is a summary; this dict
+    # is the receipts).
+    extraction: dict[str, Any] | None = None
 
 
 def get_orchestrator(request: Request) -> Orchestrator:
@@ -702,6 +713,6 @@ def create_app(
         trace_id = get_last_trace_id()
         if trace_id is not None:
             response.headers["X-Trace-Id"] = trace_id
-        return TurnResponse(reply=reply)
+        return TurnResponse(reply=reply, extraction=get_last_turn_extraction())
 
     return app
