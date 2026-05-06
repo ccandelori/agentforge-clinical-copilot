@@ -366,16 +366,32 @@ class TestSupervisorIterationCap:
         assert "cap" in update["route_reason"].lower()
 
     @pytest.mark.asyncio
-    async def test_just_below_cap_still_routes_to_worker(self) -> None:
+    async def test_just_below_cap_with_pdf_routes_to_intake_extractor(self) -> None:
         # Sanity counterpart — at iteration MAX-1 the cap has not yet
-        # tripped, so the placeholder routing rule still applies.
+        # tripped, so a state carrying a pending intake PDF gets routed
+        # to the worker that needs to run.
         planner = StubPlanner(_admit_synthesis_plan())
-        state = _starter_state()
+        state = _starter_state_with_pdf(document_id=42, patient_id=7)
         state["iteration"] = MAX_ITERATIONS - 1
 
         update = await supervisor_node(state, planner)
 
         assert update["route_decision"] == RouteDecision.INTAKE_EXTRACTOR
+
+    @pytest.mark.asyncio
+    async def test_admit_with_no_w2_inputs_routes_to_synthesize(self) -> None:
+        # Real routing (MR 6): when neither pdf_pages nor query is set,
+        # there's nothing for the workers to do. Even an ADMIT plan
+        # should fall through to SYNTHESIZE — the W1 chart-question
+        # surface that the iterative loop handled here is delegated to
+        # the W1 path until a chart-question worker lands in MR 7.
+        planner = StubPlanner(_admit_synthesis_plan())
+        state = _starter_state()  # no W2 inputs
+
+        update = await supervisor_node(state, planner)
+
+        assert update["route_decision"] == RouteDecision.SYNTHESIZE
+        assert "complete" in update["route_reason"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -425,15 +441,12 @@ class TestConditionalRouting:
 
 class TestIterationCapEndToEnd:
     @pytest.mark.asyncio
-    async def test_admit_loops_until_cap_then_synthesizes(self) -> None:
-        # ADMIT_SYNTHESIS keeps routing to INTAKE_EXTRACTOR until the
-        # iteration cap trips and forces SYNTHESIZE. The supervisor
-        # runs MAX_ITERATIONS + 1 times (iter 0..MAX, the last one
-        # tripping the cap), so the final ``iteration`` field reads
-        # MAX_ITERATIONS + 1 — proving the loop-back edge fires that
-        # many times. The extractor itself runs exactly once thanks to
-        # idempotency (subsequent worker re-entries no-op once
-        # extraction_result is set).
+    async def test_admit_with_pdf_runs_intake_then_synthesizes(self) -> None:
+        # Real MR 6 routing: with a pdf_pages input pending, the
+        # supervisor routes to INTAKE_EXTRACTOR; on loop-back the
+        # extraction is now populated, so routing falls through to
+        # SYNTHESIZE without waiting for the iteration cap to fire.
+        # The extractor runs exactly once.
         extractor = StubVisionExtractor(_intake_extraction_result())
 
         planner = StubPlanner(_admit_synthesis_plan())
@@ -443,9 +456,9 @@ class TestIterationCapEndToEnd:
         )
 
         assert len(extractor.calls) == 1
-        assert result["iteration"] == MAX_ITERATIONS + 1
+        assert result["extraction_result"] is not None
         assert result["route_decision"] == RouteDecision.SYNTHESIZE
-        assert "cap" in result["route_reason"].lower()
+        assert "complete" in result["route_reason"].lower()
 
 
 # ---------------------------------------------------------------------------

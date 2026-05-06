@@ -61,7 +61,7 @@ from agentforge.tools.attach_and_extract import (
     VisionExtractionResult,
 )
 from agentforge.tools.dtos import ToolResult
-from agentforge.verifier.cache import CitationIndex, CitationKey
+from agentforge.verifier.cache import CitationIndex, CitationKey, build_citation_index
 from agentforge.verifier.data_quality import DataQualityChecker
 from agentforge.verifier.protocols import DomainConstraintChecker
 from agentforge.verifier.streaming_verifier import StreamingVerifier
@@ -225,12 +225,49 @@ def _last_user_message(state: AgentState) -> str:
     return ""
 
 
-def _decide_route(plan: Plan, iteration: int) -> tuple[RouteDecision, str]:
+def _decide_route(plan: Plan, state: AgentState) -> tuple[RouteDecision, str]:
+    """Pick the next node based on plan + per-turn worker progress.
+
+    Hard-stop at the iteration cap → SYNTHESIZE. Pure follow-up →
+    SYNTHESIZE (no tools needed). Otherwise consult W2 inputs:
+
+    * ``pdf_pages`` non-empty AND no ``extraction_result`` →
+      INTAKE_EXTRACTOR.
+    * ``query`` non-empty AND no ``evidence_chunks`` → EVIDENCE_RETRIEVER.
+    * Both workers complete (or had no input to run on) → SYNTHESIZE.
+
+    The supervisor loop-back drives this through one worker per
+    iteration; intake first when both are pending. Workers are
+    idempotent so a re-entry under a tighter cap is cheap.
+    """
+    iteration = state["iteration"]
     if iteration >= MAX_ITERATIONS:
         return RouteDecision.SYNTHESIZE, "iteration cap reached"
     if plan.use_case == UseCase.FOLLOWUP:
         return RouteDecision.SYNTHESIZE, "followup: no tools needed"
-    return RouteDecision.INTAKE_EXTRACTOR, f"default routing for {plan.use_case.value}"
+
+    has_pdf = bool(state["pdf_pages"])
+    has_query = bool(state["query"])
+    has_extraction = state["extraction_result"] is not None
+    has_evidence = bool(state["evidence_chunks"])
+
+    intake_pending = has_pdf and not has_extraction
+    evidence_pending = has_query and not has_evidence
+
+    if intake_pending:
+        return RouteDecision.INTAKE_EXTRACTOR, "intake PDF awaits extraction"
+    if evidence_pending:
+        return (
+            RouteDecision.EVIDENCE_RETRIEVER,
+            "evidence query awaits retrieval",
+        )
+
+    # Either both workers ran already or there was nothing for them
+    # to do. Either way the synthesizer has everything it'll get.
+    return (
+        RouteDecision.SYNTHESIZE,
+        f"all W2 workers complete for {plan.use_case.value}",
+    )
 
 
 async def supervisor_node(
@@ -253,10 +290,9 @@ async def supervisor_node(
     forced to.
     """
     plan = await planner.plan(_last_user_message(state))
-    iteration = state["iteration"]
-    decision, reason = _decide_route(plan, iteration)
+    decision, reason = _decide_route(plan, state)
 
-    next_iteration = iteration + 1
+    next_iteration = state["iteration"] + 1
     _maybe_record_handoff(
         langfuse,
         state.get("langfuse_trace"),
@@ -596,25 +632,28 @@ def _collect_data_quality_warnings(
 
 
 def build_w2_citation_index(state: AgentState) -> CitationIndex:
-    """Build a per-turn CitationIndex from W2 sources in state.
+    """Build a per-turn CitationIndex from every cite-bearing slice of state.
 
-    Walks ``evidence_chunks`` (each carries a guideline citation) and
-    ``extraction_result`` (chief-concern citation plus per-list
-    citations) into the existing ``(record_type, record_id) -> dict``
-    map the W1 verifier already understands.
+    Three sources merge into one index:
 
-    The mapping is deliberately straightforward: ``record_type`` is
-    the W2 ``source_type`` value (``"guideline"``, ``"intake_form"``,
-    ``"lab_pdf"``, ``"openemr_record"``) and ``record_id`` is the
-    citation's ``field_or_chunk_id``. The synthesizer's emitted tags
-    (e.g. ``[guideline #c1]``) parse into the same shape via the W1
-    citation grammar, so a one-step lookup is enough.
+    * ``state["tool_results"]`` — W1-shaped ``dict[str, ToolResult]`` walked
+      via the existing :func:`build_citation_index`. This is the MR 6
+      bridge: when a turn carries W1 tool results (chart-question turns
+      after the cutover), their ``[problem #N]`` / ``[lab_result #N]`` /
+      etc. tags resolve in the same index that resolves W2 tags.
+    * ``state["evidence_chunks"]`` — each retrieved guideline chunk's W2
+      citation.
+    * ``state["extraction_result"]`` — chief-concern + per-list citations
+      from the intake-form extraction.
 
-    The record value is the W2 ``Citation``'s ``model_dump`` — it
-    preserves enough context for future domain checks without forcing
-    them now.
+    All three contribute under the same ``(record_type, record_id)``
+    key shape that the W1 verifier already understands. The W1 walk
+    runs first so W2 records can override on key collision (extremely
+    unlikely in practice — W1 record types are nouns like ``"problem"``;
+    W2 source types are sources like ``"guideline"``, ``"intake_form"``).
     """
-    records: dict[CitationKey, dict[str, Any]] = {}
+    w1_index = build_citation_index(state["tool_results"])
+    records: dict[CitationKey, dict[str, Any]] = dict(w1_index.records)
     for result in state["evidence_chunks"]:
         _register_w2_citation(records, result.chunk.citation)
     extraction = state["extraction_result"]
