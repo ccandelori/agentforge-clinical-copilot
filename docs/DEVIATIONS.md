@@ -2484,3 +2484,124 @@ behavior (rect + × button + propagation), pdfjsLib readiness via the
 `agentforge:pdfjs-ready` event, error paths, and unmount safety.
 
 ---
+
+## 2026-05-06 — Dashboard OAuth client: public + PKCE, signaled via `application_type`
+
+**Plan:** Task 38.2 and the `NEXT-SESSION.md` walkthrough specified
+`oidc-client-ts` configured with PKCE; client registered via OpenEMR's
+RFC 7591 dynamic-registration endpoint. The implicit assumption was that
+either (a) confidential client with `client_secret` in `VITE_*` env, or
+(b) `token_endpoint_auth_method: "none"` for a public client, would
+work.
+
+**Deviation:** Both assumptions were wrong. Settled on **public client
++ PKCE**, signaled by `application_type: "public"` in the registration
+body and **omitting** `token_endpoint_auth_method` entirely.
+
+**Why:** Two findings:
+
+1. Confidential client is unusable for an SPA — Vite bakes `VITE_*` env
+   into the browser bundle, so the secret would ship to every user.
+   Effectively the same security as no secret at all, but with the
+   illusion of one.
+2. OpenEMR's discovery advertises only `client_secret_post` for
+   `token_endpoint_auth_methods_supported` and the registration handler
+   actively rejects `none` with `"Unsupported token_endpoint_auth_method
+   value : none"`. The signal it actually accepts is OpenEMR-specific:
+   `application_type: "public"` (with no `token_endpoint_auth_method`
+   sent), which causes the server to leave `client_secret` empty and
+   treat the client as public. Reference:
+   `src/RestControllers/AuthorizationController.php:307-325`.
+
+**What we learned:** OAuth2/OIDC server discovery metadata is not
+authoritative for what a server actually accepts. OpenEMR diverges from
+RFC 8414 in the public-client signaling — read the registration handler
+source, not the discovery doc, when a registration call gets an opaque
+rejection. The constraint that follows the public-client choice (no
+`system/*` or `user/*` scopes) is enforced server-side and silently
+shapes the FHIR data layer too — see the next two entries.
+
+**Artifacts:**
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"OAuth2 / OpenID Connect integration",
+[`dashboard/src/services/auth/`](../dashboard/src/services/auth/),
+[`dashboard/.env.example`](../dashboard/.env.example).
+
+---
+
+## 2026-05-06 — `MedicationStatement` and `FamilyMemberHistory` not exposed; meds/prescriptions both source from `MedicationRequest`
+
+**Plan:** Task 38.6 (medications) was scoped to FHIR `MedicationStatement`,
+T38.7 (prescriptions) to `MedicationRequest`. Intake review form (T38.12)
+included a family-history section sourced from `FamilyMemberHistory`.
+
+**Deviation:** Neither `MedicationStatement` nor `FamilyMemberHistory`
+appears in OpenEMR's advertised scope list. T38.6 and T38.7 both source
+from **`MedicationRequest`**, partitioned by `status` (`active` →
+medications card; `completed`/`stopped` → prescription history card).
+T38.12's family-history section cannot commit via FHIR write at all —
+the resource doesn't exist on this server.
+
+**Why:** Discovered while planning T38.2 — `dev-easy`'s OAuth2
+discovery doc lists every read scope OpenEMR exposes, and these two
+resources are absent. Confirms the FHIR R4 surface OpenEMR ships isn't
+fully complete.
+
+**What we learned:** Verify FHIR resource availability against the
+target server's discovery doc *before* designing card boundaries — a
+plan that calls for "MedicationStatement" reads better than a plan that
+says "MedicationRequest filtered by status," but only one is actually
+shippable on the target server. The status-partition pattern is also
+arguably more useful clinically (active meds vs. discontinued history
+is a real workflow distinction; the FHIR distinction between
+`MedicationStatement` and `MedicationRequest` is administrative).
+
+**Artifacts:**
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"FHIR data layer".
+
+---
+
+## 2026-05-06 — No `patient/*.write` scopes advertised; T38.12 commit path no longer "FHIR PUT directly"
+
+**Plan:** `NEXT-SESSION.md` decision spine §"Commit path (Q6)" — after
+the W2 brief invalidated the original plan of a session-authed PHP
+endpoint, the updated decision was "browser → FHIR API write directly
+(POST/PUT to FHIR `Condition`, `MedicationStatement`,
+`AllergyIntolerance`, `FamilyMemberHistory`, plus `QuestionnaireResponse`
+referencing the canonical intake Questionnaire as umbrella)."
+
+**Deviation:** Cannot land as planned. **Decision deferred to T38.12**
+with three documented options.
+
+**Why:** OpenEMR's OAuth2 discovery exposes **no `patient/*.write`
+scopes** at all. Writes are gated by `user/*.write` scopes
+(legacy-REST-API-named: `user/medical_problem.write`,
+`user/allergy.write`, `user/medication.write`, etc.), and the
+public-client constraint (see prior deviation) bars us from `user/*`
+entirely. Three options for T38.12:
+
+a. **Downgrade to confidential client** and accept secret-in-SPA. Lets
+   us request `user/*.write`. Security cost: secret in browser bundle.
+b. **Route writes through the AgentForge sidecar BFF.** The sidecar
+   gets a `user/*.write` confidential-client access token server-side
+   and proxies the writes. Architectural cost: ~2-3 hr of new sidecar
+   code; brief allows since the sidecar pre-existed.
+c. **Defer commit-to-chart.** Ship the structured intake-review form
+   (edit-in-place, citation chips, include checkboxes) and end with a
+   *Copy structured summary* button. No write at all. Acceptable
+   demo-quality, weak product-quality.
+
+**What we learned:** "FHIR API write directly" is a clean architecture
+sentence but not a universally-shippable one. SMART-on-FHIR's
+patient-context scopes are read-biased by design (the patient
+themselves is rarely the agent of write); production EMR writes
+typically require either a clinical-user OAuth context or a backend
+service-account flow. Worth surfacing this earlier in future
+SMART-on-FHIR designs.
+
+**Artifacts:**
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"FHIR data layer".
+
+---

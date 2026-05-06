@@ -1,12 +1,41 @@
 <script setup lang="ts">
-// Initial placeholder. The real entry path is /login (T38.2) → /patient/:pid
-// (T38.3+). Keeping a thin home view so the scaffold's router has somewhere
-// to land while the auth flow is being built.
+import { useAuthStore } from '@/stores/auth'
+
+// Initial placeholder. T38.3 turns this view into the patient dashboard
+// chrome (header + cards). For T38.2 we surface enough auth UI to verify
+// the full sign-in / sign-out round-trip during manual testing.
+const auth = useAuthStore()
+
+async function signOut(): Promise<void> {
+  await auth.signOut()
+}
 </script>
 
 <template>
   <main class="container py-5">
-    <h1 class="h3">AgentForge Dashboard</h1>
-    <p class="text-muted">Vue 3 scaffold — auth and patient routes land in subsequent commits.</p>
+    <div class="d-flex justify-content-between align-items-start mb-4">
+      <div>
+        <h1 class="h3">AgentForge Dashboard</h1>
+        <p class="text-muted mb-0">
+          Vue 3 scaffold — patient header and cards land in T38.3+.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="btn btn-outline-secondary btn-sm"
+        @click="signOut"
+      >
+        Sign out
+      </button>
+    </div>
+
+    <dl class="row small text-muted">
+      <dt class="col-sm-3">Subject (sub)</dt>
+      <dd class="col-sm-9 font-monospace">{{ auth.profile?.sub ?? '—' }}</dd>
+      <dt class="col-sm-3">fhirUser</dt>
+      <dd class="col-sm-9 font-monospace">{{ auth.profile?.fhirUser ?? '—' }}</dd>
+      <dt class="col-sm-3">Status</dt>
+      <dd class="col-sm-9">{{ auth.status }}</dd>
+    </dl>
   </main>
 </template>

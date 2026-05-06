@@ -140,31 +140,153 @@ Planned shape:
 
 ## OAuth2 / OpenID Connect integration
 
-**TBD** — lands with subtask 38.2.
+Lands with subtask 38.2. Implementation in
+`dashboard/src/services/auth/`, `dashboard/src/stores/auth.ts`, and the
+`/login` + `/auth/callback` routes in `dashboard/src/router/index.ts`.
 
-OpenEMR exposes the OAuth2 endpoints under `/oauth2/<site>/` with
-authorization-code-plus-PKCE flow. Client (`oidc-client-ts`) configuration:
+### Client registration
 
-- `authority`: OpenEMR base URL + `/oauth2/<site>`
-- `client_id`: registered via OpenEMR's *Client Registrations* admin
-- `redirect_uri`: dashboard's `/auth/callback` route
-- `scope`: `openid fhirUser patient/*.read patient/*.write`
+OpenEMR's OIDC discovery (`/oauth2/<site>/.well-known/openid-configuration`)
+gives the canonical authority — for dev-easy that's
+`https://localhost:9300/oauth2/default`. **HTTPS port 9300 is mandatory**;
+the OAuth2 endpoints reject HTTP.
+
+Registration is RFC 7591 dynamic, via `POST /oauth2/<site>/registration`.
+The dashboard registers as a **public client + PKCE** — not confidential.
+Two findings that shaped this:
+
+- OpenEMR rejects `token_endpoint_auth_method: "none"` (the canonical
+  RFC 8414 signal for public clients) — discovery only advertises
+  `client_secret_post`. The signal OpenEMR actually accepts is
+  `application_type: "public"` (and you omit `token_endpoint_auth_method`
+  entirely). The server then leaves `client_secret` empty and the client
+  is treated as public. Reference:
+  `src/RestControllers/AuthorizationController.php:307-325`.
+- A confidential client would be a security mistake here — Vite bakes
+  `VITE_*` env into the browser bundle, so the secret would ship to every
+  user. Public + PKCE is the only correct choice for an SPA.
+
+The constraint that comes with public-client mode: `system/*` and `user/*`
+scopes are rejected. **Only `patient/*.read` is in our reach.** That's
+load-bearing for [FHIR data layer](#fhir-data-layer) below.
+
+Exact registration call (re-runnable on a fresh dev-easy):
+
+```bash
+docker compose exec -T openemr curl -sS -X POST \
+  http://localhost/oauth2/default/registration \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "application_type": "public",
+    "client_name": "AgentForge Dashboard (dev-easy, public+PKCE)",
+    "redirect_uris": ["http://localhost:5173/auth/callback"],
+    "post_logout_redirect_uris": ["http://localhost:5173/"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "scope": "openid offline_access fhirUser patient/Patient.read patient/AllergyIntolerance.read patient/Condition.read patient/MedicationRequest.read patient/CareTeam.read patient/Observation.read",
+    "initiate_login_uri": "http://localhost:5173/login"
+  }'
+```
+
+After registration, the client must be **enabled** manually: Admin →
+System → API Clients → Enable. Without this step every authorize call is
+rejected with "client disabled". This is intentional ONC-Cures behavior
+and there's no API to short-circuit it — captured in the deviation log.
+Also confirm Admin → Config → Connectors → "Enable OpenEMR Standard
+FHIR REST API" is on.
+
+### Client (`oidc-client-ts`) configuration
+
+`dashboard/src/services/auth/config.ts` reads the registered values from
+`VITE_*` env (`.env.development.local`, gitignored) and produces a
+`UserManagerSettings`:
+
+- `authority`: `${VITE_OPENEMR_BASE}/oauth2/${VITE_OPENEMR_SITE}`
+- `client_id`: `VITE_OAUTH_CLIENT_ID` (the public client_id from registration)
+- `redirect_uri`: `VITE_OAUTH_REDIRECT_URI` (`http://localhost:5173/auth/callback`)
+- `post_logout_redirect_uri`: `VITE_OAUTH_POST_LOGOUT_REDIRECT_URI`
 - `response_type`: `code`
-- PKCE: enabled (recommended for SPAs)
+- `scope`: `VITE_OAUTH_SCOPE` (patient-read scopes only — see above)
+- `automaticSilentRenew`: `true` (uses the refresh token from `offline_access`)
+- `extraQueryParams.aud`: `VITE_OAUTH_AUDIENCE` —
+  `https://localhost:9300/apis/default/fhir`. **OpenEMR-specific
+  requirement**, not standard OIDC; the authorize endpoint rejects requests
+  without it.
+- `userStore` and `stateStore`: `sessionStorage`-backed
+  `WebStorageStateStore` — tokens cleared on tab close, never persisted to
+  `localStorage` in plaintext.
 
-Token storage: `sessionStorage` (cleared on tab close), never
-`localStorage` in plaintext.
+PKCE is on by default in `oidc-client-ts` (`code_challenge_method=S256`).
+
+### Pinia auth store
+
+`dashboard/src/stores/auth.ts` is the single source of truth for auth
+state across the app. State machine: `signed-out → signing-in →
+signed-in → signed-out`, plus `expired` (silent renew failed) and
+`error` (callback rejected). Actions: `hydrate()` (rehydrate from
+sessionStorage on app start), `signIn(targetPath?)`, `handleCallback()`,
+`signOut()`, `markExpired()`. 12 Vitest specs cover every transition
+with `oidc-client-ts` mocked.
+
+### Router guard
+
+`dashboard/src/router/index.ts` calls `auth.hydrate()` on the first
+navigation, then for any route that isn't `/login` or `/auth/callback`
+redirects to `/login?next=<intended>` when the store reports
+`!isAuthenticated`. The `next` query is round-tripped through OAuth2
+`state` and consumed by `OAuthCallbackView` to restore the user's intent
+after sign-in.
+
+### Security tradeoffs explicitly accepted
+
+- **No silent SSO across tabs.** `sessionStorage` is per-tab; opening a
+  second tab requires another sign-in. Acceptable for a clinical
+  dashboard where every tab represents a distinct workflow context;
+  noted as a future-work candidate (`monitorSession: true` +
+  `localStorage` would close this, at the cost of token-exposure surface).
+- **Self-signed cert on dev-easy.** First-time users must navigate to
+  `https://localhost:9300/` and accept the cert, otherwise the
+  cross-origin token POST silently fails. Acceptable — dev-only.
+- **CORS.** OpenEMR may need a CORS allowlist entry for the dashboard
+  origin. Will be settled when the manual handshake exposes it; surface
+  in the deviation log if it does.
 
 ---
 
 ## FHIR data layer
 
-**TBD** — lands incrementally with the cards (38.3–38.9).
+Lands incrementally with the cards (38.3–38.9). Discovery findings from
+T38.2 that shape the data layer:
+
+- **Read**: OpenEMR advertises `patient/Patient.read`,
+  `patient/AllergyIntolerance.read`, `patient/Condition.read`,
+  `patient/MedicationRequest.read`, `patient/CareTeam.read`,
+  `patient/Observation.read`, plus six others we don't need. That covers
+  every required card except medications/prescriptions — see next.
+- **`MedicationStatement` is not exposed**, only `MedicationRequest`.
+  The plan called for both T38.6 (medications) and T38.7 (prescriptions);
+  in practice both are sourced from `MedicationRequest` and split by
+  status (`active` for current meds, `completed`/`stopped` for
+  prescription history). Logged in the deviation log.
+- **`FamilyMemberHistory` is not exposed.** The intake review form's
+  family-history section (T38.12) cannot commit via FHIR write — see
+  write-path note below.
+- **No `patient/*.write` scopes are advertised** at all. Writes exist
+  but are gated by `user/*.write` scopes (legacy REST API surface,
+  resource-named: `user/medical_problem.write`, `user/allergy.write`,
+  `user/medication.write`, etc.). Public clients are barred from
+  `user/*` scopes. T38.12's write path therefore cannot be "FHIR `PUT`
+  directly" as originally planned — it has to either (a) downgrade the
+  client to confidential and accept secret-in-SPA, (b) route writes
+  through the AgentForge sidecar BFF, or (c) defer commit-to-chart and
+  surface the structured form for clipboard copy. Decision deferred to
+  T38.12.
 
 Each card module owns its FHIR resource type and the transformation from
 FHIR shape to view-model shape. Composition pattern: `useFhirResource()`
 composable handling fetch, loading, error, and refresh state per
-endpoint.
+endpoint, with the access-token from `useAuthStore()` set as the
+`Authorization: Bearer` header.
 
 ---
 
@@ -230,8 +352,8 @@ Things we explicitly **didn't** ship and the rationale for each:
 
 | Subtask | Status |
 |---|---|
-| 38.1 — Scaffold | in progress |
-| 38.2 — OAuth2/OIDC login | pending |
+| 38.1 — Scaffold | done |
+| 38.2 — OAuth2/OIDC login | in progress |
 | 38.3 — Patient header | pending |
 | 38.4 — Allergies card | pending |
 | 38.5 — Problem List card | pending |
