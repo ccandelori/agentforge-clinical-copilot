@@ -138,11 +138,34 @@ Planned shape:
 
 ---
 
-## OAuth2 / OpenID Connect integration
+## OAuth2 / OpenID Connect integration — BFF flow (v2)
 
-Lands with subtask 38.2. Implementation in
-`dashboard/src/services/auth/`, `dashboard/src/stores/auth.ts`, and the
-`/login` + `/auth/callback` routes in `dashboard/src/router/index.ts`.
+Lands with subtask 38.2 (v2). The dashboard does **not** speak OAuth2
+itself; the AgentForge sidecar is a **Backend For Frontend** that holds
+the OAuth2 client credentials server-side, performs the token exchange,
+and proxies FHIR reads to OpenEMR with the user's bearer token. The
+dashboard sees only an HttpOnly session cookie.
+
+This is a pivot from v1 (public client + PKCE in the SPA, which couldn't
+get the `user/*` scopes a clinician dashboard requires). See the
+[v1 → v2 entry in DEVIATIONS.md](docs/DEVIATIONS.md) for the discovery
+narrative.
+
+### Architecture
+
+```
+Browser (dashboard SPA, http://localhost:5173)
+   │
+   │ /auth/login  /auth/whoami  /auth/logout  /api/fhir/...
+   ▼  (Vite dev proxy in dev; same-origin in prod)
+Sidecar (FastAPI, http://localhost:8000)
+   │  ── holds confidential OAuth2 client_secret
+   │  ── stores sessions in Redis keyed by HttpOnly cookie
+   │
+   │ OAuth2 authorize / token / userinfo / FHIR
+   ▼
+OpenEMR (https://localhost:9300/oauth2/default + /apis/default/fhir)
+```
 
 ### Client registration
 
@@ -151,24 +174,12 @@ gives the canonical authority — for dev-easy that's
 `https://localhost:9300/oauth2/default`. **HTTPS port 9300 is mandatory**;
 the OAuth2 endpoints reject HTTP.
 
-Registration is RFC 7591 dynamic, via `POST /oauth2/<site>/registration`.
-The dashboard registers as a **public client + PKCE** — not confidential.
-Two findings that shaped this:
-
-- OpenEMR rejects `token_endpoint_auth_method: "none"` (the canonical
-  RFC 8414 signal for public clients) — discovery only advertises
-  `client_secret_post`. The signal OpenEMR actually accepts is
-  `application_type: "public"` (and you omit `token_endpoint_auth_method`
-  entirely). The server then leaves `client_secret` empty and the client
-  is treated as public. Reference:
-  `src/RestControllers/AuthorizationController.php:307-325`.
-- A confidential client would be a security mistake here — Vite bakes
-  `VITE_*` env into the browser bundle, so the secret would ship to every
-  user. Public + PKCE is the only correct choice for an SPA.
-
-The constraint that comes with public-client mode: `system/*` and `user/*`
-scopes are rejected. **Only `patient/*.read` is in our reach.** That's
-load-bearing for [FHIR data layer](#fhir-data-layer) below.
+The dashboard registers as a **confidential client** so it can request
+`user/*.read` scopes (clinical-user context — what a clinician's chart
+view actually needs). Public clients are rejected from `user/*` and
+`system/*` scopes server-side; that's why v1 (public client) couldn't
+get past 401 on FHIR endpoints. The `client_secret` lives on the
+sidecar — it never enters the browser bundle.
 
 Exact registration call (re-runnable on a fresh dev-easy):
 
@@ -177,79 +188,118 @@ docker compose exec -T openemr curl -sS -X POST \
   http://localhost/oauth2/default/registration \
   -H 'Content-Type: application/json' \
   --data '{
-    "application_type": "public",
-    "client_name": "AgentForge Dashboard (dev-easy, public+PKCE)",
+    "application_type": "private",
+    "client_name": "AgentForge Dashboard BFF (sidecar, confidential)",
     "redirect_uris": ["http://localhost:5173/auth/callback"],
     "post_logout_redirect_uris": ["http://localhost:5173/"],
+    "token_endpoint_auth_method": "client_secret_post",
     "grant_types": ["authorization_code", "refresh_token"],
     "response_types": ["code"],
-    "scope": "openid offline_access fhirUser patient/Patient.read patient/AllergyIntolerance.read patient/Condition.read patient/MedicationRequest.read patient/CareTeam.read patient/Observation.read",
-    "initiate_login_uri": "http://localhost:5173/login"
+    "scope": "openid offline_access fhirUser user/Patient.read user/AllergyIntolerance.read user/Condition.read user/MedicationRequest.read user/CareTeam.read user/Observation.read user/Encounter.read user/Practitioner.read user/Organization.read"
   }'
 ```
 
 After registration, the client must be **enabled** manually: Admin →
 System → API Clients → Enable. Without this step every authorize call is
 rejected with "client disabled". This is intentional ONC-Cures behavior
-and there's no API to short-circuit it — captured in the deviation log.
-Also confirm Admin → Config → Connectors → "Enable OpenEMR Standard
-FHIR REST API" is on.
+and there's no API to short-circuit it. Also confirm Admin → Config →
+Connectors → "Enable OpenEMR Standard FHIR REST API" is on.
 
-### Client (`oidc-client-ts`) configuration
+`redirect_uris` points at the **dashboard origin** (`http://localhost:5173/auth/callback`)
+because the user's browser is what OpenEMR redirects. Vite's dev-server
+proxy forwards `/auth/*` to the sidecar; the sidecar's `/auth/callback`
+handler is what actually processes the OAuth2 code. In production
+(T38.14), the dashboard is served from the sidecar host so `/auth/*`
+hits the sidecar directly without a proxy.
 
-`dashboard/src/services/auth/config.ts` reads the registered values from
-`VITE_*` env (`.env.development.local`, gitignored) and produces a
-`UserManagerSettings`:
+### Sidecar BFF surface
 
-- `authority`: `${VITE_OPENEMR_BASE}/oauth2/${VITE_OPENEMR_SITE}`
-- `client_id`: `VITE_OAUTH_CLIENT_ID` (the public client_id from registration)
-- `redirect_uri`: `VITE_OAUTH_REDIRECT_URI` (`http://localhost:5173/auth/callback`)
-- `post_logout_redirect_uri`: `VITE_OAUTH_POST_LOGOUT_REDIRECT_URI`
-- `response_type`: `code`
-- `scope`: `VITE_OAUTH_SCOPE` (patient-read scopes only — see above)
-- `automaticSilentRenew`: `true` (uses the refresh token from `offline_access`)
-- `extraQueryParams.aud`: `VITE_OAUTH_AUDIENCE` —
-  `https://localhost:9300/apis/default/fhir`. **OpenEMR-specific
-  requirement**, not standard OIDC; the authorize endpoint rejects requests
-  without it.
-- `userStore` and `stateStore`: `sessionStorage`-backed
-  `WebStorageStateStore` — tokens cleared on tab close, never persisted to
-  `localStorage` in plaintext.
+Implemented in `sidecar/src/agentforge/dashboard_auth/`:
 
-PKCE is on by default in `oidc-client-ts` (`code_challenge_method=S256`).
+| Endpoint | Purpose |
+|---|---|
+| `GET /auth/login?next=<path>` | Generate state + PKCE, persist in Redis, 307 redirect to OpenEMR's `/authorize` |
+| `GET /auth/callback?code=&state=` | Validate state (one-time), exchange code for tokens, fetch userinfo, create session, set HttpOnly cookie, 307 redirect to dashboard `next` path |
+| `GET /auth/whoami` | Return `{ authenticated, user, expires_at }` based on session cookie |
+| `POST /auth/logout` | Delete session in Redis, clear cookie, 204 |
+| `* /api/fhir/{path:path}` | Proxy FHIR R4 requests with the session's bearer token; passes through query string + body + content-type |
 
-### Pinia auth store
+Each session in Redis stores: `sub`, `name`, `fhir_user`, `email`,
+`access_token`, `refresh_token`, `expires_at`. Cookie is opaque — only
+the random `session_id`. Pending OAuth state (between `/login` and
+`/callback`) is one-time-use: a successful read deletes it from Redis,
+so a stale `state` value can never satisfy a second callback.
 
-`dashboard/src/stores/auth.ts` is the single source of truth for auth
-state across the app. State machine: `signed-out → signing-in →
-signed-in → signed-out`, plus `expired` (silent renew failed) and
-`error` (callback rejected). Actions: `hydrate()` (rehydrate from
-sessionStorage on app start), `signIn(targetPath?)`, `handleCallback()`,
-`signOut()`, `markExpired()`. 12 Vitest specs cover every transition
-with `oidc-client-ts` mocked.
+33 pytest specs in `tests/test_dashboard_auth_*.py` cover the OAuth2
+helpers (PKCE pair, authorize URL, token exchange, refresh, userinfo),
+the SessionStore CRUD, and the routes end-to-end via
+`fastapi.testclient.TestClient` with `httpx.MockTransport` for both
+OpenEMR and the upstream FHIR endpoint. See the test files for the
+full contract.
 
-### Router guard
+### Sidecar configuration
 
-`dashboard/src/router/index.ts` calls `auth.hydrate()` on the first
-navigation, then for any route that isn't `/login` or `/auth/callback`
-redirects to `/login?next=<intended>` when the store reports
-`!isAuthenticated`. The `next` query is round-tripped through OAuth2
-`state` and consumed by `OAuthCallbackView` to restore the user's intent
-after sign-in.
+The sidecar reads its OAuth2 + dashboard config from `sidecar/.env`
+(template in `sidecar/.env.example`). Required when the BFF is in use:
 
-### Security tradeoffs explicitly accepted
+- `DASHBOARD_OAUTH_AUTHORITY` — `${OPENEMR_HTTPS}/oauth2/<site>`
+- `DASHBOARD_OAUTH_CLIENT_ID` + `DASHBOARD_OAUTH_CLIENT_SECRET` — from registration
+- `DASHBOARD_OAUTH_REDIRECT_URI` — `http://localhost:5173/auth/callback`
+- `DASHBOARD_OAUTH_AUDIENCE` — OpenEMR-specific; binds the access token to the FHIR resource server
+- `DASHBOARD_OAUTH_SCOPE` — `openid offline_access fhirUser user/* …`
+- `DASHBOARD_FHIR_BASE_URL` — `https://localhost:9300/apis/default/fhir`
+- `DASHBOARD_APP_URL` — where the dashboard lives (post-callback redirect target)
 
-- **No silent SSO across tabs.** `sessionStorage` is per-tab; opening a
-  second tab requires another sign-in. Acceptable for a clinical
-  dashboard where every tab represents a distinct workflow context;
-  noted as a future-work candidate (`monitorSession: true` +
-  `localStorage` would close this, at the cost of token-exposure surface).
+When `DASHBOARD_OAUTH_CLIENT_ID` is empty, the BFF routes mount but
+return `503 BFF not configured` — the routing surface is stable
+across deployment shapes, and existing sidecar tests don't need to
+configure dashboard auth.
+
+### Dashboard side
+
+The dashboard (`dashboard/src/`) holds **no OAuth2 state**. The Pinia
+auth store (`stores/auth.ts`) tracks:
+
+```
+status:    'unknown' | 'signed-in' | 'signed-out'
+user:      { sub, name, fhir_user, email } | null
+expiresAt: number | null
+```
+
+Actions:
+
+- `hydrate()` — fetches `/auth/whoami` on first navigation. The router
+  guard awaits this before deciding whether to redirect to `/login`.
+- `signIn(targetPath?)` — `window.location.assign('/auth/login?next=...')`.
+  The handshake is a top-level navigation; the user lands back on the
+  dashboard after the sidecar finishes the code-for-token exchange.
+- `signOut()` — POST `/auth/logout` (best-effort), clear local state,
+  navigate to `/login`.
+
+10 Vitest specs cover the store transitions (`unknown → signed-in`,
+`unknown → signed-out` via `authenticated:false`, network-error
+fallback, signIn URL encoding, signOut clearing local state even when
+the network call fails).
+
+The dashboard ships with **no `oidc-client-ts` dependency** — the v1
+work was excised in this commit. The dashboard's `package.json` shed
+~68 KB gzipped with the removal.
+
+### Security tradeoffs accepted
+
+- **Token never touches JS.** XSS on the dashboard cannot exfiltrate
+  the OAuth2 access token because it lives on the sidecar; only the
+  HttpOnly session cookie is in the browser, and HttpOnly cookies are
+  unreadable from JS.
 - **Self-signed cert on dev-easy.** First-time users must navigate to
-  `https://localhost:9300/` and accept the cert, otherwise the
-  cross-origin token POST silently fails. Acceptable — dev-only.
-- **CORS.** OpenEMR may need a CORS allowlist entry for the dashboard
-  origin. Will be settled when the manual handshake exposes it; surface
-  in the deviation log if it does.
+  `https://localhost:9300/` once and accept the cert, otherwise the
+  browser's redirect to OpenEMR's `/authorize` fails. Sidecar uses
+  `verify=False` against dev-easy for its server-side requests; this
+  flips to verified TLS in production (T38.14 follow-up).
+- **No token refresh yet.** When the access_token expires the user is
+  re-prompted to sign in. The sidecar holds the refresh_token; refresh
+  wiring is a small follow-up but not required for the demo. Tracked
+  alongside T38.12.
 
 ---
 
