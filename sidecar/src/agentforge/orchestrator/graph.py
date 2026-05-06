@@ -13,12 +13,15 @@ MR layering:
     ``VisionExtractor[IntakeFormExtraction]`` into
     ``intake_extractor_node`` and ``EvidenceRetriever`` into
     ``evidence_retriever_node``.
-  * MR 3 (Task 1.5, this MR) — wires the real synthesizer LLM
-    into ``synthesize_node``. Builds a context block from
+  * MR 3 (Task 1.5) — wires the real synthesizer LLM into
+    ``synthesize_node``. Builds a context block from
     ``extraction_result`` + ``evidence_chunks`` and asks the model
-    for a final answer. ``terminal_node`` stays as a stub.
-  * MR 4 (Task 1.6) — wraps ``StreamingVerifier`` as
-    ``terminal_node``; adds the W2 citation-index builder.
+    for a final answer.
+  * MR 4 (Task 1.6, this MR) — adds ``build_w2_citation_index`` and
+    wraps ``StreamingVerifier`` as ``terminal_node``. The
+    synthesizer's evidence-tag format is updated to be
+    parser-compatible (``[guideline #chunk_id]``) so cited claims
+    actually round-trip through verification.
   * MR 5 (Task 1.7-1.8) — wires ``SynthesisInputTruncator``,
     ``DataQualityChecker`` warnings, and Langfuse spans per handoff.
   * MR 6 — production cutover: replace ``Orchestrator.turn()``
@@ -39,6 +42,7 @@ MR 3 alongside cutover.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterable
 from enum import StrEnum
 from typing import Any, Protocol, TypedDict
 
@@ -48,11 +52,15 @@ from langgraph.graph.state import CompiledStateGraph
 from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.orchestrator.planner import Plan, UseCase
 from agentforge.rag.types import RetrievalResult
+from agentforge.schemas.citation import Citation as W2Citation
 from agentforge.schemas.intake import IntakeFormExtraction
 from agentforge.tools.attach_and_extract import (
     RenderedPage,
     VisionExtractionResult,
 )
+from agentforge.verifier.cache import CitationIndex, CitationKey
+from agentforge.verifier.protocols import DomainConstraintChecker
+from agentforge.verifier.streaming_verifier import StreamingVerifier
 
 SYNTHESIS_SYSTEM_PROMPT: str = (
     "You are a clinical co-pilot. Given the user's question, any "
@@ -297,10 +305,16 @@ def _build_synthesis_context_block(state: AgentState) -> str | None:
         chunk_lines: list[str] = []
         for result in chunks:
             chunk = result.chunk
-            citation_tag = (
-                f"[guideline:{chunk.doc_id}#{chunk.chunk_id}]"
+            # Format matches the W1 verifier's citation grammar
+            # (`[<type> #<id>]`) so the model's mirrored tags parse
+            # cleanly at terminal-node verification time. The doc_id
+            # is shown in the body so the model can reference both
+            # without baking a composite tag the verifier would
+            # need to deconstruct.
+            citation_tag = f"[guideline #{chunk.chunk_id}]"
+            chunk_lines.append(
+                f"{citation_tag} ({chunk.doc_id})\n{chunk.text}"
             )
-            chunk_lines.append(f"{citation_tag}\n{chunk.text}")
         sections.append("RETRIEVED EVIDENCE:\n" + "\n\n".join(chunk_lines))
 
     if not sections:
@@ -345,9 +359,118 @@ async def synthesize_node(
     return {"messages": [*state["messages"], new_message]}
 
 
-async def terminal_node(state: AgentState) -> dict[str, Any]:
-    """Terminal sink. Real StreamingVerifier wrapping in MR 3."""
-    return {}
+def build_w2_citation_index(state: AgentState) -> CitationIndex:
+    """Build a per-turn CitationIndex from W2 sources in state.
+
+    Walks ``evidence_chunks`` (each carries a guideline citation) and
+    ``extraction_result`` (chief-concern citation plus per-list
+    citations) into the existing ``(record_type, record_id) -> dict``
+    map the W1 verifier already understands.
+
+    The mapping is deliberately straightforward: ``record_type`` is
+    the W2 ``source_type`` value (``"guideline"``, ``"intake_form"``,
+    ``"lab_pdf"``, ``"openemr_record"``) and ``record_id`` is the
+    citation's ``field_or_chunk_id``. The synthesizer's emitted tags
+    (e.g. ``[guideline #c1]``) parse into the same shape via the W1
+    citation grammar, so a one-step lookup is enough.
+
+    The record value is the W2 ``Citation``'s ``model_dump`` — it
+    preserves enough context for future domain checks without forcing
+    them now.
+    """
+    records: dict[CitationKey, dict[str, Any]] = {}
+    for result in state["evidence_chunks"]:
+        _register_w2_citation(records, result.chunk.citation)
+    extraction = state["extraction_result"]
+    if extraction is not None:
+        for citation in _walk_extraction_citations(extraction):
+            _register_w2_citation(records, citation)
+    return CitationIndex(records=records)
+
+
+def _register_w2_citation(
+    records: dict[CitationKey, dict[str, Any]],
+    citation: W2Citation,
+) -> None:
+    key: CitationKey = (citation.source_type.value, citation.field_or_chunk_id)
+    records[key] = citation.model_dump()
+
+
+def _walk_extraction_citations(
+    extraction: IntakeFormExtraction,
+) -> Iterable[W2Citation]:
+    if extraction.chief_concern_citation is not None:
+        yield extraction.chief_concern_citation
+    for demo in extraction.demographics:
+        yield demo.citation
+    for med in extraction.medications:
+        yield med.citation
+    for allergy in extraction.allergies:
+        yield allergy.citation
+    for fh in extraction.family_history:
+        yield fh.citation
+
+
+async def terminal_node(
+    state: AgentState,
+    *,
+    domain_checker: DomainConstraintChecker | None = None,
+) -> dict[str, Any]:
+    """Verify the assistant's final answer against the per-turn citation index.
+
+    Builds a ``CitationIndex`` from state's W2 sources, instantiates
+    a ``StreamingVerifier``, and runs the last assistant message
+    through it. Each parsed citation must resolve in the index;
+    citations that don't resolve cause their containing claim to be
+    replaced with the rejection marker.
+
+    No-ops when no assistant message exists (early termination paths).
+    """
+    last = _last_assistant_message_index(state["messages"])
+    if last is None:
+        return {}
+
+    raw_text = state["messages"][last].get("content", "")
+    if not isinstance(raw_text, str) or not raw_text:
+        return {}
+
+    index = build_w2_citation_index(state)
+    verifier = StreamingVerifier(index, domain_checker)
+    verified_text = await _verify_text(verifier, raw_text)
+
+    new_messages = list(state["messages"])
+    new_messages[last] = {
+        **state["messages"][last],
+        "content": verified_text,
+    }
+    return {"messages": new_messages}
+
+
+def _last_assistant_message_index(
+    messages: list[dict[str, Any]],
+) -> int | None:
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "assistant":
+            return i
+    return None
+
+
+async def _verify_text(verifier: StreamingVerifier, text: str) -> str:
+    """Run a complete text through ``verify_stream`` as a single chunk.
+
+    The streaming API takes an ``AsyncIterator[str]``; we wrap the
+    full assistant text in a one-shot generator and concatenate the
+    yielded ``VerifiedChunk.text`` values to reconstruct the final
+    string with rejection markers swapped in for unverified claims.
+    """
+
+    async def _yield_once() -> AsyncIterator[str]:
+        yield text
+
+    parts: list[str] = []
+    async for chunk in verifier.verify_stream(_yield_once()):
+        parts.append(chunk.text)
+    return "".join(parts)
 
 
 def _route_from_supervisor(state: AgentState) -> str:
@@ -366,6 +489,7 @@ def build_graph(
     vision_extractor: _VisionExtractorLike | None = None,
     evidence_retriever: _EvidenceRetrieverLike | None = None,
     synthesis_llm: _SynthesisLLMLike | None = None,
+    domain_checker: DomainConstraintChecker | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Assemble + compile the supervisor graph.
 
@@ -374,6 +498,11 @@ def build_graph(
     is optional — when None, the corresponding worker is wired as a
     no-op pass-through. This preserves earlier MR behavior for
     callers that haven't wired the new dependency yet.
+
+    ``domain_checker`` is consumed by ``terminal_node``'s embedded
+    ``StreamingVerifier``. When None, the verifier passes
+    cited-and-resolved claims unchanged (only structural citation
+    resolution is enforced).
     """
 
     async def _supervisor(state: AgentState) -> dict[str, Any]:
@@ -394,12 +523,15 @@ def build_graph(
             return {}
         return await synthesize_node(state, synthesis_llm)
 
+    async def _terminal(state: AgentState) -> dict[str, Any]:
+        return await terminal_node(state, domain_checker=domain_checker)
+
     graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
     graph.add_node("supervisor", _supervisor)
     graph.add_node(RouteDecision.INTAKE_EXTRACTOR.value, _intake_extractor)
     graph.add_node(RouteDecision.EVIDENCE_RETRIEVER.value, _evidence_retriever)
     graph.add_node(RouteDecision.SYNTHESIZE.value, _synthesize)
-    graph.add_node("terminal", terminal_node)
+    graph.add_node("terminal", _terminal)
 
     graph.set_entry_point("supervisor")
     graph.add_conditional_edges(

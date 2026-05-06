@@ -19,14 +19,28 @@ from agentforge.orchestrator.graph import (
     AgentState,
     RouteDecision,
     build_graph,
+    build_w2_citation_index,
     evidence_retriever_node,
     intake_extractor_node,
     supervisor_node,
     synthesize_node,
+    terminal_node,
 )
 from agentforge.orchestrator.planner import Plan, UseCase
 from agentforge.rag.types import GuidelineChunk, RetrievalResult
-from agentforge.schemas.intake import IntakeFormExtraction
+from agentforge.schemas.citation import (
+    Citation as W2Citation,
+)
+from agentforge.schemas.citation import (
+    PageBBox,
+    SourceType,
+)
+from agentforge.schemas.intake import (
+    AllergyEntry,
+    Demographic,
+    IntakeFormExtraction,
+    MedicationEntry,
+)
 from agentforge.tools.attach_and_extract import (
     RenderedPage,
     VisionExtractionResult,
@@ -132,6 +146,25 @@ def _starter_state_with_pdf(
     state["patient_id"] = patient_id
     state["pdf_pages"] = [_rendered_page()]
     return state
+
+
+def _intake_citation(field_id: str, page: int = 1) -> W2Citation:
+    """Build a valid INTAKE_FORM citation with a high-confidence bbox."""
+    return W2Citation(
+        source_type=SourceType.INTAKE_FORM,
+        source_id="42",
+        page_or_section=f"page {page}",
+        field_or_chunk_id=field_id,
+        quote_or_value="value",
+        page_bbox=PageBBox(
+            page=page,
+            x0=0.1,
+            y0=0.1,
+            x1=0.5,
+            y1=0.2,
+            bbox_confidence=0.9,
+        ),
+    )
 
 
 def _retrieval_result(chunk_id: str = "c1", score: float = 0.9) -> RetrievalResult:
@@ -645,3 +678,197 @@ class TestSynthesizeIntegration:
             "role": "assistant",
             "content": "hi back.",
         }
+
+
+# ---------------------------------------------------------------------------
+# MR 4 — W2 citation index builder (Task 1.6 prep)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildW2CitationIndex:
+    def test_empty_state_yields_empty_index(self) -> None:
+        # No evidence and no extraction → no entries. Index is still
+        # a real CitationIndex instance, not None.
+        state = _starter_state()
+
+        index = build_w2_citation_index(state)
+
+        assert index.size == 0
+
+    def test_evidence_chunks_register_under_guideline_key(self) -> None:
+        # Each retrieved chunk's W2 citation must show up under
+        # ("guideline", chunk_id) — that's the same shape the W1
+        # parser produces from a synthesizer-emitted "[guideline #c1]"
+        # tag, so the verifier's contains() check resolves cleanly.
+        result_a = _retrieval_result(chunk_id="ada-9-1-stmt-2")
+        result_b = _retrieval_result(chunk_id="kdigo-3-2-rec")
+
+        state = _starter_state()
+        state["evidence_chunks"] = [result_a, result_b]
+
+        index = build_w2_citation_index(state)
+
+        assert index.size == 2
+        assert index.contains("guideline", "ada-9-1-stmt-2")
+        assert index.contains("guideline", "kdigo-3-2-rec")
+
+    def test_extraction_citations_register_under_intake_form_key(self) -> None:
+        # Walk the four citation-bearing slots on IntakeFormExtraction
+        # — chief concern + the four list types — and verify each
+        # registers under ("intake_form", field_or_chunk_id).
+        chief_citation = _intake_citation("chief_concern")
+        demo_citation = _intake_citation("dob")
+        med_citation = _intake_citation("med_0")
+        allergy_citation = _intake_citation("allergy_0")
+
+        extraction = IntakeFormExtraction(
+            document_id=42,
+            patient_id=7,
+            extraction_confidence=0.9,
+            chief_concern="recurring headaches",
+            chief_concern_citation=chief_citation,
+            demographics=[
+                Demographic(field="dob", value="1972-04-12", citation=demo_citation),
+            ],
+            medications=[
+                MedicationEntry(name="metformin", citation=med_citation),
+            ],
+            allergies=[
+                AllergyEntry(substance="penicillin", citation=allergy_citation),
+            ],
+        )
+
+        state = _starter_state()
+        state["extraction_result"] = extraction
+
+        index = build_w2_citation_index(state)
+
+        assert index.size == 4
+        assert index.contains("intake_form", "chief_concern")
+        assert index.contains("intake_form", "dob")
+        assert index.contains("intake_form", "med_0")
+        assert index.contains("intake_form", "allergy_0")
+
+
+# ---------------------------------------------------------------------------
+# MR 4 — terminal_node verifies the final assistant message (Task 1.6)
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalNode:
+    @pytest.mark.asyncio
+    async def test_no_assistant_message_is_noop(self) -> None:
+        # If synthesize never ran (e.g. early termination), terminal
+        # has nothing to verify. No state mutation.
+        state = _starter_state(user_message="hi")
+
+        update = await terminal_node(state)
+
+        assert update == {}
+
+    @pytest.mark.asyncio
+    async def test_clean_text_passes_through_unchanged(self) -> None:
+        # Framing prose without any citations passes the W1 verifier
+        # by design — "if you cite, cite truthfully" rather than
+        # "every sentence must cite."
+        state = _starter_state(user_message="hello")
+        state["messages"].append(
+            {"role": "assistant", "content": "Hi there. How can I help?"}
+        )
+
+        update = await terminal_node(state)
+
+        assert update["messages"][-1]["content"] == "Hi there. How can I help?"
+        assert update["messages"][-1]["role"] == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_unverified_claim_replaced_with_rejection_marker(self) -> None:
+        # A citation that doesn't resolve in the index must be
+        # rejected — this is the trust boundary. The claim text gets
+        # replaced with REJECTION_MARKER so the model can't sneak
+        # ungrounded clinical assertions past the verifier.
+        from agentforge.verifier.streaming_verifier import REJECTION_MARKER
+
+        # State has no evidence and no extraction → empty index.
+        state = _starter_state(user_message="A1C target?")
+        state["messages"].append(
+            {
+                "role": "assistant",
+                "content": "Target is <7% [guideline #ada-9-1].",
+            }
+        )
+
+        update = await terminal_node(state)
+
+        assert REJECTION_MARKER in update["messages"][-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_resolved_citation_keeps_claim_intact(self) -> None:
+        # When the citation tag resolves in the index, the claim
+        # passes verification and the original text is preserved.
+        result = _retrieval_result(chunk_id="ada-9-1")
+
+        state = _starter_state(user_message="A1C target?")
+        state["evidence_chunks"] = [result]
+        state["messages"].append(
+            {
+                "role": "assistant",
+                "content": "Target is <7% [guideline #ada-9-1].",
+            }
+        )
+
+        update = await terminal_node(state)
+
+        assert "Target is <7%" in update["messages"][-1]["content"]
+        # Citation tag is preserved — verifier doesn't strip it.
+        assert "[guideline #ada-9-1]" in update["messages"][-1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# MR 4 — synthesize → terminal end-to-end via build_graph
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesizeTerminalIntegration:
+    @pytest.mark.asyncio
+    async def test_grounded_answer_survives_terminal_verification(self) -> None:
+        # The minimal verified-answer path: state has evidence with a
+        # citation, the LLM stub emits an answer that cites it, and
+        # terminal_node verifies the citation against the index it
+        # builds from state. The verified answer should reach final
+        # state intact (citation tag preserved).
+        result = _retrieval_result(chunk_id="ada-9-1")
+        llm = StubSynthesisLLM(
+            response_text="Target is <7% [guideline #ada-9-1]."
+        )
+
+        planner = StubPlanner(_empty_followup_plan())
+        graph = build_graph(planner, synthesis_llm=llm)
+        state = _starter_state(user_message="A1C target?")
+        state["evidence_chunks"] = [result]
+
+        final = await graph.ainvoke(state)
+
+        # Last message is the verified assistant answer.
+        last = final["messages"][-1]
+        assert last["role"] == "assistant"
+        assert "Target is <7%" in last["content"]
+        assert "[guideline #ada-9-1]" in last["content"]
+
+    @pytest.mark.asyncio
+    async def test_ungrounded_citation_blocked_by_terminal(self) -> None:
+        # The trust-boundary case: LLM stub emits a citation that
+        # doesn't resolve. terminal_node must replace the claim with
+        # the rejection marker before it reaches the user.
+        from agentforge.verifier.streaming_verifier import REJECTION_MARKER
+
+        llm = StubSynthesisLLM(
+            response_text="Target is <7% [guideline #not-a-real-chunk]."
+        )
+
+        planner = StubPlanner(_empty_followup_plan())
+        graph = build_graph(planner, synthesis_llm=llm)
+        # Empty evidence → empty index → unresolved citation.
+        final = await graph.ainvoke(_starter_state(user_message="A1C target?"))
+
+        assert REJECTION_MARKER in final["messages"][-1]["content"]

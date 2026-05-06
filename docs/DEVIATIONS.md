@@ -1905,3 +1905,112 @@ and idempotency; `TestSynthesizeIntegration` exercising the
 synthesizer via `build_graph` end-to-end).
 
 ---
+
+## 2026-05-05 — Task 1 MR 4 wires terminal verifier; reuses W1 CitationIndex; fixes MR 3 tag format
+
+**Plan:** Taskmaster Task 1.6 reads "Wrap StreamingVerifier as
+terminal_node()." The straightforward reading suggests dropping
+the existing W1 verifier into a node and calling it done.
+
+**Two divergences:**
+
+1. **Reused the W1 `CitationIndex` shape rather than writing a
+   parallel W2 verifier.** The W1 `agentforge.verifier.cache`
+   module already gives us a `(record_type, record_id) -> dict`
+   index keyed by string tuples. The W1 citation grammar
+   (``[<type> #<id>]``) accepts arbitrary `record_type` strings
+   — there's nothing W1-specific in the parser or the index
+   shape.
+
+   Building the index from W2 sources is just walking
+   `state["evidence_chunks"]` (each chunk's W2 `Citation` has a
+   `field_or_chunk_id` we use directly) and
+   `state["extraction_result"]` (chief-concern + four list
+   models, all with `Citation` slots). Maps `source_type.value`
+   to `record_type` and `field_or_chunk_id` to `record_id`. No
+   parallel verifier needed; the trust boundary is the same
+   one the W1 path already uses.
+
+2. **Fixed the MR 3 synthesizer's citation tag format.** MR 3
+   shipped evidence tags as ``[guideline:doc#chunk]`` — clean
+   for human reading but **not** parser-compatible. The W1
+   citation regex (`[A-Za-z][A-Za-z0-9_]*\s+#[A-Za-z0-9_\-]+`)
+   requires a leading identifier followed by whitespace then
+   `#id`. The colon-then-no-whitespace shape parses to nothing,
+   meaning every cited claim in MR 3 would have passed
+   verification trivially as "framing prose with no citations
+   to check." That defeats the purpose.
+
+   MR 4 changes the synthesizer's evidence tag to
+   ``[guideline #chunk_id]`` and surfaces the doc_id alongside
+   in body text rather than baking it into the tag. The
+   synthesizer's tests survive the change because they assert
+   on doc_id + chunk_id presence, not on a specific tag shape.
+
+**Known limitation logged with MR 4:**
+
+The W2 index keys evidence chunks on `field_or_chunk_id` alone —
+i.e. just the chunk_id, not `(doc_id, chunk_id)`. `chunk_id` is
+unique within a document (per the chunker's contract), but two
+chunks from different documents could in principle share an id.
+The current chunker convention prefixes chunk_ids with the doc's
+slug (e.g. `ada-9-1-stmt-2`), so collisions are unlikely in
+practice — but the invariant isn't structurally enforced.
+
+A future MR can move to composite ids (`doc_id--chunk_id`) at
+both the synthesizer's tag-emit site and the index-build site
+without churning the verifier itself. Deferring because the
+W2 corpus is small and the chunker's natural conventions cover
+the cases that matter for the demo. Logged in graph.py
+build_w2_citation_index docstring.
+
+**What MR 4 ships:**
+
+* `build_w2_citation_index(state) -> CitationIndex` — walks
+  `evidence_chunks` and the four citation-bearing slots on
+  `IntakeFormExtraction` (chief_concern + demographics +
+  medications + allergies + family_history). Helper
+  `_walk_extraction_citations` separates the walking concern
+  from the registration concern.
+* `terminal_node(state, *, domain_checker=None)` — finds the
+  last assistant message, builds the index from state,
+  instantiates a `StreamingVerifier`, runs the assistant text
+  through `verify_stream` as a single chunk, replaces the
+  assistant message text with the verified concat. No-ops when
+  no assistant message exists. Optional `domain_checker` for
+  Task 29 plug-in compatibility.
+* `_verify_text(verifier, text)` — wraps a complete text in a
+  one-shot async generator and concatenates the verifier's
+  yielded `VerifiedChunk.text` values back into a string. Lets
+  us reuse the streaming API on a complete-string input
+  without modifying the verifier.
+* `build_graph(domain_checker=...)` — DI seam for the optional
+  domain checker. Mirrors the existing worker-DI pattern.
+* Synthesizer's evidence tag format updated to
+  `[guideline #chunk_id]` for parser-round-trip.
+
+**What's not in MR 4:**
+
+* `SynthesisInputTruncator` (deferred to MR 5).
+* `DataQualityChecker` warnings (MR 5).
+* Langfuse spans per handoff (MR 5).
+* Production cutover (MR 6).
+* The five W1 catalogue tools' citations (`problem`, `medication`,
+  etc.) flowing into the W2 index. MR 6 will bridge — when prod
+  cutover happens, the index needs to merge W1 tool-results-derived
+  citations alongside W2 citations.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`build_w2_citation_index`, `_walk_extraction_citations`,
+`_register_w2_citation`, `terminal_node`, `_verify_text`,
+`_last_assistant_message_index`, `build_graph(domain_checker=...)`,
+synthesizer tag format fix),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestBuildW2CitationIndex` × 3, `TestTerminalNode` × 4,
+`TestSynthesizeTerminalIntegration` × 2 — covering empty / evidence /
+extraction index population, terminal no-op / passthrough /
+rejection / preservation, and end-to-end grounded-vs-ungrounded
+verification through `build_graph`).
+
+---
