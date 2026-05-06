@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="fhir" />
 
 interface ImportMetaEnv {
   // BFF target host. Used only by `vite.config.ts`'s dev-server proxy

@@ -15,11 +15,11 @@ function mockFetchOnce(payload: unknown, init: { ok?: boolean; status?: number }
     status: init.status ?? 200,
     json: async () => payload,
   } as unknown as Response
-  globalThis.fetch = vi.fn().mockResolvedValueOnce(response) as unknown as typeof fetch
+  globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce(response) as unknown as typeof fetch
 }
 
 function mockFetchReject(error: Error): void {
-  globalThis.fetch = vi.fn().mockRejectedValueOnce(error) as unknown as typeof fetch
+  globalThis.fetch = vi.fn<typeof fetch>().mockRejectedValueOnce(error) as unknown as typeof fetch
 }
 
 describe('useAuthStore (BFF flow)', () => {
@@ -99,7 +99,7 @@ describe('useAuthStore (BFF flow)', () => {
   })
 
   it('signOut() POSTs /auth/logout, resets state, then navigates to /login', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response)
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, status: 204 } as Response)
     globalThis.fetch = fetchMock as unknown as typeof fetch
     const store = useAuthStore()
     // Pretend we were signed-in
@@ -127,7 +127,7 @@ describe('useAuthStore (BFF flow)', () => {
 
   it('signOut() still resets and navigates when /auth/logout fails', async () => {
     globalThis.fetch = vi
-      .fn()
+      .fn<typeof fetch>()
       .mockRejectedValue(new Error('network')) as unknown as typeof fetch
     const store = useAuthStore()
     // Pretend we were signed-in (without making another fetch call)
