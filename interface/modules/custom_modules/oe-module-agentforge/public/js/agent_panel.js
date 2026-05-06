@@ -64,6 +64,132 @@
      * call is safe for chart-question turns and evidence-only turns
      * where the backend returns ``extraction: null``.
      */
+    /**
+     * Walk an extraction and collect every embedded Citation that carries
+     * a page_bbox (i.e. scanned-source citations — LAB_PDF and INTAKE_FORM
+     * per W2_ARCHITECTURE.md §2.2). Citations without a page_bbox are
+     * skipped because the overlay only renders PDF page regions; guideline
+     * and DB-row citations need a different surface.
+     *
+     * Duck-types on the presence of page_bbox.page (a number) so the JS
+     * doesn't have to know the IntakeFormExtraction shape — works for any
+     * future extraction schema as long as Citation keeps its current shape.
+     */
+    function walkCitations(extraction) {
+        var found = [];
+        function visit(node) {
+            if (!node || typeof node !== 'object') {
+                return;
+            }
+            if (Array.isArray(node)) {
+                node.forEach(visit);
+                return;
+            }
+            if (node.page_bbox && typeof node.page_bbox.page === 'number') {
+                found.push(node);
+                return;
+            }
+            for (var key in node) {
+                if (Object.prototype.hasOwnProperty.call(node, key)) {
+                    visit(node[key]);
+                }
+            }
+        }
+        visit(extraction);
+        return found;
+    }
+
+    function truncate(s, n) {
+        if (typeof s !== 'string') {
+            return '';
+        }
+        if (s.length <= n) {
+            return s;
+        }
+        return s.substring(0, n) + '…';
+    }
+
+    function citationPdfUrl(patientId, sourceId) {
+        return '/controller.php?document&retrieve'
+            + '&patient_id=' + encodeURIComponent(String(patientId))
+            + '&document_id=' + encodeURIComponent(String(sourceId))
+            + '&as_file=false';
+    }
+
+    /**
+     * Render a row of clickable chips for the extraction's bbox citations,
+     * with a viewer container beneath that the citation overlay mounts
+     * into when a chip is clicked. No-ops on extractions without a numeric
+     * patient_id (can't build a pdfUrl) or without bbox citations.
+     */
+    function appendCitationsPanel(messagesEl, extraction) {
+        if (!extraction || typeof extraction !== 'object') {
+            return;
+        }
+        var pid = extraction.patient_id;
+        if (typeof pid !== 'number') {
+            return;
+        }
+        var citations = walkCitations(extraction);
+        if (citations.length === 0) {
+            return;
+        }
+
+        var section = document.createElement('div');
+        section.className = 'agentforge-citations mb-2 small';
+        section.setAttribute('data-role', 'citations-panel');
+
+        var heading = document.createElement('div');
+        heading.className = 'text-muted mb-1';
+        heading.textContent = 'Citations (click to view source page)';
+        section.appendChild(heading);
+
+        var chipRow = document.createElement('div');
+        chipRow.className = 'd-flex flex-wrap';
+        section.appendChild(chipRow);
+
+        var viewer = document.createElement('div');
+        viewer.className = 'agentforge-citation-viewer mt-2';
+        viewer.setAttribute('data-role', 'citation-viewer');
+        section.appendChild(viewer);
+
+        citations.forEach(function (citation) {
+            var chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'btn btn-sm btn-outline-primary mr-1 mb-1';
+            chip.setAttribute('data-role', 'citation-chip');
+            var label = citation.field_or_chunk_id
+                || citation.page_or_section
+                || 'citation';
+            var quote = truncate(citation.quote_or_value || '', 30);
+            chip.textContent = quote ? (label + ': ' + quote) : label;
+            if (citation.quote_or_value) {
+                chip.title = citation.quote_or_value;
+            }
+            chip.addEventListener('click', function () {
+                if (!window.AgentforgeCitationOverlay) {
+                    console.warn(
+                        '[agent-panel] citation overlay not loaded'
+                    );
+                    return;
+                }
+                var pdfUrl = citationPdfUrl(pid, citation.source_id);
+                window.AgentforgeCitationOverlay.mount(
+                    viewer,
+                    citation,
+                    pdfUrl,
+                    function () {
+                        window.AgentforgeCitationOverlay.unmount(viewer);
+                    }
+                );
+            });
+            chipRow.appendChild(chip);
+        });
+
+        messagesEl.appendChild(section);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
     function appendExtractionPanel(messagesEl, extraction) {
         if (extraction === null || extraction === undefined) {
             return;
@@ -450,7 +576,9 @@
             // what was actually parsed from the PDF.
             return response.text().then(function (rawBody) {
                 appendMessage(messagesEl, 'agent', extractReply(rawBody));
-                appendExtractionPanel(messagesEl, extractExtraction(rawBody));
+                var extraction = extractExtraction(rawBody);
+                appendCitationsPanel(messagesEl, extraction);
+                appendExtractionPanel(messagesEl, extraction);
             });
         }).catch(function (err) {
             var msg = (err && err.message) ? err.message : 'Network error';
