@@ -34,6 +34,13 @@ COPY config/ ./config/
 # `additional_contexts` in docker-compose; the deploy script passes
 # --build-context prompts=<repo-root>/prompts to docker build.
 COPY --from=prompts . ./prompts/
+# Guideline corpus (W2 RAG, Task 9 + MR 7). The retriever's loader
+# resolves Settings.guidelines_index_path to /app/data/guidelines/index.json
+# at startup; without this layer the file is absent and
+# ``_build_evidence_retriever`` short-circuits to None — turns with
+# ``evidence_query`` quietly produce empty chunk lists. ~48 KB total
+# (BM25 index + per-doc chunk text), so the layer cost is trivial.
+COPY data/ ./data/
 
 # Install only the production dependencies into /app/.venv.
 ENV UV_LINK_MODE=copy \
@@ -65,6 +72,8 @@ COPY --from=builder --chown=agentforge:agentforge /app/config /app/config
 # with version.json; this layer puts it there. Sourced from the
 # 'prompts' named build context (see notes in the builder stage).
 COPY --from=builder --chown=agentforge:agentforge /app/prompts /app/prompts
+# Guideline corpus (W2 RAG). See the builder-stage COPY above.
+COPY --from=builder --chown=agentforge:agentforge /app/data /app/data
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
