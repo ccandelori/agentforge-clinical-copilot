@@ -75,6 +75,24 @@ class Settings(BaseSettings):
     )
     sensitivity_policy_required: bool = True
 
+    # Guideline corpus for the W2 evidence-retriever LangGraph node
+    # (Task 9 / Task 15). Default points at the bundled corpus index
+    # produced by ``scripts/chunk_guidelines.py``; deployments with a
+    # custom corpus override the path. See ``rag/loader.py``.
+    guidelines_index_path: Path = (
+        Path(__file__).resolve().parents[2] / "data" / "guidelines" / "index.json"
+    )
+
+    # When True, ``create_app`` builds the full RAG pipeline (BM25 +
+    # SentenceTransformer dense + RRF + cross-encoder reranker) at
+    # startup and passes it to the W2 graph. The dense + cross-encoder
+    # models download ~190 MB of weights on first use, so unit tests
+    # set this to False (or inject a fake ``EvidenceRetriever``) to
+    # avoid the network round-trip. The graph node degrades to a
+    # no-op when the retriever is None — evidence-query turns surface
+    # an empty chunk list rather than a hard failure.
+    evidence_retriever_enabled: bool = True
+
     # Streaming verifier on the user-visible reply (Task 28). On by
     # default — the verify-before-emit gate shipped in week1-gaps #13,
     # so every assistant sentence is now gated against the per-turn
