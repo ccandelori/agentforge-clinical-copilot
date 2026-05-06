@@ -88,5 +88,25 @@ Expected variables (provided by the controller in Task 2):
             </div>
         </form>
     </div>
+    {#
+        pdf.js loader. pdf.js 5.x is ESM-only — even the legacy build ships
+        as .mjs modules that cannot be loaded via classical <script src>.
+        We import the namespace inside a module script, configure the worker
+        URL, and re-expose the API on `window.pdfjsLib` so the citation
+        overlay (Task 24, public/js/citation_overlay.js) and any other
+        IIFE-style consumer can find it under the symbol name from pdf.js
+        4.x and earlier. A `agentforge:pdfjs-ready` event fires once the
+        global is set so consumers can wait if their own load order
+        races the deferred module script.
+        See docs/DEVIATIONS.md (2026-05-06) for the npm/ESM rationale.
+    #}
+    <script type="module">
+        import * as pdfjsLib from "/public/assets/pdfjs-dist/legacy/build/pdf.min.mjs";
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "/public/assets/pdfjs-dist/legacy/build/pdf.worker.min.mjs";
+        window.pdfjsLib = pdfjsLib;
+        window.dispatchEvent(new CustomEvent("agentforge:pdfjs-ready"));
+    </script>
     <script src="/interface/modules/custom_modules/oe-module-agentforge/public/js/agent_panel.js"></script>
+    <script src="/interface/modules/custom_modules/oe-module-agentforge/public/js/citation_overlay.js"></script>
 {% endblock %}

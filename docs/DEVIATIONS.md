@@ -2385,3 +2385,102 @@ re-set against shell-env contamination by developers iterating on the
 W2 evidence path).
 
 ---
+
+## 2026-05-06 — pdf.js consumed via OpenEMR npm pipeline, not module-local vendor
+
+**Plan:** Taskmaster Task 24 (citation overlay) and `W2_ARCHITECTURE.md` §3
+both called for a *module-local vendored* pdf.js bundle at
+`interface/modules/custom_modules/oe-module-agentforge/public/vendor/pdfjs/`.
+Task 24's spec also pinned 4.x and asked for the legacy UMD bundle (committed
+files: `pdf.min.js`, `pdf.worker.min.js`, `LICENSE`).
+
+**Deviation:** Three small updates to that plan:
+
+1. **Consume via npm + gulp**, not module-local vendor. `pdfjs-dist@5.7.284`
+   is added to the repository-root `package.json`; gulp's `install` task
+   copies it from `node_modules/pdfjs-dist/` into `public/assets/pdfjs-dist/`
+   (which is gitignored). Module references the served path
+   `/public/assets/pdfjs-dist/legacy/build/`.
+2. **pdf.js 5.7.284**, not 4.x. The 4.x pin was a snapshot in the spec;
+   5.7.284 is the current latest stable prebuilt.
+3. **ESM, not UMD.** pdf.js 5.x dropped the UMD/global build. Even the
+   legacy distribution ships as ECMAScript modules (`pdf.min.mjs`,
+   `pdf.worker.min.mjs`). Loading requires `<script type="module">` and
+   static `import`. This shapes subtasks 24.3 and 24.4 (citation_overlay.js
+   becomes a module rather than a classical IIFE wrapping a `pdfjsLib`
+   global).
+
+**Why:** The vendoring rationale in `W2_ARCHITECTURE.md` §3 ("would require
+introducing a Node toolchain and bundler that the module otherwise avoids")
+referred to avoiding Node *in the Python sidecar* — the rejected alternative
+was a sidecar-bundled React/JSX component. OpenEMR has always had a Node
+toolchain (gulp/npm) for its other vendored JS (Bootstrap, jQuery, dwv,
+fontawesome, …). Adding pdf.js as a project-level npm dep matches the
+established convention without contradicting the original ADR's substantive
+intent — vanilla JS in OpenEMR, PDF served from OpenEMR's session-auth
+path, sidecar stays Python-only. The user's directive (2026-05-06): "stick
+to the established conventions as much as possible, until it's necessary
+to deviate."
+
+**What we learned:** When a task spec rationalizes a structural choice
+("no Node toolchain"), trace the rationale back to the source ADR before
+following or deviating — the spec can mis-cite. Here the *substance* of
+the original ADR (vanilla JS, OpenEMR-served) is preserved; only the path
+is different. Also: pdf.js 5.x being ESM-only is a real shape change that
+ripples into how the overlay loads, not just where its bytes live.
+
+**Artifacts:**
+[`package.json`](../package.json) (one-line dep add),
+[`package-lock.json`](../package-lock.json) (lockfile entry pinning the
+sha512 integrity hash),
+[`interface/modules/custom_modules/oe-module-agentforge/README.md`](../interface/modules/custom_modules/oe-module-agentforge/README.md)
+(new `Frontend dependencies` section with the served path and the
+ESM-only note).
+
+---
+
+## 2026-05-06 — Citation overlay tests use jest + jsdom, not Puppeteer
+
+**Plan:** Taskmaster Task 24.7 specified a Puppeteer-driven headless
+browser test harness with a `tests/fixtures/citation_overlay_test.html`
+fixture loading a real PDF, with assertions on getBoundingClientRect()
+positioning and visual content matching for the 1-indexed page contract.
+
+**Deviation:** Implemented as `tests/js/citation_overlay.test.js` using
+jest + jsdom — the project's existing JS test pattern (matches
+`agent_panel.test.js`, `agent_panel_upload.test.js`, etc.). pdfjsLib is
+stubbed with a tracker that records each `getPage(N)` call; the 1-indexed
+contract is verified by asserting the recorded `N` matches
+`citation.page_bbox.page` exactly, with no off-by-one wrapping. Real PDF
+rendering is not exercised because jsdom can't paint to canvas — and it
+doesn't need to be, because the contract bug surfaces at the
+`pdf.getPage()` call boundary, which the test pins.
+
+**Why:** Three reasons to follow the existing convention:
+
+1. The repo already has 369 jest+jsdom tests; adding Puppeteer would mean
+   a second test runner and toolchain for one file.
+2. The CRITICAL contract bug (treating page_bbox.page as 0-indexed) is
+   detectable at the API call surface. Visual rendering matches that
+   surface — a green getPage(N) assertion can't be fooled by a "wrong
+   page rendered correctly" failure mode, because there's no rendering
+   to be wrong about.
+3. jest+jsdom runs the test file in 0.4s; Puppeteer + a real PDF + a
+   real canvas would push CI runtime + dependency surface meaningfully.
+
+**What we learned:** When a spec prescribes tooling, ask whether the
+intended *invariant* is what's load-bearing or whether the *tooling* is.
+Here, the invariant is "the 1-indexed contract isn't violated." Multiple
+test shapes can pin that invariant; the cheapest one that pins it
+soundly wins. (Also, jsdom's offsetWidth/Height returning 0 for canvases
+required patching `HTMLCanvasElement.prototype` to surface bitmap
+dimensions — a small jsdom workaround documented in the test file.)
+
+**Artifacts:**
+[`tests/js/citation_overlay.test.js`](../tests/js/citation_overlay.test.js)
+— 21 tests covering public API, mount() validation, the 1-indexed
+contract, out-of-range pages, rect positioning, styling, dismiss
+behavior (rect + × button + propagation), pdfjsLib readiness via the
+`agentforge:pdfjs-ready` event, error paths, and unmount safety.
+
+---
