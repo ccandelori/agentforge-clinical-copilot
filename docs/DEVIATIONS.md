@@ -1690,3 +1690,327 @@ orchestrator's not-yet-final shape.
 guard).
 
 ---
+
+## 2026-05-05 — Task 1 MR 1 ships placeholder routing for non-FOLLOWUP plans
+
+**Plan:** Taskmaster Task 1's spec describes a supervisor whose
+`route_decision` reflects a real choice between
+`intake-extractor`, `evidence-retriever`, `both`, and `synthesize`
+based on the user's query — e.g. detect a PDF attachment and route
+to intake-extractor; detect a guideline question and route to
+evidence-retriever.
+
+**Deviation:** MR 1 (the skeleton) ships a deliberately dumb
+routing rule:
+
+* `iteration >= MAX_ITERATIONS` → `SYNTHESIZE` (hard stop)
+* `Plan.use_case == FOLLOWUP`   → `SYNTHESIZE` (no tools needed)
+* otherwise                     → `INTAKE_EXTRACTOR` (default)
+
+Real routing intelligence — translating the W1 `Planner.UseCase`
+taxonomy plus W2 signals (PDF detection, evidence query patterns)
+into a meaningful `RouteDecision` — is deferred to MR 2/3.
+
+**Why:** MR 1's purpose is the StateGraph wiring, not routing
+intelligence. The workers being routed to are all pass-through
+stubs in MR 1, so any routing decision has the same observable
+effect. Smart routing in MR 1 would be untestable (no real worker
+behavior to differentiate) and would couple the skeleton to
+worker-specific signal detection that hasn't been designed yet.
+
+The placeholder is enough to (a) prove the StateGraph compiles and
+runs end-to-end, (b) prove the conditional-edge dispatch wires
+correctly, and (c) prove the iteration cap engages — which is what
+MR 1 is for. MR 2 wires real worker bodies and reshapes the
+routing rule alongside.
+
+**What we learned:** When a multi-MR slice has the first MR be
+"plumbing only," it's worth being explicit that the routing is
+placeholder. Reviewers seeing `INTAKE_EXTRACTOR` as the default
+might otherwise read it as "this is the design" rather than "this
+is the temporary scaffold."
+
+**Sub-deviation: `RouteDecision.BOTH` collapses to
+`INTAKE_EXTRACTOR` in the conditional-edge path map.** The
+supervisor never emits `BOTH` in MR 1 (the rule above doesn't
+produce it), but the conditional-edge map needs an entry per
+enum value. Pointing it at `INTAKE_EXTRACTOR` is harmless — the
+edge is unreachable from the current rule — and keeps the map
+total. MR 2 will introduce a real fan-out node when parallel
+worker dispatch lands.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`build_graph`, `supervisor_node`, `_decide_route`, stub workers),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(graph-level + supervisor-level tests; spies on stubs to verify
+conditional-edge dispatch).
+
+---
+
+## 2026-05-05 — Task 1 MR 2 wires VisionExtractor + EvidenceRetriever; defers synthesize / terminal
+
+**Plan:** Taskmaster Task 1.3 reads "Migrate existing iterative
+tool-use loop from `turn()` into `intake_extractor_node()`." The
+literal reading is "move the W1 catalog-tool loop into the intake
+worker." Task 1.5 calls for `synthesize_node()` using the existing
+synthesis logic to ship in the same MR as the worker bodies.
+
+**Deviation:** Two divergences:
+
+1. `intake_extractor_node` is a thin wrapper over
+   `VisionExtractor[IntakeFormExtraction]`, **not** a port of the
+   W1 catalog-tool loop from `Orchestrator.turn()`. The spec's
+   wording conflates two unrelated flows — the W1 iterative
+   tool-use loop pulls patient data via the catalog tools
+   (`get_demographics`, `get_active_problems`, etc.), while the
+   W2 intake extractor drives a *single* vision extraction call
+   against an uploaded PDF. They are not the same shape and would
+   not benefit from a literal port. The W2 reading is the only
+   one that's consistent with Tasks 11/13 (which built
+   `VisionExtractor[IntakeFormExtraction]`) and the project
+   architecture diagram in `NEXT-SESSION.md`.
+
+2. `synthesize_node` and `terminal_node` stay as pass-through
+   stubs. Real synthesis migration belongs with the production
+   cutover (MR 3 / Task 1.5–1.8) because `_turn_inner`'s synthesis
+   logic is interleaved with the W1 tool-use loop — splitting it
+   out is a bigger refactor than "wire workers" should carry.
+
+**What we got instead in MR 2:**
+
+* Worker idempotency baked into both real workers — once
+  `extraction_result` (or `evidence_chunks`) is populated, re-entry
+  under the supervisor's loop-back is a no-op. This makes the dumb
+  MR 1 routing rule safe: the loop-back fires up to
+  `MAX_ITERATIONS` times but the expensive Anthropic /
+  retrieval-model call happens at most once per turn.
+* `AgentState` extended with input fields the workers need:
+  `document_id`, `patient_id`, `pdf_pages`, `query`. The
+  entrypoint that constructs the starter state is responsible for
+  populating them — the workers never invent placeholders.
+* `build_graph` extended with optional `vision_extractor` /
+  `evidence_retriever` injections. When None, the corresponding
+  worker is a no-op pass-through (preserves MR 1's behavior for
+  callers that haven't yet wired real workers).
+
+**Why the slicing change is right:**
+
+The original three-MR plan in `NEXT-SESSION.md` had MR 2 = "wire
+workers + existing single-node logic still runs alongside" and
+MR 3 = "cut over the loop." Synthesis migration sits squarely on
+the cutover seam — it's coupled to the decision of *how* to
+preserve W1 tool-use behavior alongside the new graph. Doing the
+synthesis migration in MR 2 would have required reasoning about
+the cutover anyway, blurring the slicing. Pushing it to MR 3
+keeps each MR with one clear job.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`intake_extractor_node`, `evidence_retriever_node`,
+`_VisionExtractorLike` / `_EvidenceRetrieverLike` Protocols,
+extended `AgentState`, optional DI in `build_graph`),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestIntakeExtractorNode` + `TestEvidenceRetrieverNode` covering
+the call-through, three skip conditions per worker, and
+idempotency under loop-back; existing graph integration tests
+re-fit to inject stubs through `build_graph` instead of
+monkey-patching module-level functions — a stricter test of the
+production wiring path).
+
+---
+
+## 2026-05-05 — Task 1 MR 3 narrows scope to `synthesize_node` only; further-splits 1.6/1.7/1.8 into MRs 4-5-6
+
+**Plan:** The session's MR 3 was originally going to ship Task 1.5
+(synthesize), 1.6 (terminal), 1.7 (truncator + DataQuality), 1.8
+(Langfuse spans), AND the production cutover. That's the spec's
+"MR 3 = cut over the loop" reading from `NEXT-SESSION.md`.
+
+**Deviation:** Split MR 3 into four progressively smaller MRs:
+
+* **MR 3 (this MR)** — Task 1.5 only. `synthesize_node` calls the
+  LLM with a context block built from `extraction_result` +
+  `evidence_chunks`, appends the response as an assistant message.
+* **MR 4** — Task 1.6. `terminal_node` wraps `StreamingVerifier`,
+  ships the W2 citation-index builder.
+* **MR 5** — Task 1.7 + 1.8. `SynthesisInputTruncator`,
+  `DataQualityChecker` warnings, Langfuse spans per handoff.
+* **MR 6** — Production cutover. Replace `Orchestrator.turn()`
+  callers with `graph.ainvoke()`.
+
+**Why split four ways?**
+
+Three separable surface areas surfaced when I went to wire MR 3
+all-at-once:
+
+1. **W2 citation-index gap.** `StreamingVerifier` is fed by a
+   `CitationIndex` built from W1 `ToolResult` shapes
+   (`agentforge.verifier.cache.build_citation_index`). It has no
+   pathway for W2 `evidence_chunks` (guideline citations) or
+   extraction citations (intake/lab PDFs). Adding a W2 builder is
+   non-trivial and properly belongs with the terminal-node MR
+   (MR 4), not bundled into "synthesize."
+2. **Production cutover risk.** Hot-swapping the production
+   entrypoint touches a 1715-line `Orchestrator` class deeply
+   entangled with W1 machinery (Memory, Breakglass, IdentityGuard,
+   retry policy, parallel dispatch, timeout policy). One MR for
+   this alone gives reviewers a tight surface to scrutinize.
+3. **Reviewer load.** MR 1 + MR 2 each shipped at ~500-line diffs
+   with focused test surfaces. MR 3 packed with 1.5-1.8 + cutover
+   would have been ~2k lines; reviewability degrades quickly past
+   ~700.
+
+**What MR 3 ships:**
+
+* `synthesize_node(state, llm)` — calls `llm.complete()` with the
+  conversation messages, the `SYNTHESIS_SYSTEM_PROMPT`, and a
+  context block built from extraction + evidence. Appends the
+  response as an assistant message. Idempotent: if the last
+  message is already an assistant turn, no-op.
+* `_build_synthesis_context_block` — renders `IntakeFormExtraction`
+  via `model_dump_json` and per-evidence-chunk text with
+  citation-tag markers (`[guideline:doc#chunk]`). Returns `None`
+  when the turn carries no synthesis context (pure follow-up).
+* `_state_messages_to_llm_messages` — converts wire-format dict
+  messages to typed `Message` objects at the LLM-call seam.
+* `_SynthesisLLMLike` Protocol — narrows `LLMClient` to just
+  `complete()` so test stubs don't need to implement `stream()`.
+* `build_graph` extended with optional `synthesis_llm` injection
+  (mirrors the MR 2 worker-DI pattern).
+
+**What's not in MR 3:**
+
+* Streaming integration with the verifier (deferred to MR 4 with
+  the terminal-node work).
+* Prompt versioning under `prompts/<active>/synthesizer.md`. The
+  prompt is a module-level constant for now; we'll move it to the
+  versioned store when prompt iteration matters (likely MR 5
+  alongside the data-quality reminders that also ride on it).
+* Routing intelligence. The supervisor still uses MR 1's dumb
+  placeholder rule. Real PDF-vs-evidence-vs-both routing lands in
+  MR 6 alongside cutover, when production traffic actually flows
+  through this code.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`synthesize_node`, `_build_synthesis_context_block`,
+`_state_messages_to_llm_messages`, `_SynthesisLLMLike`,
+`SYNTHESIS_SYSTEM_PROMPT`, `SYNTHESIS_MAX_TOKENS`,
+`build_graph(synthesis_llm=...)`),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestSynthesizeNode` covering the LLM call + assistant-message
+append, extraction-surfacing, evidence-citation-tag surfacing,
+and idempotency; `TestSynthesizeIntegration` exercising the
+synthesizer via `build_graph` end-to-end).
+
+---
+
+## 2026-05-05 — Task 1 MR 4 wires terminal verifier; reuses W1 CitationIndex; fixes MR 3 tag format
+
+**Plan:** Taskmaster Task 1.6 reads "Wrap StreamingVerifier as
+terminal_node()." The straightforward reading suggests dropping
+the existing W1 verifier into a node and calling it done.
+
+**Two divergences:**
+
+1. **Reused the W1 `CitationIndex` shape rather than writing a
+   parallel W2 verifier.** The W1 `agentforge.verifier.cache`
+   module already gives us a `(record_type, record_id) -> dict`
+   index keyed by string tuples. The W1 citation grammar
+   (``[<type> #<id>]``) accepts arbitrary `record_type` strings
+   — there's nothing W1-specific in the parser or the index
+   shape.
+
+   Building the index from W2 sources is just walking
+   `state["evidence_chunks"]` (each chunk's W2 `Citation` has a
+   `field_or_chunk_id` we use directly) and
+   `state["extraction_result"]` (chief-concern + four list
+   models, all with `Citation` slots). Maps `source_type.value`
+   to `record_type` and `field_or_chunk_id` to `record_id`. No
+   parallel verifier needed; the trust boundary is the same
+   one the W1 path already uses.
+
+2. **Fixed the MR 3 synthesizer's citation tag format.** MR 3
+   shipped evidence tags as ``[guideline:doc#chunk]`` — clean
+   for human reading but **not** parser-compatible. The W1
+   citation regex (`[A-Za-z][A-Za-z0-9_]*\s+#[A-Za-z0-9_\-]+`)
+   requires a leading identifier followed by whitespace then
+   `#id`. The colon-then-no-whitespace shape parses to nothing,
+   meaning every cited claim in MR 3 would have passed
+   verification trivially as "framing prose with no citations
+   to check." That defeats the purpose.
+
+   MR 4 changes the synthesizer's evidence tag to
+   ``[guideline #chunk_id]`` and surfaces the doc_id alongside
+   in body text rather than baking it into the tag. The
+   synthesizer's tests survive the change because they assert
+   on doc_id + chunk_id presence, not on a specific tag shape.
+
+**Known limitation logged with MR 4:**
+
+The W2 index keys evidence chunks on `field_or_chunk_id` alone —
+i.e. just the chunk_id, not `(doc_id, chunk_id)`. `chunk_id` is
+unique within a document (per the chunker's contract), but two
+chunks from different documents could in principle share an id.
+The current chunker convention prefixes chunk_ids with the doc's
+slug (e.g. `ada-9-1-stmt-2`), so collisions are unlikely in
+practice — but the invariant isn't structurally enforced.
+
+A future MR can move to composite ids (`doc_id--chunk_id`) at
+both the synthesizer's tag-emit site and the index-build site
+without churning the verifier itself. Deferring because the
+W2 corpus is small and the chunker's natural conventions cover
+the cases that matter for the demo. Logged in graph.py
+build_w2_citation_index docstring.
+
+**What MR 4 ships:**
+
+* `build_w2_citation_index(state) -> CitationIndex` — walks
+  `evidence_chunks` and the four citation-bearing slots on
+  `IntakeFormExtraction` (chief_concern + demographics +
+  medications + allergies + family_history). Helper
+  `_walk_extraction_citations` separates the walking concern
+  from the registration concern.
+* `terminal_node(state, *, domain_checker=None)` — finds the
+  last assistant message, builds the index from state,
+  instantiates a `StreamingVerifier`, runs the assistant text
+  through `verify_stream` as a single chunk, replaces the
+  assistant message text with the verified concat. No-ops when
+  no assistant message exists. Optional `domain_checker` for
+  Task 29 plug-in compatibility.
+* `_verify_text(verifier, text)` — wraps a complete text in a
+  one-shot async generator and concatenates the verifier's
+  yielded `VerifiedChunk.text` values back into a string. Lets
+  us reuse the streaming API on a complete-string input
+  without modifying the verifier.
+* `build_graph(domain_checker=...)` — DI seam for the optional
+  domain checker. Mirrors the existing worker-DI pattern.
+* Synthesizer's evidence tag format updated to
+  `[guideline #chunk_id]` for parser-round-trip.
+
+**What's not in MR 4:**
+
+* `SynthesisInputTruncator` (deferred to MR 5).
+* `DataQualityChecker` warnings (MR 5).
+* Langfuse spans per handoff (MR 5).
+* Production cutover (MR 6).
+* The five W1 catalogue tools' citations (`problem`, `medication`,
+  etc.) flowing into the W2 index. MR 6 will bridge — when prod
+  cutover happens, the index needs to merge W1 tool-results-derived
+  citations alongside W2 citations.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`build_w2_citation_index`, `_walk_extraction_citations`,
+`_register_w2_citation`, `terminal_node`, `_verify_text`,
+`_last_assistant_message_index`, `build_graph(domain_checker=...)`,
+synthesizer tag format fix),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestBuildW2CitationIndex` × 3, `TestTerminalNode` × 4,
+`TestSynthesizeTerminalIntegration` × 2 — covering empty / evidence /
+extraction index population, terminal no-op / passthrough /
+rejection / preservation, and end-to-end grounded-vs-ungrounded
+verification through `build_graph`).
+
+---
