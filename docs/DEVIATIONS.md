@@ -2385,3 +2385,56 @@ re-set against shell-env contamination by developers iterating on the
 W2 evidence path).
 
 ---
+
+## 2026-05-06 — pdf.js consumed via OpenEMR npm pipeline, not module-local vendor
+
+**Plan:** Taskmaster Task 24 (citation overlay) and `W2_ARCHITECTURE.md` §3
+both called for a *module-local vendored* pdf.js bundle at
+`interface/modules/custom_modules/oe-module-agentforge/public/vendor/pdfjs/`.
+Task 24's spec also pinned 4.x and asked for the legacy UMD bundle (committed
+files: `pdf.min.js`, `pdf.worker.min.js`, `LICENSE`).
+
+**Deviation:** Three small updates to that plan:
+
+1. **Consume via npm + gulp**, not module-local vendor. `pdfjs-dist@5.7.284`
+   is added to the repository-root `package.json`; gulp's `install` task
+   copies it from `node_modules/pdfjs-dist/` into `public/assets/pdfjs-dist/`
+   (which is gitignored). Module references the served path
+   `/public/assets/pdfjs-dist/legacy/build/`.
+2. **pdf.js 5.7.284**, not 4.x. The 4.x pin was a snapshot in the spec;
+   5.7.284 is the current latest stable prebuilt.
+3. **ESM, not UMD.** pdf.js 5.x dropped the UMD/global build. Even the
+   legacy distribution ships as ECMAScript modules (`pdf.min.mjs`,
+   `pdf.worker.min.mjs`). Loading requires `<script type="module">` and
+   static `import`. This shapes subtasks 24.3 and 24.4 (citation_overlay.js
+   becomes a module rather than a classical IIFE wrapping a `pdfjsLib`
+   global).
+
+**Why:** The vendoring rationale in `W2_ARCHITECTURE.md` §3 ("would require
+introducing a Node toolchain and bundler that the module otherwise avoids")
+referred to avoiding Node *in the Python sidecar* — the rejected alternative
+was a sidecar-bundled React/JSX component. OpenEMR has always had a Node
+toolchain (gulp/npm) for its other vendored JS (Bootstrap, jQuery, dwv,
+fontawesome, …). Adding pdf.js as a project-level npm dep matches the
+established convention without contradicting the original ADR's substantive
+intent — vanilla JS in OpenEMR, PDF served from OpenEMR's session-auth
+path, sidecar stays Python-only. The user's directive (2026-05-06): "stick
+to the established conventions as much as possible, until it's necessary
+to deviate."
+
+**What we learned:** When a task spec rationalizes a structural choice
+("no Node toolchain"), trace the rationale back to the source ADR before
+following or deviating — the spec can mis-cite. Here the *substance* of
+the original ADR (vanilla JS, OpenEMR-served) is preserved; only the path
+is different. Also: pdf.js 5.x being ESM-only is a real shape change that
+ripples into how the overlay loads, not just where its bytes live.
+
+**Artifacts:**
+[`package.json`](../package.json) (one-line dep add),
+[`package-lock.json`](../package-lock.json) (lockfile entry pinning the
+sha512 integrity hash),
+[`interface/modules/custom_modules/oe-module-agentforge/README.md`](../interface/modules/custom_modules/oe-module-agentforge/README.md)
+(new `Frontend dependencies` section with the served path and the
+ESM-only note).
+
+---

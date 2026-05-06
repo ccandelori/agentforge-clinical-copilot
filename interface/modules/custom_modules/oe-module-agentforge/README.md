@@ -103,6 +103,36 @@ so the migration uses a `SELECT`-then-`INSERT`-or-`UPDATE` pattern in
 place rather than producing a duplicate. `down()` deletes by
 `source_url` so the rollback is scoped to the canonical row only.
 
+## Frontend dependencies
+
+The citation overlay component (`public/js/citation_overlay.js`, Task 24)
+renders PDFs using **pdf.js**. We consume it as an OpenEMR-level npm
+dependency, not as a module-local vendor — pinned in the repository-root
+`package.json` and copied to `/public/assets/pdfjs-dist/` by the gulp
+install task.
+
+| Library | Version | License | Served from |
+|---------|---------|---------|-------------|
+| `pdfjs-dist` | 5.7.284 (pinned) | Apache-2.0 | `/public/assets/pdfjs-dist/legacy/build/` |
+
+**Setup:** after `npm install`, run `npx gulp -i` (or `npm run build -- -i`)
+to populate `/public/assets/`. The `/public/assets/*` path is gitignored;
+the dependency lives in the lockfile, not in the tree.
+
+**Why pdf.js 5.x + ESM:** pdf.js 5.x is ESM-only. The legacy build
+(`legacy/build/pdf.min.mjs`) provides broader browser-syntax compatibility
+than the modern build but still ships as ECMAScript modules — `<script
+type="module">` is required to load it.
+
+**Why npm-managed instead of module-local vendor:** `W2_ARCHITECTURE.md` §3
+called for a "vendored pdf.js bundle" because the alternative considered
+was bundling pdf.js as part of a *sidecar-side* React/JSX component, which
+would have required adding a Node toolchain to the Python sidecar. OpenEMR
+already has a Node toolchain (gulp/npm) for its other vendored JS, so
+adding pdf.js as a project-level npm dep matches the established
+convention without contradicting the original ADR's intent. See
+`docs/DEVIATIONS.md` (2026-05-06) for the longer rationale.
+
 ## Layout
 
 ```
