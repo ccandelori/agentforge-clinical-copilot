@@ -1819,3 +1819,89 @@ monkey-patching module-level functions — a stricter test of the
 production wiring path).
 
 ---
+
+## 2026-05-05 — Task 1 MR 3 narrows scope to `synthesize_node` only; further-splits 1.6/1.7/1.8 into MRs 4-5-6
+
+**Plan:** The session's MR 3 was originally going to ship Task 1.5
+(synthesize), 1.6 (terminal), 1.7 (truncator + DataQuality), 1.8
+(Langfuse spans), AND the production cutover. That's the spec's
+"MR 3 = cut over the loop" reading from `NEXT-SESSION.md`.
+
+**Deviation:** Split MR 3 into four progressively smaller MRs:
+
+* **MR 3 (this MR)** — Task 1.5 only. `synthesize_node` calls the
+  LLM with a context block built from `extraction_result` +
+  `evidence_chunks`, appends the response as an assistant message.
+* **MR 4** — Task 1.6. `terminal_node` wraps `StreamingVerifier`,
+  ships the W2 citation-index builder.
+* **MR 5** — Task 1.7 + 1.8. `SynthesisInputTruncator`,
+  `DataQualityChecker` warnings, Langfuse spans per handoff.
+* **MR 6** — Production cutover. Replace `Orchestrator.turn()`
+  callers with `graph.ainvoke()`.
+
+**Why split four ways?**
+
+Three separable surface areas surfaced when I went to wire MR 3
+all-at-once:
+
+1. **W2 citation-index gap.** `StreamingVerifier` is fed by a
+   `CitationIndex` built from W1 `ToolResult` shapes
+   (`agentforge.verifier.cache.build_citation_index`). It has no
+   pathway for W2 `evidence_chunks` (guideline citations) or
+   extraction citations (intake/lab PDFs). Adding a W2 builder is
+   non-trivial and properly belongs with the terminal-node MR
+   (MR 4), not bundled into "synthesize."
+2. **Production cutover risk.** Hot-swapping the production
+   entrypoint touches a 1715-line `Orchestrator` class deeply
+   entangled with W1 machinery (Memory, Breakglass, IdentityGuard,
+   retry policy, parallel dispatch, timeout policy). One MR for
+   this alone gives reviewers a tight surface to scrutinize.
+3. **Reviewer load.** MR 1 + MR 2 each shipped at ~500-line diffs
+   with focused test surfaces. MR 3 packed with 1.5-1.8 + cutover
+   would have been ~2k lines; reviewability degrades quickly past
+   ~700.
+
+**What MR 3 ships:**
+
+* `synthesize_node(state, llm)` — calls `llm.complete()` with the
+  conversation messages, the `SYNTHESIS_SYSTEM_PROMPT`, and a
+  context block built from extraction + evidence. Appends the
+  response as an assistant message. Idempotent: if the last
+  message is already an assistant turn, no-op.
+* `_build_synthesis_context_block` — renders `IntakeFormExtraction`
+  via `model_dump_json` and per-evidence-chunk text with
+  citation-tag markers (`[guideline:doc#chunk]`). Returns `None`
+  when the turn carries no synthesis context (pure follow-up).
+* `_state_messages_to_llm_messages` — converts wire-format dict
+  messages to typed `Message` objects at the LLM-call seam.
+* `_SynthesisLLMLike` Protocol — narrows `LLMClient` to just
+  `complete()` so test stubs don't need to implement `stream()`.
+* `build_graph` extended with optional `synthesis_llm` injection
+  (mirrors the MR 2 worker-DI pattern).
+
+**What's not in MR 3:**
+
+* Streaming integration with the verifier (deferred to MR 4 with
+  the terminal-node work).
+* Prompt versioning under `prompts/<active>/synthesizer.md`. The
+  prompt is a module-level constant for now; we'll move it to the
+  versioned store when prompt iteration matters (likely MR 5
+  alongside the data-quality reminders that also ride on it).
+* Routing intelligence. The supervisor still uses MR 1's dumb
+  placeholder rule. Real PDF-vs-evidence-vs-both routing lands in
+  MR 6 alongside cutover, when production traffic actually flows
+  through this code.
+
+**Artifacts:**
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(`synthesize_node`, `_build_synthesis_context_block`,
+`_state_messages_to_llm_messages`, `_SynthesisLLMLike`,
+`SYNTHESIS_SYSTEM_PROMPT`, `SYNTHESIS_MAX_TOKENS`,
+`build_graph(synthesis_llm=...)`),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestSynthesizeNode` covering the LLM call + assistant-message
+append, extraction-surfacing, evidence-citation-tag surfacing,
+and idempotency; `TestSynthesizeIntegration` exercising the
+synthesizer via `build_graph` end-to-end).
+
+---

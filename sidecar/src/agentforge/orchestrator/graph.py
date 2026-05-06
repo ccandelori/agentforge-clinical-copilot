@@ -9,16 +9,20 @@ old ``Orchestrator.turn()`` iterative loop.
 MR layering:
   * MR 1 (Task 1.1-1.2) — StateGraph skeleton + supervisor routing
     against ``Planner.plan()`` + iteration cap.
-  * MR 2 (Task 1.3-1.4, this MR) — wires the real
+  * MR 2 (Task 1.3-1.4) — wires the real
     ``VisionExtractor[IntakeFormExtraction]`` into
     ``intake_extractor_node`` and ``EvidenceRetriever`` into
-    ``evidence_retriever_node``. ``synthesize_node`` and
-    ``terminal_node`` stay as stubs (deferred to MR 3 since real
-    synthesis overlaps with the ``_turn_inner`` cutover).
-  * MR 3 (Task 1.5-1.8) — migrates synthesis, wraps StreamingVerifier
-    as the terminal node, wires Langfuse spans + DataQuality
-    warnings, and replaces the production entrypoint with
-    ``graph.ainvoke()``.
+    ``evidence_retriever_node``.
+  * MR 3 (Task 1.5, this MR) — wires the real synthesizer LLM
+    into ``synthesize_node``. Builds a context block from
+    ``extraction_result`` + ``evidence_chunks`` and asks the model
+    for a final answer. ``terminal_node`` stays as a stub.
+  * MR 4 (Task 1.6) — wraps ``StreamingVerifier`` as
+    ``terminal_node``; adds the W2 citation-index builder.
+  * MR 5 (Task 1.7-1.8) — wires ``SynthesisInputTruncator``,
+    ``DataQualityChecker`` warnings, and Langfuse spans per handoff.
+  * MR 6 — production cutover: replace ``Orchestrator.turn()``
+    callers with ``graph.ainvoke()``.
 
 Routing (still the MR 1 placeholder until MR 3):
   * iteration >= MAX_ITERATIONS → SYNTHESIZE (hard stop)
@@ -41,6 +45,7 @@ from typing import Any, Protocol, TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.orchestrator.planner import Plan, UseCase
 from agentforge.rag.types import RetrievalResult
 from agentforge.schemas.intake import IntakeFormExtraction
@@ -48,6 +53,19 @@ from agentforge.tools.attach_and_extract import (
     RenderedPage,
     VisionExtractionResult,
 )
+
+SYNTHESIS_SYSTEM_PROMPT: str = (
+    "You are a clinical co-pilot. Given the user's question, any "
+    "structured data extracted from uploaded documents, and the "
+    "retrieved guideline evidence, synthesize a concise answer for "
+    "the clinician. Cite extracted values and guideline chunks "
+    "explicitly so a reader can trace every clinical claim back to "
+    "its source.\n\n"
+    "If neither extracted data nor evidence is available, answer "
+    "from the conversation itself — do not invent values."
+)
+
+SYNTHESIS_MAX_TOKENS: int = 2048
 
 MAX_ITERATIONS: int = 3
 
@@ -128,6 +146,25 @@ class _EvidenceRetrieverLike(Protocol):
     async def retrieve(
         self, query: str, *, top_k: int = 5
     ) -> list[RetrievalResult]: ...
+
+
+class _SynthesisLLMLike(Protocol):
+    """Subset of ``LLMClient`` consumed by ``synthesize_node``.
+
+    The synthesizer only needs ``complete()`` (one-shot synthesis;
+    streaming integration with the verifier lives in the terminal
+    node). Narrowing to a Protocol keeps test stubs from having to
+    implement the full ``LLMClient`` Protocol's ``stream()`` surface.
+    """
+
+    async def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 1.0,
+    ) -> LLMResponse: ...
 
 
 def _last_user_message(state: AgentState) -> str:
@@ -219,9 +256,93 @@ async def evidence_retriever_node(
     return {"evidence_chunks": results}
 
 
-async def synthesize_node(state: AgentState) -> dict[str, Any]:
-    """MR 1 stub. Real synthesis migration in MR 2."""
-    return {}
+def _state_messages_to_llm_messages(
+    state_messages: list[dict[str, Any]],
+) -> list[Message]:
+    """Convert wire-format dict messages to ``Message`` objects.
+
+    State carries messages as plain dicts so the FastAPI request body
+    can be mapped directly into starter state without an extra
+    parse step. The LLM client wants typed ``Message`` instances.
+    """
+    typed: list[Message] = []
+    for raw in state_messages:
+        role = raw.get("role")
+        content = raw.get("content", "")
+        if role not in {"user", "assistant", "tool"}:
+            continue
+        if not isinstance(content, str):
+            continue
+        typed.append(Message(role=role, content=content))
+    return typed
+
+
+def _build_synthesis_context_block(state: AgentState) -> str | None:
+    """Render extraction + evidence into a single context block.
+
+    Returns ``None`` when the turn carries no synthesis context — pure
+    follow-up turns answer from the conversation alone, no need for a
+    placeholder block.
+    """
+    sections: list[str] = []
+
+    extraction = state["extraction_result"]
+    if extraction is not None:
+        sections.append(
+            "EXTRACTED INTAKE DATA:\n" + extraction.model_dump_json(indent=2)
+        )
+
+    chunks = state["evidence_chunks"]
+    if chunks:
+        chunk_lines: list[str] = []
+        for result in chunks:
+            chunk = result.chunk
+            citation_tag = (
+                f"[guideline:{chunk.doc_id}#{chunk.chunk_id}]"
+            )
+            chunk_lines.append(f"{citation_tag}\n{chunk.text}")
+        sections.append("RETRIEVED EVIDENCE:\n" + "\n\n".join(chunk_lines))
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
+
+
+async def synthesize_node(
+    state: AgentState,
+    llm: _SynthesisLLMLike,
+) -> dict[str, Any]:
+    """Compose a final answer from accumulated turn state.
+
+    Calls the LLM once with the conversation messages, the
+    ``SYNTHESIS_SYSTEM_PROMPT``, and (in later MRs) a context block
+    derived from ``extraction_result`` + ``evidence_chunks``. Appends
+    the response text as an assistant message.
+
+    Idempotent: if the last message in state is already an assistant
+    turn, the synthesizer has already run and we no-op. Same contract
+    as the other workers under the supervisor's loop-back.
+    """
+    if state["messages"] and state["messages"][-1].get("role") == "assistant":
+        return {}
+    messages = _state_messages_to_llm_messages(state["messages"])
+    context_block = _build_synthesis_context_block(state)
+    if context_block is not None:
+        # Inject as a user-role message so the LLM treats it as part
+        # of the conversation. Going via the system prompt would mix
+        # turn-specific content with timeless instructions; a chat
+        # message is the cleaner seam.
+        messages.append(Message(role="user", content=context_block))
+    response = await llm.complete(
+        system=SYNTHESIS_SYSTEM_PROMPT,
+        messages=messages,
+        max_tokens=SYNTHESIS_MAX_TOKENS,
+    )
+    new_message: dict[str, Any] = {
+        "role": "assistant",
+        "content": response.text,
+    }
+    return {"messages": [*state["messages"], new_message]}
 
 
 async def terminal_node(state: AgentState) -> dict[str, Any]:
@@ -244,15 +365,15 @@ def build_graph(
     *,
     vision_extractor: _VisionExtractorLike | None = None,
     evidence_retriever: _EvidenceRetrieverLike | None = None,
+    synthesis_llm: _SynthesisLLMLike | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Assemble + compile the supervisor graph.
 
     Workers are injected so tests can pass stubs. Production callers
-    (MR 3 cutover) will inject real instances. ``vision_extractor``
-    and ``evidence_retriever`` are optional — when None, the
-    corresponding worker is wired as a no-op pass-through (the
-    supervisor will still route to it under the placeholder rule, but
-    it produces no output).
+    (cutover MR) will inject real instances. Each worker dependency
+    is optional — when None, the corresponding worker is wired as a
+    no-op pass-through. This preserves earlier MR behavior for
+    callers that haven't wired the new dependency yet.
     """
 
     async def _supervisor(state: AgentState) -> dict[str, Any]:
@@ -268,11 +389,16 @@ def build_graph(
             return {}
         return await evidence_retriever_node(state, evidence_retriever)
 
+    async def _synthesize(state: AgentState) -> dict[str, Any]:
+        if synthesis_llm is None:
+            return {}
+        return await synthesize_node(state, synthesis_llm)
+
     graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
     graph.add_node("supervisor", _supervisor)
     graph.add_node(RouteDecision.INTAKE_EXTRACTOR.value, _intake_extractor)
     graph.add_node(RouteDecision.EVIDENCE_RETRIEVER.value, _evidence_retriever)
-    graph.add_node(RouteDecision.SYNTHESIZE.value, synthesize_node)
+    graph.add_node(RouteDecision.SYNTHESIZE.value, _synthesize)
     graph.add_node("terminal", terminal_node)
 
     graph.set_entry_point("supervisor")

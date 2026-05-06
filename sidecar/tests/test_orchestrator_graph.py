@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.orchestrator.graph import (
     MAX_ITERATIONS,
     AgentState,
@@ -21,6 +22,7 @@ from agentforge.orchestrator.graph import (
     evidence_retriever_node,
     intake_extractor_node,
     supervisor_node,
+    synthesize_node,
 )
 from agentforge.orchestrator.planner import Plan, UseCase
 from agentforge.rag.types import GuidelineChunk, RetrievalResult
@@ -157,6 +159,41 @@ class StubEvidenceRetriever:
     ) -> list[RetrievalResult]:
         self.calls.append({"query": query, "top_k": top_k})
         return list(self._results)
+
+
+class StubSynthesisLLM:
+    """Test stand-in for the synthesizer's LLM dependency.
+
+    Records every ``complete()`` call so tests can assert the
+    synthesizer assembled the expected system prompt + message list.
+    """
+
+    def __init__(self, response_text: str = "synthesized answer.") -> None:
+        self._response_text = response_text
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 1.0,
+    ) -> LLMResponse:
+        self.calls.append(
+            {
+                "system": system,
+                "messages": messages,
+                "tools": tools,
+                "max_tokens": max_tokens,
+            }
+        )
+        return LLMResponse(
+            text=self._response_text,
+            stop_reason="end_turn",
+            input_tokens=200,
+            output_tokens=50,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -487,3 +524,124 @@ class TestEvidenceRetrieverNode:
 
         assert retriever.calls == []
         assert update == {}
+
+
+# ---------------------------------------------------------------------------
+# MR 3 — synthesize_node calls LLM and appends an assistant message (Task 1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesizeNode:
+    @pytest.mark.asyncio
+    async def test_calls_llm_and_appends_assistant_message(self) -> None:
+        # Given some user messages in state and no prior assistant
+        # turn, synthesize_node must call the LLM exactly once and
+        # append the response text as an assistant message.
+        llm = StubSynthesisLLM(response_text="The patient's A1C is 7.2%.")
+
+        state = _starter_state(user_message="summarize the chart")
+
+        update = await synthesize_node(state, llm)
+
+        assert len(llm.calls) == 1
+        assert update["messages"][-1] == {
+            "role": "assistant",
+            "content": "The patient's A1C is 7.2%.",
+        }
+        # Original user message is preserved.
+        assert update["messages"][0] == {
+            "role": "user",
+            "content": "summarize the chart",
+        }
+
+    @pytest.mark.asyncio
+    async def test_extraction_result_is_surfaced_to_llm(self) -> None:
+        # When the intake extractor has produced data this turn, the
+        # synthesizer must include it in the LLM prompt so the answer
+        # can ground in the extracted values. Verified by inspecting
+        # the message list the LLM sees.
+        llm = StubSynthesisLLM()
+        extraction = IntakeFormExtraction(
+            document_id=42,
+            patient_id=7,
+            extraction_confidence=0.95,
+            chief_concern="recurring headaches for 3 weeks",
+        )
+
+        state = _starter_state(user_message="what's the chief concern?")
+        state["extraction_result"] = extraction
+
+        await synthesize_node(state, llm)
+
+        assert len(llm.calls) == 1
+        # The extracted chief concern must surface somewhere in the
+        # message stream the LLM sees — either as a context message
+        # or appended to the system prompt. We're agnostic about the
+        # mechanism, just the observable property.
+        all_text = llm.calls[0]["system"] + "".join(
+            m.content for m in llm.calls[0]["messages"]
+        )
+        assert "recurring headaches for 3 weeks" in all_text
+
+    @pytest.mark.asyncio
+    async def test_evidence_chunks_surfaced_with_citation_tags(self) -> None:
+        # Retrieved guideline chunks must reach the LLM with a stable
+        # citation marker so the model can refer back to them in its
+        # answer. We don't pin the exact tag format — just the
+        # observable property: the chunk's text is present, AND the
+        # chunk's doc_id + chunk_id appear nearby so the LLM has a
+        # handle to cite.
+        llm = StubSynthesisLLM()
+        result = _retrieval_result(chunk_id="ada-9-1-stmt-2")
+
+        state = _starter_state(user_message="A1C target?")
+        state["evidence_chunks"] = [result]
+
+        await synthesize_node(state, llm)
+
+        all_text = llm.calls[0]["system"] + "".join(
+            m.content for m in llm.calls[0]["messages"]
+        )
+        assert result.chunk.text in all_text
+        assert result.chunk.doc_id in all_text
+        assert result.chunk.chunk_id in all_text
+
+    @pytest.mark.asyncio
+    async def test_already_synthesized_is_idempotent(self) -> None:
+        # Synthesize→terminal→END means re-entry shouldn't happen
+        # under the current routing, but defending against it cheaply
+        # keeps the same idempotency contract every other worker has.
+        # If the last message is already an assistant turn, skip.
+        llm = StubSynthesisLLM()
+
+        state = _starter_state(user_message="hi")
+        state["messages"].append({"role": "assistant", "content": "prior answer"})
+
+        update = await synthesize_node(state, llm)
+
+        assert llm.calls == []
+        assert update == {}
+
+
+# ---------------------------------------------------------------------------
+# MR 3 — synthesize integration through build_graph
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesizeIntegration:
+    @pytest.mark.asyncio
+    async def test_followup_turn_produces_synthesized_assistant_message(self) -> None:
+        # The shortest path through the graph: FOLLOWUP routes
+        # straight to synthesize. With synthesis_llm injected, the
+        # final state must carry the assistant answer.
+        llm = StubSynthesisLLM(response_text="hi back.")
+
+        planner = StubPlanner(_empty_followup_plan())
+        graph = build_graph(planner, synthesis_llm=llm)
+        result = await graph.ainvoke(_starter_state(user_message="hi"))
+
+        assert len(llm.calls) == 1
+        assert result["messages"][-1] == {
+            "role": "assistant",
+            "content": "hi back.",
+        }
