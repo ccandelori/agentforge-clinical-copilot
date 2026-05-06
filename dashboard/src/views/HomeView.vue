@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { useAuthStore } from '@/stores/auth'
 
-// Initial placeholder. T38.3 turns this view into the patient dashboard
-// chrome (header + cards). For T38.2 we surface enough auth UI to verify
-// the full sign-in / sign-out round-trip during manual testing.
+// Placeholder; T38.3 turns this into the patient header + cards. For
+// T38.2 (BFF) we surface enough auth UI to verify the sign-in /
+// sign-out round-trip during manual testing.
 const auth = useAuthStore()
 
 async function signOut(): Promise<void> {
@@ -31,9 +31,11 @@ async function signOut(): Promise<void> {
 
     <dl class="row small text-muted">
       <dt class="col-sm-3">Subject (sub)</dt>
-      <dd class="col-sm-9 font-monospace">{{ auth.profile?.sub ?? '—' }}</dd>
+      <dd class="col-sm-9 font-monospace">{{ auth.user?.sub ?? '—' }}</dd>
+      <dt class="col-sm-3">Name</dt>
+      <dd class="col-sm-9">{{ auth.user?.name ?? '—' }}</dd>
       <dt class="col-sm-3">fhirUser</dt>
-      <dd class="col-sm-9 font-monospace">{{ auth.profile?.fhirUser ?? '—' }}</dd>
+      <dd class="col-sm-9 font-monospace">{{ auth.user?.fhir_user ?? '—' }}</dd>
       <dt class="col-sm-3">Status</dt>
       <dd class="col-sm-9">{{ auth.status }}</dd>
     </dl>

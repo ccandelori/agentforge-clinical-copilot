@@ -1,13 +1,10 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_OPENEMR_BASE: string
-  readonly VITE_OPENEMR_SITE: string
-  readonly VITE_OAUTH_CLIENT_ID: string
-  readonly VITE_OAUTH_REDIRECT_URI: string
-  readonly VITE_OAUTH_POST_LOGOUT_REDIRECT_URI: string
-  readonly VITE_OAUTH_SCOPE: string
-  readonly VITE_OAUTH_AUDIENCE: string
+  // BFF target host. Used only by `vite.config.ts`'s dev-server proxy
+  // to forward /auth/* and /api/* to the sidecar; not consumed by
+  // dashboard runtime code (which speaks to relative paths).
+  readonly VITE_SIDECAR_BASE?: string
 }
 
 interface ImportMeta {

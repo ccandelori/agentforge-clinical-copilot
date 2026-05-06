@@ -1,147 +1,145 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-const mockUserManager = {
-  signinRedirect: vi.fn(),
-  signinRedirectCallback: vi.fn(),
-  signoutRedirect: vi.fn(),
-  getUser: vi.fn(),
-}
+const navigateTo = vi.fn<(url: string) => void>()
 
-vi.mock('@/services/auth/userManager', () => ({
-  getUserManager: () => mockUserManager,
-  resetUserManagerForTests: () => {},
+vi.mock('@/services/navigation', () => ({
+  navigateTo: (url: string) => navigateTo(url),
 }))
 
 import { useAuthStore } from '@/stores/auth'
 
-interface FakeUserOverrides {
-  access_token?: string
-  id_token?: string
-  expired?: boolean
+function mockFetchOnce(payload: unknown, init: { ok?: boolean; status?: number } = {}): void {
+  const response = {
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    json: async () => payload,
+  } as unknown as Response
+  globalThis.fetch = vi.fn().mockResolvedValueOnce(response) as unknown as typeof fetch
 }
 
-function fakeUser(overrides: FakeUserOverrides = {}): unknown {
-  return {
-    access_token: overrides.access_token ?? 'access-token-abc',
-    id_token: overrides.id_token ?? 'id-token-xyz',
-    refresh_token: 'refresh-token-123',
-    expires_at: Math.floor(Date.now() / 1000) + 3600,
-    expired: overrides.expired ?? false,
-    profile: { sub: '42', fhirUser: 'Patient/42' },
-    scope: 'openid offline_access',
-    token_type: 'Bearer',
-    state: undefined,
-  }
+function mockFetchReject(error: Error): void {
+  globalThis.fetch = vi.fn().mockRejectedValueOnce(error) as unknown as typeof fetch
 }
 
-describe('useAuthStore', () => {
+describe('useAuthStore (BFF flow)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    vi.clearAllMocks()
+    navigateTo.mockReset()
   })
 
-  it('initial state is signed-out', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('initial state is unknown', () => {
     const store = useAuthStore()
-    expect(store.status).toBe('signed-out')
+    expect(store.status).toBe('unknown')
     expect(store.user).toBeNull()
     expect(store.isAuthenticated).toBe(false)
-    expect(store.accessToken).toBeNull()
   })
 
-  it('signIn() transitions to signing-in and delegates to UserManager.signinRedirect', async () => {
-    mockUserManager.signinRedirect.mockResolvedValueOnce(undefined)
-    const store = useAuthStore()
-    const pending = store.signIn('/patient/42')
-    expect(store.status).toBe('signing-in')
-    await pending
-    expect(mockUserManager.signinRedirect).toHaveBeenCalledOnce()
-    expect(mockUserManager.signinRedirect).toHaveBeenCalledWith({
-      state: { targetPath: '/patient/42' },
+  it('hydrate() with authenticated whoami sets signed-in', async () => {
+    mockFetchOnce({
+      authenticated: true,
+      user: {
+        sub: 'user-1',
+        name: 'Dr. Test',
+        fhir_user: 'Practitioner/abc',
+        email: 'doc@example.org',
+      },
+      expires_at: 1234567890,
     })
-  })
-
-  it('signIn() omits state when no targetPath provided', async () => {
-    mockUserManager.signinRedirect.mockResolvedValueOnce(undefined)
     const store = useAuthStore()
-    await store.signIn()
-    expect(mockUserManager.signinRedirect).toHaveBeenCalledWith({ state: undefined })
-  })
-
-  it('handleCallback() success populates user and transitions signed-in', async () => {
-    const u = fakeUser()
-    mockUserManager.signinRedirectCallback.mockResolvedValueOnce(u)
-    const store = useAuthStore()
-    const returned = await store.handleCallback()
+    await store.hydrate()
     expect(store.status).toBe('signed-in')
     expect(store.isAuthenticated).toBe(true)
-    expect(store.accessToken).toBe('access-token-abc')
-    expect(store.idToken).toBe('id-token-xyz')
-    expect(returned).toBe(u)
+    expect(store.user?.sub).toBe('user-1')
+    expect(store.user?.fhir_user).toBe('Practitioner/abc')
+    expect(store.expiresAt).toBe(1234567890)
   })
 
-  it('handleCallback() failure transitions to error and rethrows', async () => {
-    mockUserManager.signinRedirectCallback.mockRejectedValueOnce(new Error('bad authorization code'))
+  it('hydrate() with authenticated:false sets signed-out', async () => {
+    mockFetchOnce({ authenticated: false })
     const store = useAuthStore()
-    await expect(store.handleCallback()).rejects.toThrow('bad authorization code')
-    expect(store.status).toBe('error')
-    expect(store.error?.message).toBe('bad authorization code')
+    await store.hydrate()
+    expect(store.status).toBe('signed-out')
     expect(store.isAuthenticated).toBe(false)
+    expect(store.user).toBeNull()
   })
 
-  it('signOut() clears state and calls UserManager.signoutRedirect', async () => {
-    mockUserManager.signinRedirectCallback.mockResolvedValueOnce(fakeUser())
-    mockUserManager.signoutRedirect.mockResolvedValueOnce(undefined)
+  it('hydrate() on network error sets signed-out and surfaces error', async () => {
+    mockFetchReject(new Error('connection refused'))
     const store = useAuthStore()
-    await store.handleCallback()
+    await store.hydrate()
+    expect(store.status).toBe('signed-out')
+    expect(store.error?.message).toBe('connection refused')
+  })
+
+  it('hydrate() on 5xx response sets signed-out and captures error', async () => {
+    mockFetchOnce({ error: 'BFF down' }, { ok: false, status: 503 })
+    const store = useAuthStore()
+    await store.hydrate()
+    expect(store.status).toBe('signed-out')
+    expect(store.error?.message).toContain('503')
+  })
+
+  it('signIn() navigates to /auth/login', () => {
+    const store = useAuthStore()
+    store.signIn()
+    expect(navigateTo).toHaveBeenCalledWith('/auth/login')
+  })
+
+  it('signIn(targetPath) encodes ?next=', () => {
+    const store = useAuthStore()
+    store.signIn('/patient/42?tab=history')
+    expect(navigateTo).toHaveBeenCalledWith(
+      '/auth/login?next=%2Fpatient%2F42%3Ftab%3Dhistory',
+    )
+  })
+
+  it('signOut() POSTs /auth/logout, resets state, then navigates to /login', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 } as Response)
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const store = useAuthStore()
+    // Pretend we were signed-in
+    mockFetchOnce({
+      authenticated: true,
+      user: { sub: 'u', name: null, fhir_user: null, email: null },
+      expires_at: null,
+    })
+    await store.hydrate()
     expect(store.isAuthenticated).toBe(true)
+
+    // Re-stub fetch for the logout call (the hydrate consumed the
+    // first mock).
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    await store.signOut()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/auth/logout',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
+    )
+    expect(store.status).toBe('signed-out')
+    expect(store.user).toBeNull()
+    expect(navigateTo).toHaveBeenCalledWith('/login')
+  })
+
+  it('signOut() still resets and navigates when /auth/logout fails', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error('network')) as unknown as typeof fetch
+    const store = useAuthStore()
+    // Pretend we were signed-in (without making another fetch call)
+    store.$patch({
+      status: 'signed-in',
+      user: { sub: 'u', name: null, fhir_user: null, email: null },
+    } as Partial<ReturnType<typeof useAuthStore>['$state']>)
 
     await store.signOut()
+
     expect(store.status).toBe('signed-out')
     expect(store.user).toBeNull()
-    expect(store.error).toBeNull()
-    expect(mockUserManager.signoutRedirect).toHaveBeenCalledOnce()
-  })
-
-  it('hydrate() picks up an existing valid user from session storage', async () => {
-    mockUserManager.getUser.mockResolvedValueOnce(fakeUser())
-    const store = useAuthStore()
-    await store.hydrate()
-    expect(store.status).toBe('signed-in')
-    expect(store.isAuthenticated).toBe(true)
-  })
-
-  it('hydrate() ignores an expired user', async () => {
-    mockUserManager.getUser.mockResolvedValueOnce(fakeUser({ expired: true }))
-    const store = useAuthStore()
-    await store.hydrate()
-    expect(store.status).toBe('signed-out')
-    expect(store.isAuthenticated).toBe(false)
-  })
-
-  it('hydrate() with no stored user stays signed-out', async () => {
-    mockUserManager.getUser.mockResolvedValueOnce(null)
-    const store = useAuthStore()
-    await store.hydrate()
-    expect(store.status).toBe('signed-out')
-  })
-
-  it('hydrate() swallows getUser errors and stays signed-out', async () => {
-    mockUserManager.getUser.mockRejectedValueOnce(new Error('storage tamper'))
-    const store = useAuthStore()
-    await expect(store.hydrate()).resolves.toBeUndefined()
-    expect(store.status).toBe('signed-out')
-  })
-
-  it('markExpired() transitions to expired and clears the user', async () => {
-    mockUserManager.signinRedirectCallback.mockResolvedValueOnce(fakeUser())
-    const store = useAuthStore()
-    await store.handleCallback()
-    expect(store.status).toBe('signed-in')
-
-    store.markExpired()
-    expect(store.status).toBe('expired')
-    expect(store.user).toBeNull()
-    expect(store.isAuthenticated).toBe(false)
+    expect(navigateTo).toHaveBeenCalledWith('/login')
   })
 })

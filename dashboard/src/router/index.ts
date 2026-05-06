@@ -1,13 +1,12 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import LoginView from '../views/LoginView.vue'
-import OAuthCallbackView from '../views/OAuthCallbackView.vue'
 import { useAuthStore } from '@/stores/auth'
 
-// Routes added incrementally per Task 38 subtasks. T38.2 introduces /login,
-// /auth/callback, and the requiresAuth meta flag; PatientDashboardView
-// (T38.3) is the first surface that flips requiresAuth on. The cards
-// (T38.4–T38.9) and AgentForge drawer (T38.10) build into that view.
+// Routes added incrementally per Task 38 subtasks. T38.2 v2 ships the
+// BFF flow: /login renders the sign-in CTA; /auth/callback is owned
+// by the sidecar (Vite's proxy intercepts before this router sees it).
+// T38.3 adds /patient/:pid; T38.4–T38.9 are cards composed inside it.
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -23,10 +22,9 @@ const router = createRouter({
       meta: { requiresAuth: false },
     },
     {
-      path: '/auth/callback',
-      name: 'oauth-callback',
-      component: OAuthCallbackView,
-      meta: { requiresAuth: false },
+      path: '/probe',
+      name: 'probe',
+      component: () => import('../views/ProbeView.vue'),
     },
   ],
 })
@@ -41,7 +39,7 @@ router.beforeEach(async (to: RouteLocationNormalized) => {
     await auth.hydrate()
   }
 
-  const requiresAuth = to.meta.requiresAuth !== false && to.name !== 'login' && to.name !== 'oauth-callback'
+  const requiresAuth = to.meta.requiresAuth !== false && to.name !== 'login'
   if (requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { next: to.fullPath } }
   }
