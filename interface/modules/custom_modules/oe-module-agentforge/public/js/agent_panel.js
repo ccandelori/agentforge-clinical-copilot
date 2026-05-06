@@ -197,6 +197,109 @@
         return readNext();
     }
 
+    /**
+     * Mark a document as attached to the next /turn send. Stored on the
+     * panel dataset so state survives any DOM re-render and so the
+     * test harness can assert against it without poking JS internals.
+     */
+    function setPendingDocumentId(panel, docId, filename) {
+        panel.dataset.pendingDocumentId = docId;
+        var indicator = $(panel, 'pending-doc-indicator');
+        if (indicator) {
+            indicator.hidden = false;
+            indicator.textContent =
+                'Attached: ' + (filename || 'document') + ' (#' + docId + ')';
+        }
+    }
+
+    function clearPendingDocumentId(panel) {
+        delete panel.dataset.pendingDocumentId;
+        var indicator = $(panel, 'pending-doc-indicator');
+        if (indicator) {
+            indicator.hidden = true;
+            indicator.textContent = '';
+        }
+    }
+
+    /**
+     * Wire the W2 upload widget if the panel renders one (MR 7).
+     *
+     * Optional — panels without ``[data-role="upload-button"]`` / a
+     * ``data-upload-url`` attribute (chart-question-only deployments)
+     * skip the wiring entirely. The button click fans out to a hidden
+     * file input so the page styles can place the button anywhere
+     * without inheriting the file-picker chrome.
+     */
+    function bindUploadWidget(panel) {
+        var uploadUrl = panel.getAttribute('data-upload-url') || '';
+        var uploadButton = $(panel, 'upload-button');
+        var uploadInput = $(panel, 'upload-input');
+        if (!uploadUrl || !uploadButton || !uploadInput) {
+            return;
+        }
+
+        uploadButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            uploadInput.click();
+        });
+
+        uploadInput.addEventListener('change', function () {
+            var file = uploadInput.files && uploadInput.files[0];
+            if (!file) {
+                return;
+            }
+            var formData = new FormData();
+            formData.append('file', file);
+            formData.append('doc_type', 'intake_form');
+
+            fetch(uploadUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: formData
+            }).then(function (response) {
+                return response.text().then(function (rawBody) {
+                    var messagesEl = $(panel, 'messages');
+                    if (!response.ok) {
+                        appendMessage(
+                            messagesEl,
+                            'error',
+                            extractError(response.status, rawBody)
+                        );
+                        return;
+                    }
+                    var docId = '';
+                    try {
+                        var parsed = JSON.parse(rawBody);
+                        if (parsed && typeof parsed.document_id === 'number') {
+                            docId = String(parsed.document_id);
+                        }
+                    } catch (e) {
+                        // not JSON — fall through; docId stays empty
+                    }
+                    if (docId !== '') {
+                        setPendingDocumentId(panel, docId, file.name);
+                    } else {
+                        appendMessage(
+                            messagesEl,
+                            'error',
+                            'Upload succeeded but no document_id was returned.'
+                        );
+                    }
+                });
+            }).catch(function (err) {
+                var msg = (err && err.message) ? err.message : 'Network error';
+                appendMessage(
+                    $(panel, 'messages'),
+                    'error',
+                    'Upload error: ' + msg
+                );
+            });
+            // Reset the input so picking the same file twice fires a
+            // fresh ``change`` event.
+            uploadInput.value = '';
+        });
+    }
+
     function send(panel, message) {
         var url = panel.getAttribute('data-turn-url') || '';
         var messagesEl = $(panel, 'messages');
@@ -207,6 +310,24 @@
         var body = { message: message };
         if (sessionId !== '') {
             body.session_id = sessionId;
+        }
+
+        // W2 inputs (MR 7). ``document_id`` rides one turn — clear the
+        // pending state immediately so a follow-up chat message
+        // doesn't re-attach the same upload. ``evidence_query`` is
+        // sticky-on while the toggle stays checked: clinicians often
+        // ask several guideline questions in a row.
+        var pendingId = panel.dataset.pendingDocumentId || '';
+        if (pendingId !== '') {
+            var parsed = parseInt(pendingId, 10);
+            if (!isNaN(parsed)) {
+                body.document_id = parsed;
+            }
+            clearPendingDocumentId(panel);
+        }
+        var guidelinesToggle = $(panel, 'guidelines-toggle');
+        if (guidelinesToggle && guidelinesToggle.checked) {
+            body.evidence_query = message;
         }
 
         fetch(url, {
@@ -294,6 +415,11 @@
                 resetConversation(panel);
             });
         }
+
+        // Optional W2 upload widget (MR 7). Bind only when the
+        // template renders the upload row; chart-question-only
+        // panels skip the wiring transparently.
+        bindUploadWidget(panel);
     }
 
     function init() {
