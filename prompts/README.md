@@ -61,10 +61,11 @@ strips it before returning the body.
 
 ## Components covered
 
-| Component     | File                | Used by                                                    |
-| ------------- | ------------------- | ---------------------------------------------------------- |
-| `synthesizer` | `vN/synthesizer.md` | `agentforge.orchestrator.SYSTEM_PROMPT`                    |
-| `planner`     | `vN/planner.md`     | `agentforge.orchestrator.planner.PLANNER_SYSTEM_PROMPT`    |
+| Component           | File                      | Used by                                                          |
+| ------------------- | ------------------------- | ---------------------------------------------------------------- |
+| `synthesizer`       | `vN/synthesizer.md`       | `agentforge.orchestrator.SYSTEM_PROMPT` (W1 iterative path)      |
+| `planner`           | `vN/planner.md`           | `agentforge.orchestrator.planner.PLANNER_SYSTEM_PROMPT`          |
+| `graph_synthesizer` | `vN/graph_synthesizer.md` | `agentforge.orchestrator.graph.SYNTHESIS_SYSTEM_PROMPT` (W2 graph) |
 
 ## Components intentionally NOT covered
 

@@ -1,4 +1,5 @@
 {
     "synthesizer": "v1",
-    "planner": "v1"
+    "planner": "v1",
+    "graph_synthesizer": "v1"
 }

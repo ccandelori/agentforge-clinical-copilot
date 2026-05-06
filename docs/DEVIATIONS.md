@@ -2014,3 +2014,156 @@ rejection / preservation, and end-to-end grounded-vs-ungrounded
 verification through `build_graph`).
 
 ---
+
+## 2026-05-05 — Task 1, MR 5: SynthesisInputTruncator + DataQuality + Langfuse handoff spans
+
+**Plan:** Subtasks 1.7 + 1.8 of Task 1 — wire `SynthesisInputTruncator`
+at the synthesize input edge, run `DataQualityChecker` warnings as a
+system reminder before the LLM call, and emit Langfuse spans per
+supervisor handoff.
+
+**Three deviations from the literal spec wording:**
+
+### 1. New `graph_synthesizer` prompt component (not overwriting `synthesizer`)
+
+**Spec:** "Move `SYNTHESIS_SYSTEM_PROMPT` to `prompts/<active>/synthesizer.md`."
+
+**Deviation:** Created `prompts/v1/graph_synthesizer.md` and registered
+it as a NEW component (`graph_synthesizer`) in `prompts/version.json`,
+rather than overwriting the existing `prompts/v1/synthesizer.md`.
+
+**Why:** `prompts/v1/synthesizer.md` already exists and is the W1
+iterative orchestrator's system prompt (loaded by
+`Orchestrator.SYSTEM_PROMPT` via `load_prompt("synthesizer")`). It
+carries 100+ lines of W1-specific tool-call grammar and citation rules
+that the W2 graph's synthesize step doesn't need (and would actively
+mislead the W2 model). The W2 prompt is a different ~5-line surface
+covering extraction-grounded answers. Overwriting would either break
+W1 today (wrong prompt for tool-use) or land a cross-cutting prompt
+that confuses both. Both prompts coexist until the MR 6 cutover
+retires the W1 path; at that point we can either delete the W1
+`synthesizer` component or rename `graph_synthesizer` → `synthesizer`.
+
+**What we learned:** The author of the next-session.md MR 5 plan
+didn't have full visibility into the W1 prompt library state — easy to
+miss when planning across both worlds. Always check `prompts/version.json`
+before pinning a component name in a future task.
+
+### 2. Truncator + DataQuality hooks are wired but no-op on pure W2 turns
+
+**Spec:** Apply `truncator.truncate(state.tool_results, max_tokens)`
+and run DQ heuristics over labs/problems/notes in `tool_results`.
+
+**Deviation:** Both hooks are wired into `synthesize_node` and
+`build_graph`, but `state["tool_results"]` is empty on every pure-W2
+turn today (the W2 worker bodies populate `extraction_result` and
+`evidence_chunks`, never `tool_results`). The hooks are no-ops until
+the MR 6 cutover bridge puts W1 tool-result dicts into graph state.
+
+**Why:** Wiring the hooks now keeps MR 6's surface tight — the cutover
+just needs to populate `state["tool_results"]` from the W1 entrypoint,
+not also wire DQ + truncator. The alternative (defer all wiring to MR
+6) would have made MR 6 a much larger MR, with both the cutover code
+AND the cross-cutting hooks landing together. Splitting them isolates
+the cutover risk.
+
+**What MR 5 ships that's NOT a no-op today:** Langfuse handoff spans
+(real instrumentation, fires on every supervisor decision when a
+client + trace are wired) and the prompt-library move (real refactor,
+makes future prompt edits review as text diffs).
+
+### 3. State schema change: `tool_results: list[Any]` → `tool_results: dict[str, ToolResult[Any]]`
+
+**Plan:** AgentState's `tool_results` was declared as `list[Any]` in
+MR 1.
+
+**Deviation:** Changed to `dict[str, ToolResult[Any]]` to match W1's
+shape (`Orchestrator._tool_results` is the same dict shape).
+
+**Why:** The truncator + DQ hooks both expect a W1-shaped
+`dict[str, ToolResult]`. Keeping `list[Any]` would have meant either
+a runtime adapter at every call site OR a half-W1-half-W2 shape that
+neither the existing `SynthesisInputTruncator` nor `DataQualityChecker`
+can consume. The dict shape is also what the MR 6 cutover bridge needs
+to drop W1 tool-result dicts into graph state without re-shaping. The
+change rippled to two test starter helpers (`tool_results=[]` →
+`tool_results={}`) and seven `update == {}` assertions on no-op
+worker paths (now `update == {"last_node": "<node>"}` because workers
+also stamp `last_node` for the handoff span's `from_node` field).
+
+**What we learned:** Schema fields that "look forward" to a future
+shape are dangerous when the future shape isn't pinned at definition
+time. The MR 1 `list[Any]` was a placeholder — but placeholders silently
+carry the wrong invariants until the first real consumer arrives.
+Better: pin the shape on first definition, or annotate as
+`<future-shape>` in the docstring so the next MR doesn't assume the
+placeholder is load-bearing.
+
+**What MR 5 ships:**
+
+* `prompts/v1/graph_synthesizer.md` (new) + `version.json` entry +
+  `prompts/README.md` Components table updated.
+* `graph.py`: `SYNTHESIS_SYSTEM_PROMPT = load_prompt("graph_synthesizer")`
+  replaces the inline string. New `SYNTHESIS_INPUT_CAP_TOKENS`
+  constant (12_000, matches W1 default). New `HANDOFF_START_NODE`
+  marker.
+* `AgentState`: `tool_results: dict[str, ToolResult[Any]]`,
+  `langfuse_trace: TraceHandle | None`, `last_node: str` (new fields).
+* `synthesize_node`: optional kwargs `truncator`, `max_synthesis_tokens`,
+  `data_quality_checker`, `langfuse`. Truncator caps `state["tool_results"]`
+  before LLM call; DQ warnings prepend the system prompt as a
+  `<system_reminder>` block; `record_data_quality_metrics` fires on
+  every synthesis call when langfuse is wired (counts only, never
+  the strings themselves).
+* `_collect_data_quality_warnings(state, checker, *, langfuse, trace)`
+  — ports the W1 `_data_quality_suffix` logic (stale labs +
+  problem/note conflicts), with insertion-order dedup.
+* `_compose_system_prompt(base, dq_warnings)` — composes the
+  `<system_reminder>` block above the base prompt; round-trips to
+  base unchanged on empty warning list.
+* `supervisor_node(state, planner, *, langfuse=None)` — emits
+  `record_handoff_span` per routing decision with `from_node`,
+  `to_node`, `route_decision`, `route_reason`, post-bump `iteration`.
+  `from_node` reads `state["last_node"]` (set by workers on exit) so
+  loop-back spans show the actual handoff path, not always
+  `HANDOFF_START_NODE`.
+* All worker nodes stamp `last_node` in their state delta — including
+  the no-op short-circuit paths, so the supervisor's next handoff
+  span has the correct `from_node`.
+* `LangfuseClient` Protocol gains `record_handoff_span(...)`. Real
+  `AgentLangfuse` impl emits a `handoff:<from>-><to>` span with the
+  five PHI-safe metadata fields. `NullLangfuseClient` is a no-op.
+* `build_graph(...)`: new optional kwargs `truncator`,
+  `max_synthesis_tokens`, `data_quality_checker`, `langfuse`.
+
+**What's not in MR 5:**
+
+* The W1 → W2 tool-results bridge (MR 6). Today
+  `state["tool_results"]` is always empty.
+* Real PDF-vs-evidence routing intelligence in `_decide_route`
+  (still the MR 1 placeholder; MR 6).
+* Production cutover — graph remains dead code until MR 6.
+
+**Artifacts:**
+[`prompts/v1/graph_synthesizer.md`](../prompts/v1/graph_synthesizer.md)
+(new), [`prompts/version.json`](../prompts/version.json) (added
+`graph_synthesizer` entry), [`prompts/README.md`](../prompts/README.md)
+(Components table extended),
+[`sidecar/src/agentforge/orchestrator/graph.py`](../sidecar/src/agentforge/orchestrator/graph.py)
+(prompt load, state schema, truncator/DQ/langfuse wiring,
+`HANDOFF_START_NODE`, `SYNTHESIS_INPUT_CAP_TOKENS`),
+[`sidecar/src/agentforge/observability/protocols.py`](../sidecar/src/agentforge/observability/protocols.py)
+(added `record_handoff_span`),
+[`sidecar/src/agentforge/observability/null_client.py`](../sidecar/src/agentforge/observability/null_client.py)
+(no-op `record_handoff_span`),
+[`sidecar/src/agentforge/observability/langfuse_client.py`](../sidecar/src/agentforge/observability/langfuse_client.py)
+(real `record_handoff_span` impl),
+[`sidecar/tests/test_orchestrator_graph.py`](../sidecar/tests/test_orchestrator_graph.py)
+(`TestSynthesisSystemPromptIsVersioned` × 2,
+`TestSynthesisTruncatorWiring` × 3, `TestSynthesisDataQualityWiring`
+× 3, `TestSupervisorHandoffSpans` × 3 — covering prompt move,
+truncator no-op-vs-fire wiring, DQ reminder rendering + telemetry,
+and supervisor handoff span content under start/loop-back/no-trace
+conditions).
+
+---

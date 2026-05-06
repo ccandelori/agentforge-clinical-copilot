@@ -447,6 +447,41 @@ class AgentLangfuse:
         )
         span.end()
 
+    def record_handoff_span(
+        self,
+        trace: TraceHandle,
+        *,
+        from_node: str,
+        to_node: str,
+        route_decision: str,
+        route_reason: str,
+        iteration: int,
+    ) -> None:
+        """Emit a span describing one supervisor routing decision.
+
+        Mirrors the no-op-when-trace-is-Null pattern used by the other
+        ``record_*`` helpers. Five PHI-safe metadata fields: route
+        decision is a closed enum, route reason a bounded string set,
+        node names are graph constants, iteration is an integer bounded
+        by ``MAX_ITERATIONS``.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name=f"handoff:{from_node}->{to_node}",
+            as_type="span",
+            metadata={
+                "from_node": from_node,
+                "to_node": to_node,
+                "route_decision": route_decision,
+                "route_reason": route_reason,
+                "iteration": iteration,
+            },
+        )
+        span.end()
+
     def flush(self) -> None:
         self._langfuse.flush()
 

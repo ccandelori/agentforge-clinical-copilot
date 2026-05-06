@@ -15,7 +15,9 @@ import pytest
 
 from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.orchestrator.graph import (
+    HANDOFF_START_NODE,
     MAX_ITERATIONS,
+    SYNTHESIS_SYSTEM_PROMPT,
     AgentState,
     RouteDecision,
     build_graph,
@@ -27,6 +29,7 @@ from agentforge.orchestrator.graph import (
     terminal_node,
 )
 from agentforge.orchestrator.planner import Plan, UseCase
+from agentforge.prompts import load_prompt
 from agentforge.rag.types import GuidelineChunk, RetrievalResult
 from agentforge.schemas.citation import (
     Citation as W2Citation,
@@ -75,7 +78,7 @@ def _empty_followup_plan() -> Plan:
 def _starter_state(user_message: str = "hello") -> AgentState:
     return AgentState(
         messages=[{"role": "user", "content": user_message}],
-        tool_results=[],
+        tool_results={},
         route_decision=None,
         route_reason="",
         iteration=0,
@@ -85,6 +88,8 @@ def _starter_state(user_message: str = "hello") -> AgentState:
         patient_id=None,
         pdf_pages=[],
         query="",
+        langfuse_trace=None,
+        last_node=HANDOFF_START_NODE,
     )
 
 
@@ -227,6 +232,31 @@ class StubSynthesisLLM:
             input_tokens=200,
             output_tokens=50,
         )
+
+
+# ---------------------------------------------------------------------------
+# MR 5 — SYNTHESIS_SYSTEM_PROMPT is loaded from prompts/<active>/graph_synthesizer.md
+# ---------------------------------------------------------------------------
+
+
+class TestSynthesisSystemPromptIsVersioned:
+    def test_module_constant_loads_from_prompt_library(self) -> None:
+        # The graph's synthesizer prompt must be sourced from
+        # prompts/<active>/graph_synthesizer.md so future edits land as
+        # reviewable text diffs in the prompt library — not silent
+        # changes inside a Python module. The module constant should
+        # round-trip exactly through ``load_prompt``.
+        assert load_prompt("graph_synthesizer") == SYNTHESIS_SYSTEM_PROMPT
+
+    def test_loaded_prompt_carries_expected_grounding_rules(self) -> None:
+        # Sanity check on the file content — guards against the prompt
+        # being accidentally truncated to a stub or replaced with the
+        # W1 ``synthesizer`` body. Both anchor sentences come from the
+        # MR 3 inline body that was externalized in MR 5; if either
+        # disappears, the synthesizer's grounding contract has shifted
+        # and the change deserves a deliberate prompt-version bump.
+        assert "clinical co-pilot" in SYNTHESIS_SYSTEM_PROMPT
+        assert "do not invent values" in SYNTHESIS_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +491,7 @@ class TestIntakeExtractorNode:
         update = await intake_extractor_node(state, extractor)
 
         assert extractor.calls == []
-        assert update == {}
+        assert update == {"last_node": RouteDecision.INTAKE_EXTRACTOR.value}
 
     @pytest.mark.asyncio
     async def test_missing_document_id_skips_extraction(self) -> None:
@@ -478,7 +508,7 @@ class TestIntakeExtractorNode:
         update = await intake_extractor_node(state, extractor)
 
         assert extractor.calls == []
-        assert update == {}
+        assert update == {"last_node": RouteDecision.INTAKE_EXTRACTOR.value}
 
     @pytest.mark.asyncio
     async def test_already_extracted_is_idempotent(self) -> None:
@@ -501,7 +531,7 @@ class TestIntakeExtractorNode:
         update = await intake_extractor_node(state, extractor)
 
         assert extractor.calls == []
-        assert update == {}
+        assert update == {"last_node": RouteDecision.INTAKE_EXTRACTOR.value}
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +570,7 @@ class TestEvidenceRetrieverNode:
         update = await evidence_retriever_node(state, retriever)
 
         assert retriever.calls == []
-        assert update == {}
+        assert update == {"last_node": RouteDecision.EVIDENCE_RETRIEVER.value}
 
     @pytest.mark.asyncio
     async def test_already_retrieved_is_idempotent(self) -> None:
@@ -556,7 +586,7 @@ class TestEvidenceRetrieverNode:
         update = await evidence_retriever_node(state, retriever)
 
         assert retriever.calls == []
-        assert update == {}
+        assert update == {"last_node": RouteDecision.EVIDENCE_RETRIEVER.value}
 
 
 # ---------------------------------------------------------------------------
@@ -653,7 +683,7 @@ class TestSynthesizeNode:
         update = await synthesize_node(state, llm)
 
         assert llm.calls == []
-        assert update == {}
+        assert update == {"last_node": RouteDecision.SYNTHESIZE.value}
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +708,268 @@ class TestSynthesizeIntegration:
             "role": "assistant",
             "content": "hi back.",
         }
+
+
+# ---------------------------------------------------------------------------
+# MR 5 — SynthesisInputTruncator + DataQualityChecker wired into synthesize_node
+# ---------------------------------------------------------------------------
+
+
+class _RecordingTruncator:
+    """Test stub: records each ``truncate`` call without changing input.
+
+    Sufficient to verify the wiring threads ``state['tool_results']`` and
+    ``max_synthesis_tokens`` through to the truncator without depending
+    on the real :class:`SynthesisInputTruncator`'s tiktoken machinery.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def truncate(
+        self,
+        results: dict[str, Any],
+        max_tokens: int,
+    ) -> dict[str, Any]:
+        self.calls.append({"results": results, "max_tokens": max_tokens})
+        return results
+
+
+def _stale_lab_tool_results() -> dict[str, Any]:
+    """W1-shaped tool_results carrying one HbA1c lab from 2026-03-15.
+
+    Built locally rather than imported from
+    ``test_orchestrator_data_quality`` so this file stays standalone.
+    """
+    from datetime import UTC, date, datetime
+
+    from agentforge.tools.dtos import ToolResultMetadata
+    from agentforge.tools.labs import LabResultItem, LabsPayload, LabsResult
+
+    lab = LabResultItem(
+        id=1,
+        order_id=1,
+        report_id=1,
+        test_name="HbA1c",
+        value="7.5",
+        units="%",
+        date=date(2026, 3, 15),  # ~48 days before 2026-05-02
+    )
+    return {
+        "get_recent_labs": LabsResult(
+            metadata=ToolResultMetadata(
+                tool_name="get_recent_labs",
+                fetched_at=datetime(2026, 5, 2, tzinfo=UTC),
+                data_freshness_seconds=60,
+                source="openemr.get_recent_labs",
+            ),
+            payload=LabsPayload(labs=(lab,)),
+        )
+    }
+
+
+def _frozen_data_quality_checker() -> Any:
+    """DataQualityChecker frozen to 2026-05-02 with the default 30-day cap.
+
+    Returns Any to avoid importing ``DataQualityChecker`` at module top —
+    keeps the test file's import block focused on graph-level surfaces.
+    """
+    from datetime import UTC, datetime
+
+    from agentforge.verifier.data_quality import DataQualityChecker
+
+    return DataQualityChecker(
+        now=lambda: datetime(2026, 5, 2, tzinfo=UTC),
+        stale_lab_threshold_days=30,
+    )
+
+
+class TestSynthesisTruncatorWiring:
+    @pytest.mark.asyncio
+    async def test_truncator_called_with_tool_results_and_cap(self) -> None:
+        # When the synthesis node has both a wired truncator AND a
+        # non-empty tool_results dict, it must hand them off to the
+        # truncator with the configured cap. This wiring is the seam
+        # the MR 6 cutover bridge will rely on once W1 callers populate
+        # tool_results in graph state.
+        llm = StubSynthesisLLM()
+        truncator = _RecordingTruncator()
+        tool_results = _stale_lab_tool_results()
+
+        state = _starter_state()
+        state["tool_results"] = tool_results
+
+        await synthesize_node(
+            state, llm, truncator=truncator, max_synthesis_tokens=4_096
+        )
+
+        assert len(truncator.calls) == 1
+        assert truncator.calls[0]["results"] is tool_results
+        assert truncator.calls[0]["max_tokens"] == 4_096
+
+    @pytest.mark.asyncio
+    async def test_no_call_when_tool_results_empty(self) -> None:
+        # Pure W2 turns carry no tool_results today. With nothing to
+        # truncate, the wiring must skip the call entirely so we don't
+        # pay tiktoken's encoding cost on a guaranteed no-op.
+        llm = StubSynthesisLLM()
+        truncator = _RecordingTruncator()
+
+        state = _starter_state()  # tool_results == {}
+
+        await synthesize_node(state, llm, truncator=truncator)
+
+        assert truncator.calls == []
+
+    @pytest.mark.asyncio
+    async def test_no_call_when_truncator_not_wired(self) -> None:
+        # Backwards-compat sanity: tests / callers that don't pass a
+        # truncator must keep working unchanged. Same shape as the MR 4
+        # graph behavior.
+        llm = StubSynthesisLLM()
+
+        state = _starter_state()
+        state["tool_results"] = _stale_lab_tool_results()
+
+        update = await synthesize_node(state, llm)
+
+        assert "messages" in update  # synthesis still ran
+
+
+class TestSynthesisDataQualityWiring:
+    @pytest.mark.asyncio
+    async def test_stale_lab_warning_prepended_as_system_reminder(self) -> None:
+        # When the data-quality checker fires a stale-lab warning, the
+        # synthesizer's system prompt must carry it inside a
+        # ``<system_reminder>`` block above the base prompt — that's
+        # what gives the model a chance to surface it inline. The base
+        # prompt content must stay unmodified so the grounding contract
+        # doesn't change just because a flag fired.
+        llm = StubSynthesisLLM()
+        checker = _frozen_data_quality_checker()
+
+        state = _starter_state()
+        state["tool_results"] = _stale_lab_tool_results()
+
+        await synthesize_node(state, llm, data_quality_checker=checker)
+
+        assert len(llm.calls) == 1
+        system = llm.calls[0]["system"]
+        assert "<system_reminder>" in system
+        assert "</system_reminder>" in system
+        assert "2026-03-15" in system  # the lab's date appears in the warning
+        # Base prompt body must still be present, AFTER the reminder.
+        reminder_end = system.index("</system_reminder>")
+        assert "clinical co-pilot" in system[reminder_end:]
+
+    @pytest.mark.asyncio
+    async def test_no_warnings_no_reminder_block(self) -> None:
+        # When DQ runs but no warnings fire, the system prompt must
+        # round-trip exactly to the base SYNTHESIS_SYSTEM_PROMPT — no
+        # empty reminder block, no leading whitespace, no surprise.
+        llm = StubSynthesisLLM()
+        checker = _frozen_data_quality_checker()
+
+        state = _starter_state()
+        # tool_results stays empty so neither check fires.
+
+        await synthesize_node(state, llm, data_quality_checker=checker)
+
+        assert llm.calls[0]["system"] == SYNTHESIS_SYSTEM_PROMPT
+
+    @pytest.mark.asyncio
+    async def test_dq_metrics_recorded_on_langfuse_when_wired(self) -> None:
+        # When both the checker and a langfuse client are wired, the
+        # synthesizer must call record_data_quality_metrics with the
+        # correct counts — even when zero warnings fire (so dashboards
+        # see "DQ ran, found nothing" not "DQ never ran").
+        from unittest.mock import MagicMock
+
+        llm = StubSynthesisLLM()
+        checker = _frozen_data_quality_checker()
+        langfuse = MagicMock()
+        trace = MagicMock(trace_id="t-1")
+
+        state = _starter_state()
+        state["tool_results"] = _stale_lab_tool_results()
+        state["langfuse_trace"] = trace
+
+        await synthesize_node(
+            state, llm, data_quality_checker=checker, langfuse=langfuse
+        )
+
+        langfuse.record_data_quality_metrics.assert_called_once()
+        kwargs = langfuse.record_data_quality_metrics.call_args.kwargs
+        assert kwargs["stale_labs_count"] == 1
+        assert kwargs["conflict_count"] == 0
+
+
+class TestSupervisorHandoffSpans:
+    @pytest.mark.asyncio
+    async def test_supervisor_records_handoff_span_on_each_decision(self) -> None:
+        # The supervisor must emit one record_handoff_span call per
+        # routing decision, capturing the from/to node pair, the
+        # decision string, the reason text, and the post-bump iteration
+        # counter. This is what makes the trace dashboard's per-handoff
+        # view possible.
+        from unittest.mock import MagicMock
+
+        langfuse = MagicMock()
+        trace = MagicMock(trace_id="t-1")
+        planner = StubPlanner(_empty_followup_plan())
+
+        state = _starter_state()
+        state["langfuse_trace"] = trace
+
+        await supervisor_node(state, planner, langfuse=langfuse)
+
+        langfuse.record_handoff_span.assert_called_once()
+        kwargs = langfuse.record_handoff_span.call_args.kwargs
+        assert kwargs["from_node"] == HANDOFF_START_NODE
+        assert kwargs["to_node"] == RouteDecision.SYNTHESIZE.value
+        assert kwargs["route_decision"] == RouteDecision.SYNTHESIZE.value
+        assert "followup" in kwargs["route_reason"].lower()
+        assert kwargs["iteration"] == 1  # post-bump
+
+    @pytest.mark.asyncio
+    async def test_supervisor_skips_record_when_trace_missing(self) -> None:
+        # Symmetric guard: with langfuse wired but state.langfuse_trace
+        # still None (Null path or pre-trace turn), no spans should fire.
+        # Otherwise the Null implementation gets called with a fake trace
+        # and the trace_id stays None — confusing the dashboard.
+        from unittest.mock import MagicMock
+
+        langfuse = MagicMock()
+        planner = StubPlanner(_empty_followup_plan())
+
+        state = _starter_state()  # langfuse_trace == None
+
+        await supervisor_node(state, planner, langfuse=langfuse)
+
+        langfuse.record_handoff_span.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handoff_span_carries_worker_last_node(self) -> None:
+        # On the second supervisor pass after a worker loop-back, the
+        # handoff span's from_node must reflect the worker that just
+        # ran — not the constant HANDOFF_START_NODE marker. This is how
+        # the trace shows "intake-extractor → synthesize" instead of
+        # "start → synthesize" on the loop-back.
+        from unittest.mock import MagicMock
+
+        langfuse = MagicMock()
+        trace = MagicMock(trace_id="t-1")
+        planner = StubPlanner(_empty_followup_plan())
+
+        state = _starter_state()
+        state["langfuse_trace"] = trace
+        state["last_node"] = RouteDecision.INTAKE_EXTRACTOR.value
+        state["iteration"] = 1  # already past the first supervisor pass
+
+        await supervisor_node(state, planner, langfuse=langfuse)
+
+        kwargs = langfuse.record_handoff_span.call_args.kwargs
+        assert kwargs["from_node"] == RouteDecision.INTAKE_EXTRACTOR.value
 
 
 # ---------------------------------------------------------------------------
@@ -759,12 +1051,13 @@ class TestTerminalNode:
     @pytest.mark.asyncio
     async def test_no_assistant_message_is_noop(self) -> None:
         # If synthesize never ran (e.g. early termination), terminal
-        # has nothing to verify. No state mutation.
+        # has nothing to verify. No state mutation beyond the
+        # observability ``last_node`` stamp.
         state = _starter_state(user_message="hi")
 
         update = await terminal_node(state)
 
-        assert update == {}
+        assert update == {"last_node": "terminal"}
 
     @pytest.mark.asyncio
     async def test_clean_text_passes_through_unchanged(self) -> None:

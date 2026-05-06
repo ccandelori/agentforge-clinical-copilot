@@ -189,6 +189,37 @@ class LangfuseClient(Protocol):
         conflict_count: int,
     ) -> None: ...
 
+    def record_handoff_span(
+        self,
+        trace: TraceHandle,
+        *,
+        from_node: str,
+        to_node: str,
+        route_decision: str,
+        route_reason: str,
+        iteration: int,
+    ) -> None:
+        """Record one supervisor → worker (or supervisor → synthesize) handoff.
+
+        Emitted by the W2 LangGraph supervisor each time it picks a
+        ``RouteDecision`` for the next iteration. The five fields capture
+        the graph's routing semantics without leaking PHI:
+
+        * ``from_node`` — the node whose output triggered this routing
+          decision (``"start"`` for the first supervisor pass).
+        * ``to_node`` — the worker about to run, or ``"synthesize"`` /
+          ``"terminal"`` on the terminating handoff.
+        * ``route_decision`` — the ``RouteDecision`` value (a
+          closed enum so PHI-safe by construction).
+        * ``route_reason`` — short string describing the supervisor's
+          rationale (e.g. ``"iteration cap reached"``,
+          ``"followup: no tools needed"``). Bounded vocabulary set in
+          ``orchestrator.graph._decide_route``.
+        * ``iteration`` — the supervisor's iteration counter at the
+          moment of the decision, bounded by ``MAX_ITERATIONS``.
+        """
+        ...
+
     def flush(self) -> None: ...
 
     async def aclose(self) -> None: ...
