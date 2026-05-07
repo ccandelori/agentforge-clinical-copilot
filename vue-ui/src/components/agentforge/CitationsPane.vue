@@ -62,12 +62,12 @@ function kindLabel(kind: Citation['kind']): string {
       return 'Note'
     case 'lab':
       return 'Lab'
-    case 'imaging':
-      return 'Imaging'
-    case 'medication':
+    case 'med':
       return 'Medication'
     case 'problem':
       return 'Problem'
+    case 'allergy':
+      return 'Allergy'
   }
 }
 
@@ -77,12 +77,12 @@ function kindBadgeClass(kind: Citation['kind']): string {
       return 'bg-info-100 text-info-700 dark:bg-info-700/20 dark:text-info-500'
     case 'lab':
       return 'bg-warning-100 text-warning-700 dark:bg-warning-700/20 dark:text-warning-500'
-    case 'imaging':
-      return 'bg-primary-100 text-primary-700 dark:bg-primary-700/20 dark:text-primary-300'
-    case 'medication':
+    case 'med':
       return 'bg-success-100 text-success-700 dark:bg-success-700/20 dark:text-success-500'
     case 'problem':
       return 'bg-danger-100 text-danger-700 dark:bg-danger-700/20 dark:text-danger-500'
+    case 'allergy':
+      return 'bg-primary-100 text-primary-700 dark:bg-primary-700/20 dark:text-primary-300'
   }
 }
 

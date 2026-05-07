@@ -19,9 +19,18 @@ const emit = defineEmits<{
 }>()
 
 const isUser = computed<boolean>(() => props.message.role === 'user')
+const isError = computed<boolean>(() => props.message.error === true)
 
 const citations = computed<readonly Citation[]>(() => {
   return props.message.citations ?? []
+})
+
+const bubbleClass = computed<string>(() => {
+  if (isUser.value) return 'bg-primary-600 text-white'
+  if (isError.value) {
+    return 'border border-danger-300 bg-danger-50 text-danger-700 dark:border-danger-700/60 dark:bg-danger-900/30 dark:text-danger-300'
+  }
+  return 'border border-line bg-surface text-ink'
 })
 
 const copied = ref<boolean>(false)
@@ -57,11 +66,7 @@ function onCitationClick(id: string): void {
     >
       <div
         class="rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-card"
-        :class="
-          isUser
-            ? 'bg-primary-600 text-white'
-            : 'border border-line bg-surface text-ink'
-        "
+        :class="bubbleClass"
       >
         <span class="whitespace-pre-wrap break-words">{{ message.text }}</span>
         <span

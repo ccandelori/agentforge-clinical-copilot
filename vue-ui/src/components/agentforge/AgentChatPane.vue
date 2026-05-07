@@ -25,19 +25,7 @@ const SUGGESTION_CHIPS: readonly string[] = [
 
 const messages = computed<readonly ChatMessage[]>(() => store.messages)
 const showEmptyState = computed<boolean>(() => {
-  return messages.value.length === 0 && store.pendingAssistantText === null
-})
-
-// Synthetic message that renders the in-flight assistant reply during streaming.
-const pendingMessage = computed<ChatMessage | null>(() => {
-  const text = store.pendingAssistantText
-  if (text === null) return null
-  return {
-    id: 'pending-assistant',
-    role: 'assistant',
-    text,
-    createdAt: new Date().toISOString(),
-  }
+  return messages.value.length === 0 && !store.isSending
 })
 
 function scrollToBottom(force = false): void {
@@ -64,9 +52,11 @@ watch(
 )
 
 watch(
-  () => store.pendingAssistantText,
-  () => {
-    void nextTick(() => scrollToBottom())
+  () => store.isSending,
+  (sending) => {
+    if (sending) {
+      void nextTick(() => scrollToBottom())
+    }
   },
 )
 
@@ -78,7 +68,7 @@ onMounted(() => {
 async function send(): Promise<void> {
   const text = draft.value.trim()
   if (text.length === 0) return
-  if (store.isStreaming) return
+  if (store.isSending) return
   draft.value = ''
   // Reset textarea height after clearing the value.
   if (composerEl.value !== null) {
@@ -102,7 +92,7 @@ function onComposerInput(): void {
 }
 
 function pickSuggestion(s: string): void {
-  if (store.isStreaming) return
+  if (store.isSending) return
   draft.value = s
   void nextTick(() => {
     composerEl.value?.focus()
@@ -160,12 +150,23 @@ function onCitationClick(id: string): void {
           :message="m"
           @citation-click="onCitationClick"
         />
-        <AgentMessage
-          v-if="pendingMessage"
-          :key="pendingMessage.id"
-          :message="pendingMessage"
-          :pending="true"
-        />
+        <div
+          v-if="store.isSending"
+          class="flex justify-start"
+          aria-live="polite"
+          data-test="agent-thinking"
+        >
+          <div
+            class="flex items-center gap-2 rounded-2xl border border-line bg-surface px-4 py-2.5 text-sm text-ink-muted shadow-card"
+          >
+            <span class="flex gap-1" aria-hidden="true">
+              <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:0ms]" />
+              <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
+              <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
+            </span>
+            <span>Thinking…</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -190,7 +191,7 @@ function onCitationClick(id: string): void {
           rows="1"
           placeholder="Ask the co-pilot…"
           class="min-h-[28px] flex-1 resize-none bg-transparent px-1 py-1 text-sm text-ink placeholder:text-ink-muted focus:outline-none"
-          :disabled="store.isStreaming"
+          :disabled="store.isSending"
           @keydown="onComposerKeydown"
           @input="onComposerInput"
         />
@@ -198,12 +199,12 @@ function onCitationClick(id: string): void {
         <button
           type="button"
           class="shrink-0 rounded-md bg-primary-600 p-1.5 text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="draft.trim().length === 0 || store.isStreaming"
+          :disabled="draft.trim().length === 0 || store.isSending"
           aria-label="Send message"
           @click="send"
         >
           <svg
-            v-if="!store.isStreaming"
+            v-if="!store.isSending"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
