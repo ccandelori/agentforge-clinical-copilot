@@ -48,9 +48,8 @@ function onSearchSubmit(): void {
   router.push({ name: 'patients', query: { q: search.value.trim() } })
 }
 
-function onLogout(): void {
-  auth.logout()
-  router.push({ name: 'login' })
+async function onLogout(): Promise<void> {
+  await auth.signOut()
 }
 </script>
 
@@ -256,10 +255,10 @@ function onLogout(): void {
                 class="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-700"
                 aria-hidden="true"
               >
-                {{ (auth.user?.fullName ?? '?').charAt(0) }}
+                {{ (auth.user?.name ?? '?').charAt(0) }}
               </span>
               <span class="hidden text-sm font-medium md:inline">
-                {{ auth.user?.fullName ?? 'Guest' }}
+                {{ auth.user?.name ?? 'Guest' }}
               </span>
             </button>
             <div

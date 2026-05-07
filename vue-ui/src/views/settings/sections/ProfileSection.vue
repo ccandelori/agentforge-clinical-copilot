@@ -1,32 +1,31 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import type { User } from '@/api/mock'
 import BaseBadge from '@/components/ui/BaseBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, type User } from '@/stores/auth'
 
 const FALLBACK_USER: User = {
-  id: 'u-fallback',
-  username: 'guest',
-  fullName: 'Guest User',
-  role: 'staff',
+  sub: 'guest',
+  name: 'Guest User',
+  email: 'guest@openemr.local',
+  fhir_user: null,
 }
 
 const auth = useAuthStore()
 const currentUser = computed<User>(() => auth.user ?? FALLBACK_USER)
 
-const displayName = ref<string>(currentUser.value.fullName)
-const email = ref<string>(`${currentUser.value.username}@openemr.local`)
+const displayName = ref<string>(currentUser.value.name ?? 'Guest')
+const email = ref<string>(currentUser.value.email ?? '')
 const phone = ref<string>('')
 
 const saved = ref<boolean>(false)
 let timer: number | undefined
 
 function save(): void {
-  // Mock-only: no real backend.
+  // No real backend wired for profile edits — sidecar's whoami is read-only.
   saved.value = true
   if (timer !== undefined) window.clearTimeout(timer)
   timer = window.setTimeout(() => {
@@ -34,18 +33,7 @@ function save(): void {
   }, 2400)
 }
 
-const roleVariant = computed<'info' | 'success' | 'warning' | 'neutral'>(() => {
-  switch (currentUser.value.role) {
-    case 'admin':
-      return 'warning'
-    case 'physician':
-      return 'info'
-    case 'nurse':
-      return 'success'
-    case 'staff':
-      return 'neutral'
-  }
-})
+const linkedToFhir = computed<boolean>(() => Boolean(currentUser.value.fhir_user))
 </script>
 
 <template>
@@ -70,10 +58,10 @@ const roleVariant = computed<'info' | 'success' | 'warning' | 'neutral'>(() => {
         autocomplete="tel"
       />
       <div class="flex flex-col gap-1">
-        <span class="text-sm font-medium text-ink">Role</span>
+        <span class="text-sm font-medium text-ink">Identity</span>
         <div class="flex items-center gap-2">
-          <BaseBadge :variant="roleVariant">
-            {{ currentUser.role }}
+          <BaseBadge :variant="linkedToFhir ? 'success' : 'neutral'">
+            {{ linkedToFhir ? 'Linked to FHIR Practitioner' : 'Sidecar session' }}
           </BaseBadge>
           <span class="text-xs text-ink-muted">Read-only</span>
         </div>
@@ -96,7 +84,7 @@ const roleVariant = computed<'info' | 'success' | 'warning' | 'neutral'>(() => {
             Profile saved.
           </p>
           <p v-else class="text-xs text-ink-muted">
-            Changes are local to this session.
+            Edits are local — backed by your sidecar session.
           </p>
         </transition>
         <BaseButton variant="primary" size="sm" @click="save">

@@ -62,17 +62,31 @@ const router = createRouter({
   },
 })
 
-router.beforeEach((to) => {
+// Hydrate the auth store exactly once per app load. The guard awaits
+// `auth.hydrate()` so route render only kicks off after we know the
+// session state from the sidecar.
+let hydrated = false
+
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+
+  if (!hydrated) {
+    hydrated = true
+    await auth.hydrate()
+  }
+
   const requiresAuth = to.matched.some(
     (record) => record.meta.requiresAuth !== false,
   )
+
   if (requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
+
   if (to.name === 'login' && auth.isAuthenticated) {
     return { name: 'dashboard' }
   }
+
   return true
 })
 

@@ -1,83 +1,40 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useTemplateRef } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import BaseButton from '@/components/ui/BaseButton.vue'
-import BaseInput from '@/components/ui/BaseInput.vue'
 import { useAuthStore } from '@/stores/auth'
 
-const router = useRouter()
+// BFF "Sign in with OpenEMR" hand-off screen. We never collect a
+// username or password here — the user is bounced to the sidecar's
+// /auth/login route which does the OAuth2 dance against OpenEMR and
+// drops a same-origin HttpOnly session cookie on return.
+
 const route = useRoute()
 const auth = useAuthStore()
 
-const username = ref<string>('')
-const password = ref<string>('')
-const showPassword = ref<boolean>(false)
-const submitting = ref<boolean>(false)
-const errorMessage = ref<string>('')
-
-const usernameInput = useTemplateRef<InstanceType<typeof BaseInput>>('usernameInput')
-
-const passwordType = computed<string>(() =>
-  showPassword.value ? 'text' : 'password',
-)
+const handingOff = ref<boolean>(false)
 
 const redirectTarget = computed<string>(() => {
   const raw = route.query.redirect
   if (typeof raw !== 'string' || raw.length === 0) return '/dashboard'
-  // Only allow same-origin paths to avoid open-redirect funny business.
+  // Only allow same-origin paths — guard against open-redirect.
   if (!raw.startsWith('/') || raw.startsWith('//')) return '/dashboard'
   return raw
 })
 
-function focusUsername(): void {
-  // BaseInput is a wrapper; the actual <input> is the first descendant.
-  const root = usernameInput.value?.$el as HTMLElement | undefined
-  const native = root?.querySelector?.('input')
-  native?.focus()
-}
+const authFailed = computed<boolean>(() => route.query.error === 'auth_failed')
 
-onMounted(() => {
-  // If the user is already authenticated, skip the form.
-  if (auth.isAuthenticated) {
-    void router.replace(redirectTarget.value)
-    return
-  }
-  focusUsername()
-})
+const sidecarUnreachable = computed<boolean>(
+  () => auth.status === 'signed-out' && auth.error !== null,
+)
 
-function fillDemoCredentials(): void {
-  username.value = 'admin'
-  password.value = 'pass'
-  errorMessage.value = ''
-}
-
-function togglePasswordVisibility(): void {
-  showPassword.value = !showPassword.value
-}
-
-async function onSubmit(): Promise<void> {
-  if (submitting.value) return
-  errorMessage.value = ''
-
-  if (username.value.trim().length === 0 || password.value.length === 0) {
-    errorMessage.value = 'Enter your username and password to continue.'
-    return
-  }
-
-  submitting.value = true
-  try {
-    await auth.login(username.value.trim(), password.value)
-    await router.replace(redirectTarget.value)
-  } catch (err) {
-    errorMessage.value
-      = err instanceof Error && err.message.length > 0
-        ? err.message
-        : 'Sign in failed. Please try again.'
-    password.value = ''
-  } finally {
-    submitting.value = false
-  }
+function onSignIn(): void {
+  if (handingOff.value) return
+  handingOff.value = true
+  // signIn() does a top-level window.location.assign — we never
+  // come back to this component after this call.
+  auth.signIn(redirectTarget.value)
 }
 </script>
 
@@ -136,11 +93,9 @@ async function onSubmit(): Promise<void> {
             class="text-xl font-semibold tracking-tight text-ink"
           >
             OpenEMR
-            <span class="text-ink-muted">·</span>
-            <span class="text-primary-600 dark:text-primary-400">Vue Edition</span>
           </h1>
           <p class="mt-1 text-sm text-ink-muted">
-            Sign in to access patient charts and your schedule.
+            Clinical Co-Pilot
           </p>
         </div>
       </div>
@@ -149,51 +104,19 @@ async function onSubmit(): Promise<void> {
       <section
         class="rounded-2xl border border-line bg-surface p-6 shadow-card-lg sm:p-8"
       >
-        <form
-          class="flex flex-col gap-4"
-          novalidate
-          @submit.prevent="onSubmit"
-        >
-          <BaseInput
-            ref="usernameInput"
-            v-model="username"
-            label="Username"
-            type="text"
-            placeholder="e.g. dr_smith"
-            autocomplete="username"
-            :disabled="submitting"
-            required
-          />
+        <div class="flex flex-col gap-4 text-center">
+          <p class="text-sm text-ink-muted">
+            You'll be redirected to OpenEMR to sign in. We never see your
+            password — the session is brokered server-side over an HttpOnly
+            cookie.
+          </p>
 
-          <BaseInput
-            v-model="password"
-            label="Password"
-            :type="passwordType"
-            placeholder="Your password"
-            autocomplete="current-password"
-            :disabled="submitting"
-            required
-          >
-            <template #suffix>
-              <button
-                type="button"
-                class="-mr-1 rounded px-2 py-0.5 text-xs font-medium text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50"
-                :aria-label="showPassword ? 'Hide password' : 'Show password'"
-                :aria-pressed="showPassword"
-                :disabled="submitting"
-                @click="togglePasswordVisibility"
-              >
-                {{ showPassword ? 'Hide' : 'Show' }}
-              </button>
-            </template>
-          </BaseInput>
-
-          <!-- Error alert -->
+          <!-- Auth-failed banner (sidecar bounced you back with ?error=auth_failed) -->
           <div
-            v-if="errorMessage"
+            v-if="authFailed && sidecarUnreachable"
             role="alert"
             aria-live="polite"
-            class="flex items-start gap-2 rounded-lg border border-danger-500/40 bg-danger-50 px-3 py-2 text-sm text-danger-700 dark:bg-danger-700/10 dark:text-danger-500"
+            class="flex items-start gap-2 rounded-lg border border-danger-500/40 bg-danger-50 px-3 py-2 text-left text-sm text-danger-700 dark:bg-danger-700/10 dark:text-danger-500"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -208,41 +131,25 @@ async function onSubmit(): Promise<void> {
                 clip-rule="evenodd"
               />
             </svg>
-            <span>{{ errorMessage }}</span>
-          </div>
-
-          <div class="flex items-center justify-between text-xs">
-            <button
-              type="button"
-              class="font-medium text-primary-600 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 dark:text-primary-400 dark:hover:text-primary-300"
-              @click="fillDemoCredentials"
-            >
-              Use demo credentials
-            </button>
-            <a
-              href="#"
-              class="font-medium text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
-              @click.prevent
-            >
-              Forgot password?
-            </a>
+            <span>Sign-in unavailable. Please try again in a moment.</span>
           </div>
 
           <BaseButton
-            type="submit"
+            type="button"
             variant="primary"
             size="lg"
             block
-            :loading="submitting"
-            :disabled="submitting"
+            :loading="handingOff"
+            :disabled="handingOff"
+            @click="onSignIn"
           >
-            {{ submitting ? 'Signing in…' : 'Sign in' }}
+            {{ handingOff ? 'Redirecting…' : 'Sign in with OpenEMR' }}
           </BaseButton>
-        </form>
+        </div>
       </section>
 
       <p class="mt-6 text-center text-xs text-ink-muted">
-        Demo build · backed by the FHIR API on Wave 3.
+        AgentForge · Clinical Co-Pilot
       </p>
     </main>
   </div>
