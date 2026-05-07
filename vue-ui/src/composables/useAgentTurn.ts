@@ -69,6 +69,17 @@ export interface AgentTurnRequest {
    */
   patient_uuid?: string
   session_id?: string
+  /**
+   * Optional OpenEMR ``documents.id`` (as a string) for a PDF the
+   * clinician just attached via the chat composer's file picker. The
+   * sidecar's W2 graph picks this up and routes the turn through the
+   * vision-extractor node before answering. ``document_id`` rides one
+   * turn — callers clear their pending state immediately after passing
+   * it in so a follow-up chat message doesn't re-attach the same
+   * upload. See ``useDocumentUpload`` for the upload flow that produces
+   * this id.
+   */
+  document_id?: string
 }
 
 /**
@@ -150,6 +161,9 @@ export function useAgentTurn(): UseAgentTurn {
     }
     if (req.session_id !== undefined) {
       body.session_id = req.session_id
+    }
+    if (req.document_id !== undefined) {
+      body.document_id = req.document_id
     }
 
     const controller = new AbortController()
