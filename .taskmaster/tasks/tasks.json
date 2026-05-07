@@ -3468,7 +3468,6 @@
         "testStrategy": "Review checklist against ARCHITECTURE.md. Verify all items are actionable. Test checklist against fresh deployment.",
         "priority": "medium",
         "dependencies": [
-          40,
           44
         ],
         "status": "done",
@@ -3548,9 +3547,7 @@
         "details": "The index idx_procedure_report_date(procedure_report_id, date_report) was added in Task 40.1 per the original spec, but architectural analysis suggests it is redundant with the existing PRIMARY KEY on procedure_report_id (InnoDB tables are clustered on PK, so a secondary index leading with the PK provides no benefit beyond the PK itself).\n\nAction items:\n1. Run EXPLAIN on representative agent queries that touch procedure_report. Confirm the optimizer never selects idx_procedure_report_date.\n2. Measure write performance impact on procedure_report INSERT/UPDATE with and without the index (modest expected: ~1-3% slower writes).\n3. Measure storage cost on the deployed dataset (likely tens of MB at hospital scale).\n4. If confirmed redundant, write a Doctrine migration to DROP the index. Single ALTER TABLE; no risk to data or query correctness because the PK still serves all reads.\n5. If somehow useful (covering index micro-optimization for some unanticipated query pattern), document why and close this task as a non-issue.\n\nThis is small, well-localized tech debt. Cost to repay is one trivial migration. Cost to live with is modest write amplification + storage + mental-model pollution. Tracked via this task rather than left invisible.\n\nDo not pick up before Task 40 is fully merged to main.",
         "testStrategy": "",
         "status": "done",
-        "dependencies": [
-          40
-        ],
+        "dependencies": [],
         "priority": "low",
         "subtasks": [],
         "updatedAt": "2026-05-02T19:50:47.615Z"
@@ -8163,26 +8160,27 @@
             "title": "Citation overlay re-port to Vue + FHIR Binary auth",
             "description": "Wrap the merged citation_overlay.js logic (T24) as a Vue component <CitationOverlay :citation :pdfUrl @close>. Pdf.js loading via dynamic import of pdfjs-dist (modules in Vite-friendly form). 1-indexed page contract preserved. The pdfUrl now points at FHIR Binary or DocumentReference.content.attachment.url with OAuth Bearer token (NOT controller.php?document&retrieve — that path is OpenEMR-session-cookie auth, no longer applicable). Vitest port of the 21 jsdom tests from tests/js/citation_overlay.test.js. Citation chips inside the drawer's Intake mode receipts area become clickable, mounting <CitationOverlay> in a fixed-position viewer pane that slides out next to (or beneath) the drawer.",
             "details": "",
-            "status": "pending",
+            "status": "in-progress",
             "dependencies": [
               "38.10"
             ],
             "parentTaskId": 38,
             "parentId": "undefined",
-            "updatedAt": "2026-05-07T21:23:13.578Z"
+            "updatedAt": "2026-05-07T23:03:10.757Z"
           },
           {
             "id": 12,
             "title": "Intake review form + commit-to-chart via FHIR write",
             "description": "Per the panel-design grilling 2026-05-06 (project_panel_placement memory): structured review form rendered after extraction (single-commit gesture, not per-citation approve buttons). Form sections mirror IntakeFormExtraction: chief concern (textarea), demographics list, medications list, allergies list, family history list. Each row: editable value field + include checkbox + citation chip (provenance affordance, mounts <CitationOverlay>). Bottom: 'Commit selected to chart' button. On submit: map approved fields to FHIR resources and write via FHIR API directly from the dashboard (Q6 of the grilling, but now FHIR not new PHP) — Condition for problems, AllergyIntolerance for allergies, MedicationStatement for meds, FamilyMemberHistory for family history, QuestionnaireResponse referencing the canonical intake Questionnaire as the umbrella. Validate session pid matches form patient_id before writing. Optimistic UI with rollback on FHIR write failure.",
             "details": "",
-            "status": "pending",
+            "status": "in-progress",
             "dependencies": [
               "38.10",
               "38.11"
             ],
             "parentTaskId": 38,
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-07T23:03:10.770Z"
           },
           {
             "id": 13,
@@ -8215,9 +8213,20 @@
             "parentTaskId": 38,
             "parentId": "undefined",
             "updatedAt": "2026-05-07T21:21:16.613Z"
+          },
+          {
+            "id": 15,
+            "title": "vue-ui document upload wiring",
+            "description": "Foundation for T38.11/T38.12. Adds file-attach control to AgentForge drawer composer; posts files to existing /interface/modules/custom_modules/oe-module-agentforge/public/upload_document.php endpoint (session+CSRF auth) — investigate whether vue-ui's BFF session cookie suffices or if a sidecar BFF proxy /api/upload is needed; passes returned document_id through useAgentTurn.send() into /api/agent/turn body. No UI changes outside the drawer composer. TDD with Vitest.",
+            "details": "",
+            "status": "in-progress",
+            "dependencies": [],
+            "parentTaskId": 38,
+            "parentId": "undefined",
+            "updatedAt": "2026-05-07T23:03:10.786Z"
           }
         ],
-        "updatedAt": "2026-05-07T21:23:13.578Z"
+        "updatedAt": "2026-05-07T23:03:10.786Z"
       },
       {
         "id": "39",
@@ -8235,7 +8244,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-07T21:23:13.583Z",
+      "lastModified": "2026-05-07T23:03:10.786Z",
       "taskCount": 39,
       "completedCount": 17,
       "tags": [
