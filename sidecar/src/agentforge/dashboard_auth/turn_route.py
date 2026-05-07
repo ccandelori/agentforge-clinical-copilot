@@ -138,21 +138,106 @@ _KIND_BY_RECORD_TYPE: dict[str, str] = {
 }
 
 
-_EXCERPT_FIELD_PRIORITY: tuple[str, ...] = (
-    # Notes / encounter narrative
-    "text", "note", "narrative", "summary", "subject", "body", "content",
-    # Problem / allergy / med descriptions
-    "description", "name", "title", "label", "display",
-    # Lab values
-    "value", "result", "result_text",
-    # Generic last-resort
-    "code", "icd10", "rxnorm", "loinc",
+_NARRATIVE_FIELDS: tuple[str, ...] = (
+    # Note bodies, lab freetext — long-form clinical content
+    "text", "note", "narrative", "summary", "body", "content",
+)
+
+_LABEL_FIELDS: tuple[str, ...] = (
+    "description", "name", "title", "label", "display", "subject",
+)
+
+_VALUE_FIELDS: tuple[str, ...] = (
+    "value", "result", "result_text", "code", "icd10", "rxnorm", "loinc",
 )
 
 _DATE_FIELD_PRIORITY: tuple[str, ...] = (
     "date", "effective_date", "onset_date", "recorded_date",
     "performed_date", "issued", "started", "created_at",
 )
+
+# Per-record-type bullet schemas for synthesized excerpts when the record
+# has no narrative field. The model already saw these structured fields
+# in the tool result; surfacing them as a "Label: value · Label: value"
+# line is the difference between a useful pill and a bare token.
+_METADATA_BY_KIND: dict[str, tuple[tuple[str, str], ...]] = {
+    "encounter": (
+        ("Type", "type"),
+        ("Reason", "reason"),
+        ("Provider", "provider"),
+        ("Provider", "provider_name"),
+        ("Status", "status"),
+    ),
+    "visit": (
+        ("Type", "type"),
+        ("Reason", "reason"),
+        ("Provider", "provider"),
+    ),
+    "problem": (
+        ("Description", "description"),
+        ("ICD-10", "icd10"),
+        ("Status", "status"),
+        ("Severity", "severity"),
+    ),
+    "condition": (
+        ("Description", "description"),
+        ("ICD-10", "icd10"),
+        ("Status", "status"),
+    ),
+    "diagnosis": (
+        ("Description", "description"),
+        ("ICD-10", "icd10"),
+    ),
+    "medication": (
+        ("Drug", "name"),
+        ("Drug", "drug"),
+        ("Dose", "dose"),
+        ("Route", "route"),
+        ("Frequency", "frequency"),
+        ("Status", "status"),
+    ),
+    "med": (
+        ("Drug", "name"),
+        ("Dose", "dose"),
+        ("Route", "route"),
+        ("Frequency", "frequency"),
+    ),
+    "rx": (
+        ("Drug", "name"),
+        ("Dose", "dose"),
+    ),
+    "allergy": (
+        ("Substance", "substance"),
+        ("Substance", "name"),
+        ("Reaction", "reaction"),
+        ("Severity", "severity"),
+        ("Type", "type"),
+    ),
+    "lab": (
+        ("Test", "name"),
+        ("Test", "test"),
+        ("Value", "value"),
+        ("Units", "units"),
+        ("Reference", "reference_range"),
+        ("Flag", "flag"),
+    ),
+    "lab_result": (
+        ("Test", "name"),
+        ("Value", "value"),
+        ("Units", "units"),
+        ("Flag", "flag"),
+    ),
+    "observation": (
+        ("Code", "code"),
+        ("Value", "value"),
+        ("Units", "units"),
+    ),
+    "vitals": (
+        ("Type", "type"),
+        ("Value", "value"),
+        ("Units", "units"),
+    ),
+}
 
 # Cap excerpts to bound payload size — full chart notes can be many KB
 # of free text and the chat doesn't need every word. The client clamps
@@ -161,15 +246,55 @@ _DATE_FIELD_PRIORITY: tuple[str, ...] = (
 _EXCERPT_MAX_LEN = 4000
 
 
-def _pick_excerpt(record: dict[str, Any], fallback: str) -> str:
-    """Pick the most-likely human-readable text field from a record dict."""
-    for field_name in _EXCERPT_FIELD_PRIORITY:
+def _truncate(s: str) -> str:
+    s = s.strip()
+    if len(s) > _EXCERPT_MAX_LEN:
+        return s[: _EXCERPT_MAX_LEN - 1].rstrip() + "…"
+    return s
+
+
+def _pick_excerpt(record: dict[str, Any], record_type: str, fallback: str) -> str:
+    """Build the best excerpt available for a record.
+
+    Strategy:
+      1. Narrative wins — note bodies, summaries, free-text fields.
+      2. Else synthesize a "Label: value · Label: value" line using
+         the kind-specific metadata schema. Encounters / problems /
+         meds / allergies / labs all have useful structured fields
+         the model already saw; surfacing them is the difference
+         between a useful pill and a bare token.
+      3. Generic label/value fallback.
+      4. Raw `[type #id]` token as last resort.
+    """
+    # 1. Narrative field.
+    for field_name in _NARRATIVE_FIELDS:
         v = record.get(field_name)
         if isinstance(v, str) and v.strip():
-            text = v.strip()
-            if len(text) > _EXCERPT_MAX_LEN:
-                return text[: _EXCERPT_MAX_LEN - 1].rstrip() + "…"
-            return text
+            return _truncate(v)
+
+    # 2. Kind-specific metadata.
+    fields = _METADATA_BY_KIND.get(record_type.lower())
+    if fields:
+        seen_labels: set[str] = set()
+        parts: list[str] = []
+        for label, field_name in fields:
+            if label in seen_labels:
+                continue
+            v = record.get(field_name)
+            if v is None or v == "":
+                continue
+            seen_labels.add(label)
+            parts.append(f"{label}: {v}")
+        if parts:
+            return _truncate(" · ".join(parts))
+
+    # 3. Generic label / value field.
+    for field_name in _LABEL_FIELDS + _VALUE_FIELDS:
+        v = record.get(field_name)
+        if isinstance(v, str) and v.strip():
+            return _truncate(v)
+
+    # 4. Raw token.
     return fallback
 
 
@@ -206,7 +331,7 @@ def _build_citations(reply: str) -> list[AgentTurnCitation]:
         )
         source = f"{c.record_type.title()} {c.record_id}"
         if record is not None:
-            excerpt = _pick_excerpt(record, fallback=c.raw)
+            excerpt = _pick_excerpt(record, c.record_type, fallback=c.raw)
             date = _pick_date(record)
         else:
             excerpt = c.raw
