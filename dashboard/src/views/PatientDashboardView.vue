@@ -2,6 +2,7 @@
 import { useFhirResource } from '@/composables/useFhirResource'
 import { useAuthStore } from '@/stores/auth'
 import AllergiesCard from '@/components/AllergiesCard.vue'
+import CareTeamCard from '@/components/CareTeamCard.vue'
 import ClinicalCard from '@/components/ClinicalCard.vue'
 import MedicationsCard from '@/components/MedicationsCard.vue'
 import PatientHeader from '@/components/PatientHeader.vue'
@@ -15,10 +16,9 @@ const { status, data, error } = useFhirResource<fhir4.Patient>(
   `/api/fhir/Patient/${encodeURIComponent(props.pid)}`,
 )
 
-// Card placeholders for the cards still to come. T38.4–T38.7 landed;
-// the rest get replaced as their subtasks land.
+// Card placeholders for the cards still to come. T38.4–T38.8 landed;
+// only Lab Results remains.
 const placeholders: ReadonlyArray<{ title: string; subtask: string }> = [
-  { title: 'Care Team', subtask: 'T38.8' },
   { title: 'Lab Results', subtask: 'T38.9' },
 ]
 
@@ -76,6 +76,7 @@ async function signOut(): Promise<void> {
         <ProblemListCard :pid="props.pid" />
         <MedicationsCard :pid="props.pid" />
         <PrescriptionsCard :pid="props.pid" />
+        <CareTeamCard :pid="props.pid" />
         <ClinicalCard
           v-for="card in placeholders"
           :key="card.title"
