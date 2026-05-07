@@ -82,6 +82,29 @@ ssh root@143.244.157.90 \
 
 Folding this into `deploy-droplet.sh` is a post-deadline TODO.
 
+## OpenEMR's `site_addr_oath` global must point at the droplet (not localhost)
+
+Dev-easy ships with `globals.site_addr_oath = https://localhost:9300`,
+which is what OpenEMR uses to build redirect URLs during the OAuth
+flow (specifically the bounce through its own login page when the
+user has no active OpenEMR session). If left at `localhost`, the user
+clicks Sign In, gets bounced to `https://localhost:9300/...` on their
+own machine, and lands on either nothing or a stale local OpenEMR.
+
+Fix once per droplet:
+
+```bash
+ssh root@143.244.157.90 \
+  'docker exec development-easy-mysql-1 mariadb -uopenemr -popenemr openemr -e \
+    "UPDATE globals SET gl_value = \"https://143.244.157.90:9300\" WHERE gl_name = \"site_addr_oath\";"
+   docker exec development-easy-openemr-1 httpd -k graceful'
+```
+
+This is invisible until the user actually signs in — the SPA loads,
+`/auth/whoami` works, `/auth/login` returns the right 307 — and only
+the OpenEMR-side post-authorize redirect smuggles in the wrong URL.
+Took 30 minutes to find. Worth wrapping into the deploy script.
+
 ## Production OAuth state
 
 * Client registered in OpenEMR `oauth_clients` table:
