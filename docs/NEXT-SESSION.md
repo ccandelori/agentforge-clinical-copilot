@@ -82,6 +82,25 @@ ssh root@143.244.157.90 \
 
 Folding this into `deploy-droplet.sh` is a post-deadline TODO.
 
+## `DASHBOARD_FHIR_BASE_URL` must be set in sidecar env
+
+The sidecar's FHIR proxy reads `settings.dashboard_fhir_base_url`
+(default empty string) to build upstream URLs. Empty → all FHIR
+requests fail with `502 Bad Gateway` ("FHIR upstream unreachable").
+The dev-easy local sidecar usually has it in `sidecar/.env`; the
+droplet's `.env` did NOT inherit this — added during cutover.
+
+```bash
+ssh root@143.244.157.90 \
+  "echo 'DASHBOARD_FHIR_BASE_URL=http://openemr/apis/default/fhir' >> /opt/agentforge/sidecar/.env"
+# Then recreate the container to load the env-file (docker restart won't).
+```
+
+Both `http://openemr` and `https://openemr` (with verify=False) work
+from the sidecar's container — `openemr` is a docker network alias
+for `development-easy-openemr-1`. HTTP is fine since it never leaves
+the docker bridge.
+
 ## OpenEMR's `site_addr_oath` global must point at the droplet (not localhost)
 
 Dev-easy ships with `globals.site_addr_oath = https://localhost:9300`,
