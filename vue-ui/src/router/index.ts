@@ -1,0 +1,79 @@
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+
+import { useAuthStore } from '@/stores/auth'
+
+const AppShell = () => import('@/layouts/AppShell.vue')
+
+// Placeholder views — Wave 2 agents will replace these in their respective
+// folders (see vue-ui/AGENT-CONTRACT.md).
+const DashboardHome = () => import('@/views/_placeholders/DashboardHome.vue')
+const PatientList = () => import('@/views/patients/PatientList.vue')
+const PatientDashboard = () => import('@/views/patients/PatientDashboard.vue')
+const CalendarView = () => import('@/views/calendar/CalendarView.vue')
+const EncounterEditor = () => import('@/views/encounters/EncounterEditor.vue')
+const SettingsView = () => import('@/views/settings/SettingsView.vue')
+const LoginView = () => import('@/views/auth/LoginView.vue')
+const NotFound = () => import('@/views/_placeholders/NotFound.vue')
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/login',
+    name: 'login',
+    component: LoginView,
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/',
+    component: AppShell,
+    meta: { requiresAuth: true },
+    children: [
+      { path: '', redirect: { name: 'dashboard' } },
+      { path: 'dashboard', name: 'dashboard', component: DashboardHome },
+      { path: 'patients', name: 'patients', component: PatientList },
+      {
+        path: 'patients/:id',
+        name: 'patient-dashboard',
+        component: PatientDashboard,
+        props: true,
+      },
+      { path: 'calendar', name: 'calendar', component: CalendarView },
+      {
+        path: 'encounters/:id',
+        name: 'encounter',
+        component: EncounterEditor,
+        props: true,
+      },
+      { path: 'settings', name: 'settings', component: SettingsView },
+    ],
+  },
+  {
+    path: '/:catchAll(.*)*',
+    name: 'not-found',
+    component: NotFound,
+    meta: { requiresAuth: false },
+  },
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+  scrollBehavior(_to, _from, saved) {
+    return saved ?? { top: 0 }
+  },
+})
+
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+  const requiresAuth = to.matched.some(
+    (record) => record.meta.requiresAuth !== false,
+  )
+  if (requiresAuth && !auth.isAuthenticated) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.name === 'login' && auth.isAuthenticated) {
+    return { name: 'dashboard' }
+  }
+  return true
+})
+
+export default router

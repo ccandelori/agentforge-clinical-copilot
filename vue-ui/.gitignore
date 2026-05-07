@@ -1,0 +1,35 @@
+# dependencies
+node_modules
+.pnpm-debug.log*
+.npm
+
+# build output
+dist
+dist-ssr
+
+# editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# typecheck cache
+*.tsbuildinfo
+
+# env
+.env.local
+.env.*.local
+
+# coverage / test
+coverage
+.nyc_output
