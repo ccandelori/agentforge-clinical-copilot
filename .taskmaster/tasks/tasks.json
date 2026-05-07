@@ -8149,13 +8149,14 @@
             "title": "AgentForge drawer (right-edge slide-out, 3 mode tabs, per-patient scope)",
             "description": "Top-level right-edge slide-out drawer (Bootstrap 5 offcanvas or custom). Toggle button anchored to right edge when collapsed. ~480-560px wide when open; pushes/overlays main content. Three explicit mode tabs in the drawer header: Chart / Intake / Research. Each mode has its own conversation scoping per the panel-design grilling 2026-05-06 (see project_panel_placement memory): Chart-mode conversations are keyed by patient_id, Intake-mode keyed by upload session/document_id, Research-mode is one global scope. Conversation history is in-memory (Pinia store); lost on page reload. When the active patient changes WHILE the drawer is open with a Chart-mode conversation in progress, render a hard-interrupt OVERLAY on top of the chat (NOT a banner): 'Active chart changed: <previous> → <new>' with two buttons (Switch to <new>'s conversation / Stay on <previous>) and a third button if a stale conversation for <new> exists (Start fresh with <new>). Send/input disabled until choice made. Chart mode disabled when no chart context. Research mode default when no chart context.",
             "details": "",
-            "status": "pending",
+            "status": "done",
             "dependencies": [
               "38.2",
               "38.3"
             ],
             "parentTaskId": 38,
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-07T21:21:13.612Z"
           },
           {
             "id": 11,
@@ -8167,7 +8168,8 @@
               "38.10"
             ],
             "parentTaskId": 38,
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-07T21:23:13.578Z"
           },
           {
             "id": 12,
@@ -8197,7 +8199,7 @@
             "title": "Deploy new dashboard to droplet",
             "description": "Build Vue app (npm run build → dashboard/dist/). Serve as static SPA from droplet — options: (a) extend agentforge-sidecar FastAPI with a StaticFiles mount on /, (b) add an nginx container, (c) add an Apache site to the existing openemr container. Pick whichever is fastest given the existing droplet container layout (5 containers per project_droplet_containers memory). Configure CORS on OpenEMR REST/FHIR endpoints to allow the dashboard origin. Document the OAuth client registration steps. Update docs/DEPLOYMENT.md. Verify end-to-end: login flow, header + 5 cards + labs + drawer all functional against live droplet OpenEMR data.",
             "details": "",
-            "status": "pending",
+            "status": "done",
             "dependencies": [
               "38.3",
               "38.4",
@@ -8211,10 +8213,11 @@
               "38.12"
             ],
             "parentTaskId": 38,
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-07T21:21:16.613Z"
           }
         ],
-        "updatedAt": "2026-05-07T00:28:03.805Z"
+        "updatedAt": "2026-05-07T21:23:13.578Z"
       },
       {
         "id": "39",
@@ -8232,7 +8235,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-07T00:28:03.805Z",
+      "lastModified": "2026-05-07T21:23:13.583Z",
       "taskCount": 39,
       "completedCount": 17,
       "tags": [

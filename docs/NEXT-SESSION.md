@@ -72,14 +72,28 @@ work is already done; the gap is purely client-side.
   `feat/w2-task6-document-upload` (or similar) landed pre-vue-ui.
   Mechanism is OpenEMR's existing document upload flow + a
   `document_id` returned to the agent.
-- **Citation pills + Citations pane** in vue-ui's drawer already
-  render structured citations. Intake-extracted fields with bboxes
-  would render through the same pipeline (with kind = `note` or a
-  new `intake` kind we can add to the closed enum if we want a
-  distinct badge).
+- **Chat-side citation pills + Citations pane** in vue-ui's drawer
+  already render `OPENEMR_RECORD`-shaped citations (token-anchored
+  `[type #id]` markers parsed out of the assistant reply). This is
+  NOT the same as T38.11 — T38.11 is the bbox overlay on top of
+  the embedded PDF viewer for `LAB_PDF` / `INTAKE_FORM` source
+  types (see `sidecar/src/agentforge/schemas/citation.py`
+  `PageBBox` + the `bbox_confidence >= 0.7` floor enforced at
+  the schema layer). Both surfaces will live in the drawer but
+  they render different shapes — the OpenEMR-record pill is
+  text-only; the document overlay needs PDF.js + a transparent
+  rectangle layered over the rendered page.
 
 ### What needs to be done in vue-ui
 
+0. **Citation overlay (T38.11)** — embed PDF.js (or similar) viewer
+   inside the Citations tab when the citation source is `LAB_PDF` or
+   `INTAKE_FORM`. Render the `page_bbox` as a transparent rectangle
+   over the page at the right pixel coordinates. This is the
+   "click-to-source" affordance that grounds intake-extracted fields
+   back to the literal pixel they came from. It's a sub-feature of
+   the document-upload flow — extraction happens server-side, the
+   overlay is the user-facing trust artifact.
 1. **File-attach button in `AgentChatPane`'s composer.** Currently a
    no-op (`attach button (no-op for now)`). Wire it to a hidden
    `<input type="file" accept=".pdf,image/*">` and emit the file via
