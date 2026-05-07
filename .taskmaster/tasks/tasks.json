@@ -8219,14 +8219,24 @@
             "title": "vue-ui document upload wiring",
             "description": "Foundation for T38.11/T38.12. Adds file-attach control to AgentForge drawer composer; posts files to existing /interface/modules/custom_modules/oe-module-agentforge/public/upload_document.php endpoint (session+CSRF auth) — investigate whether vue-ui's BFF session cookie suffices or if a sidecar BFF proxy /api/upload is needed; passes returned document_id through useAgentTurn.send() into /api/agent/turn body. No UI changes outside the drawer composer. TDD with Vitest.",
             "details": "",
-            "status": "in-progress",
+            "status": "done",
             "dependencies": [],
             "parentTaskId": 38,
             "parentId": "undefined",
-            "updatedAt": "2026-05-07T23:03:10.786Z"
+            "updatedAt": "2026-05-07T23:45:27.219Z"
+          },
+          {
+            "id": 16,
+            "title": "Extend AgentTurnCitation with W2 source_type + page_bbox; wire DocumentViewer into CitationsPane",
+            "description": "The current sidecar AgentTurnCitation is the W1 flat shape (id/source/excerpt/date/kind/provenance). Extend it to optionally carry source_type (lab_pdf/intake_form/openemr_record/guideline) + page_bbox + document_id so the W2 LAB_PDF/INTAKE_FORM citations with overlay coordinates flow through to vue-ui. Then wire DocumentViewer into CitationsPane to render PDF + bbox overlay for source_type lab_pdf/intake_form. T38.11 foundation (DocumentViewer SFC) already shipped; this is the end-to-end plumbing.",
+            "details": "",
+            "status": "pending",
+            "dependencies": [],
+            "parentTaskId": 38,
+            "parentId": "undefined"
           }
         ],
-        "updatedAt": "2026-05-07T23:03:10.786Z"
+        "updatedAt": "2026-05-07T23:45:27.219Z"
       },
       {
         "id": "39",
@@ -8244,7 +8254,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-07T23:03:10.786Z",
+      "lastModified": "2026-05-07T23:45:27.219Z",
       "taskCount": 39,
       "completedCount": 17,
       "tags": [

@@ -2689,3 +2689,44 @@ SMART-on-FHIR designs.
 §"FHIR data layer".
 
 ---
+
+## 2026-05-07 — Document upload routes via BFF proxy, not direct browser-to-PHP
+
+**Plan:** `docs/NEXT-SESSION.md` §"What needs to be done in vue-ui" left
+the upload mechanism open: "post the file to OpenEMR's document upload
+endpoint (re-use what dashboard-port did — see the
+`feat/w2-task6-document-upload` work for the API shape — or hit the
+sidecar BFF if there's an /api/upload path that proxies it)."
+
+**Deviation:** Picked the BFF-proxy path. Added a new internal PHP
+endpoint `internal/upload_document.php` (JWT-authed, mirroring
+`internal/get_document_bytes.php`'s pattern) plus a new sidecar BFF route
+`POST /api/agent/upload` and a `DocumentUploadWriter` Python helper. The
+existing session-authed `public/upload_document.php` is left intact for
+any legacy PHP frontend still pointing at it.
+
+**Why:** The vue-ui SPA holds only the BFF's HttpOnly session cookie
+(set by the sidecar at the dashboard origin). The OpenEMR PHP session
+cookie that `public/upload_document.php` requires for CSRF +
+session-derived `pid` lives on a different origin and is not in the
+SPA's cookie jar in dev (port 8300 vs the dev sidecar) or production
+(same host, but the session cookie is not shared back to the SPA — it
+only rides during the OAuth bounce). Direct browser-to-PHP would have
+required either downgrading to a confidential-client SPA (secret in
+bundle) or shipping a same-origin session-cookie shim, both worse than
+proxying.
+
+**What we learned:** "Either direct or via BFF" is rarely a real choice
+once you trace the cookie origin/path/scope flow. The BFF was already
+sitting in the request path with a JWT context; reusing it for one more
+multipart route is cheaper than the cookie-sharing engineering it would
+have taken to go direct. The internal-endpoint pattern (JWT-authed,
+patient-scope enforced on the PHP side via JWT claim) was already proven
+by `get_document_bytes.php`; symmetrising upload onto the same pattern
+kept auth posture uniform.
+
+**Artifacts:** branch `feat/t38.11-12-document-flow` commits
+`6e975d356` (PHP), `30d18c582` (writer), `74d651198` (BFF route),
+`2ba02686b` (turn-request wiring).
+
+---
