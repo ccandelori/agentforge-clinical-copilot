@@ -3,11 +3,13 @@
 # droplet. Idempotent — safe to re-run after every code change.
 #
 # Usage:
-#   ./scripts/deploy-droplet.sh           # both module + sidecar
-#   ./scripts/deploy-droplet.sh module    # just the OpenEMR PHP module
-#   ./scripts/deploy-droplet.sh sidecar   # just the Python sidecar (rebuild + restart)
-#   ./scripts/deploy-droplet.sh check     # health check only, no deploy
-#   ./scripts/deploy-droplet.sh logs      # tail the sidecar log
+#   ./scripts/deploy-droplet.sh             # module + sidecar + dashboard
+#   ./scripts/deploy-droplet.sh module      # just the OpenEMR PHP module
+#   ./scripts/deploy-droplet.sh sidecar     # just the Python sidecar (rebuild + restart)
+#   ./scripts/deploy-droplet.sh dashboard   # just the Vue dashboard (npm run build → rsync → bind-mount)
+#   ./scripts/deploy-droplet.sh dashboard --skip-build  # rsync existing dashboard/dist/ without rebuilding
+#   ./scripts/deploy-droplet.sh check       # health check only, no deploy
+#   ./scripts/deploy-droplet.sh logs        # tail the sidecar log
 #
 # Configuration (override via env if your droplet moves):
 #   DROPLET_HOST=root@143.244.157.90      # SSH target
@@ -34,10 +36,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE_LOCAL="$REPO_ROOT/interface/modules/custom_modules/oe-module-agentforge"
 SIDECAR_LOCAL="$REPO_ROOT/sidecar"
 PROMPTS_LOCAL="$REPO_ROOT/prompts"
+DASHBOARD_LOCAL="$REPO_ROOT/dashboard"
 
 MODULE_REMOTE="/opt/agentforge/module"
 SIDECAR_REMOTE="/opt/agentforge/sidecar"
 PROMPTS_REMOTE="/opt/agentforge/prompts"
+# Dashboard SPA bind-mount target. The sidecar container mounts this
+# host path at /app/dashboard/dist (see docker run -v in deploy_sidecar
+# below); the FastAPI StaticFiles mount in agentforge.main reads it via
+# DASHBOARD_DIST_DIR. Bind-mounting (not COPY) means a dashboard-only
+# redeploy is `rsync` + (if running) container restart — no image rebuild.
+DASHBOARD_REMOTE="/opt/agentforge/dashboard/dist"
 MODULE_IN_CONTAINER="/var/www/localhost/htdocs/openemr/interface/modules/custom_modules/oe-module-agentforge"
 
 # ---------- Helpers ----------
@@ -55,6 +64,7 @@ ssh_run() {
 preflight() {
     [[ -d "$MODULE_LOCAL" ]] || die "Module dir not found at $MODULE_LOCAL — wrong repo?"
     [[ -d "$SIDECAR_LOCAL" ]] || die "Sidecar dir not found at $SIDECAR_LOCAL — wrong repo?"
+    [[ -d "$DASHBOARD_LOCAL" ]] || die "Dashboard dir not found at $DASHBOARD_LOCAL — wrong repo?"
     ssh_run 'echo ok' >/dev/null 2>&1 || die "SSH to $DROPLET_HOST failed (key auth?)."
     ssh_run "test -f $MODULE_REMOTE/.env" \
         || warn "$MODULE_REMOTE/.env missing — module deploy will leave the container without a JWT secret."
@@ -105,11 +115,62 @@ deploy_sidecar() {
 
     step "restarting sidecar container"
     ssh_run "docker rm -f $SIDECAR_NAME 2>/dev/null || true"
+    # Bind-mount dashboard/dist as read-only at /app/dashboard/dist so the
+    # FastAPI StaticFiles mount picks it up (see agentforge.main + T38.14).
+    # `mkdir -p` keeps the container start-up clean even when the dashboard
+    # has not been deployed yet — the static mount logs a warning and skips
+    # itself, and the rest of the API still serves.
+    ssh_run "mkdir -p $DASHBOARD_REMOTE"
     ssh_run "docker run -d --name $SIDECAR_NAME --restart unless-stopped \
         --network $OPENEMR_NETWORK \
         --env-file $SIDECAR_REMOTE/.env \
+        -e DASHBOARD_DIST_DIR=/app/dashboard/dist \
+        -v $DASHBOARD_REMOTE:/app/dashboard/dist:ro \
         ${SIDECAR_NAME}:latest"
-    ok "container started"
+    ok "container started (dashboard mount: $DASHBOARD_REMOTE → /app/dashboard/dist:ro)"
+}
+
+deploy_dashboard() {
+    local skip_build="${1:-}"
+
+    if [[ "$skip_build" != "--skip-build" ]]; then
+        step "building dashboard locally (npm run build)"
+        if ! command -v npm >/dev/null 2>&1; then
+            die "npm not found locally. Install Node, or pass --skip-build to use the existing dashboard/dist/"
+        fi
+        ( cd "$DASHBOARD_LOCAL" && npm run build )
+        ok "dashboard built → $DASHBOARD_LOCAL/dist/"
+    else
+        warn "--skip-build passed; using existing $DASHBOARD_LOCAL/dist/ as-is"
+        [[ -d "$DASHBOARD_LOCAL/dist" ]] \
+            || die "$DASHBOARD_LOCAL/dist/ does not exist — drop --skip-build or run 'npm run build' first"
+    fi
+
+    step "rsyncing dashboard/dist → $DROPLET_HOST:$DASHBOARD_REMOTE/"
+    ssh_run "mkdir -p $DASHBOARD_REMOTE"
+    rsync -az --delete \
+        "$DASHBOARD_LOCAL/dist/" "$DROPLET_HOST:$DASHBOARD_REMOTE/"
+    ok "dashboard synced"
+
+    step "checking sidecar container picks up the new files"
+    # Two cases:
+    #  (a) The sidecar already runs WITH the bind mount → new files are
+    #      visible immediately; FastAPI's StaticFiles re-reads from disk
+    #      on every request, so no restart needed.
+    #  (b) The sidecar runs WITHOUT the bind mount (deployed before
+    #      T38.14 landed) → it needs a restart to pick up the new
+    #      /app/dashboard/dist mount and DASHBOARD_DIST_DIR env. Detect
+    #      this by inspecting the container's mounts.
+    if ssh_run "docker ps --filter name=$SIDECAR_NAME --format '{{.Names}}' | grep -q ^${SIDECAR_NAME}\$"; then
+        if ssh_run "docker inspect --format '{{range .Mounts}}{{.Destination}} {{end}}' $SIDECAR_NAME 2>/dev/null | grep -q '/app/dashboard/dist'"; then
+            ok "sidecar already has the dashboard mount; new files are live"
+        else
+            warn "sidecar is running but lacks the dashboard mount — restarting via deploy_sidecar to pick it up"
+            deploy_sidecar
+        fi
+    else
+        warn "sidecar container is not running — start it with './scripts/deploy-droplet.sh sidecar'"
+    fi
 }
 
 check_health() {
@@ -168,6 +229,7 @@ case "$cmd" in
         preflight
         deploy_module
         deploy_sidecar
+        deploy_dashboard "${2:-}"
         check_health
         ;;
     module)
@@ -179,6 +241,10 @@ case "$cmd" in
         deploy_sidecar
         check_health
         ;;
+    dashboard)
+        preflight
+        deploy_dashboard "${2:-}"
+        ;;
     check)
         check_health
         ;;
@@ -189,7 +255,7 @@ case "$cmd" in
         sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
         ;;
     *)
-        die "unknown subcommand '$cmd' — try: all | module | sidecar | check | logs | help"
+        die "unknown subcommand '$cmd' — try: all | module | sidecar | dashboard | check | logs | help"
         ;;
 esac
 

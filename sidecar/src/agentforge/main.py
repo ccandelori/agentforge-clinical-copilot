@@ -17,9 +17,11 @@ from __future__ import annotations
 import builtins
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, Protocol, cast
 
 import httpx
@@ -27,6 +29,7 @@ import redis.asyncio as redis_async
 from anthropic import AsyncAnthropic
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agentforge.dashboard_auth import (
@@ -842,5 +845,62 @@ def create_app(
         if trace_id is not None:
             response.headers["X-Trace-Id"] = trace_id
         return TurnResponse(reply=reply, extraction=get_last_turn_extraction())
+
+    # ------------------------------------------------------------------
+    # Dashboard SPA static-file mount (T38.14, recon §8 Plan A step 2).
+    #
+    # Production droplet shape: the Vue dashboard is served from the
+    # same origin as the BFF — `dashboard/dist/` is rsync'd to the
+    # droplet and bind-mounted into this container at
+    # ``/app/dashboard/dist`` (overridable via ``DASHBOARD_DIST_DIR``).
+    # Mounting the static files AFTER all API routers means
+    # ``/auth/*`` and ``/api/*`` keep resolving through their routers
+    # (FastAPI matches in registration order); the static mount only
+    # picks up the catch-all paths the SPA needs (`/`, `/login`,
+    # `/patient/<uuid>`, …). ``html=True`` falls back to ``index.html``
+    # for unknown paths, which is what the Vue Router needs for deep
+    # links to work after a hard refresh.
+    #
+    # Local dev path defaults to ``<repo>/dashboard/dist`` resolved
+    # relative to this file so a developer who runs ``uvicorn ...``
+    # directly from a checkout still gets the SPA mounted if they've
+    # built it. The Vite dev server (``npm run dev``) remains the
+    # canonical local workflow — the proxy in ``dashboard/vite.config.ts``
+    # forwards ``/auth/*`` and ``/api/*`` to this same sidecar — so
+    # this mount is only meaningful in two cases: production, and a
+    # local "production-shape" smoke test.
+    #
+    # Failure mode: if the directory doesn't exist at startup we log
+    # a warning and skip the mount. The sidecar must still boot so the
+    # backend routes work; a missing dist dir is a deploy-stage
+    # problem, not a "the whole API is unreachable" problem.
+    # ------------------------------------------------------------------
+    # Container default is /app/dashboard/dist (set in compose / docker run).
+    # Local default resolves to <repo>/dashboard/dist — this file is at
+    # sidecar/src/agentforge/main.py so parents[3] is the repo root.
+    # ``DASHBOARD_DIST_DIR`` env wins when set explicitly.
+    default_dashboard_dist = (
+        Path(__file__).resolve().parents[3] / "dashboard" / "dist"
+    )
+    dashboard_dist_dir = Path(
+        os.environ.get("DASHBOARD_DIST_DIR", str(default_dashboard_dist))
+    )
+    if dashboard_dist_dir.is_dir():
+        logger.info(
+            "Mounting dashboard SPA from %s at /", dashboard_dist_dir
+        )
+        app.mount(
+            "/",
+            StaticFiles(directory=str(dashboard_dist_dir), html=True),
+            name="dashboard",
+        )
+    else:
+        logger.warning(
+            "Dashboard dist dir not found at %s — SPA will not be served. "
+            "Set DASHBOARD_DIST_DIR or rsync the build output before "
+            "restarting the sidecar. Backend routes (/auth/*, /api/*, "
+            "/health, /turn) remain available.",
+            dashboard_dist_dir,
+        )
 
     return app

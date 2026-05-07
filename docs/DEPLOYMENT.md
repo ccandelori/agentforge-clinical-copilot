@@ -32,11 +32,19 @@ Containers (post-AgentForge deploy):
 | `development-easy-openemr-1` | `openemr/openemr:flex` | 80, 443 | OpenEMR PHP/Apache |
 | `development-easy-mysql-1` | `mariadb:11.8.6` | 3306 | DB |
 | `development-easy-phpmyadmin-1` | `phpmyadmin:latest` | 80 | DB admin UI |
-| **`agentforge-sidecar`** | `agentforge-sidecar:latest` (built on droplet) | 8000 | **Python sidecar (added by us)** |
+| **`agentforge-sidecar`** | `agentforge-sidecar:latest` (built on droplet) | 8000 | **Python sidecar — also serves the Vue dashboard SPA from `/app/dashboard/dist` (T38.14)** |
 | **`agentforge-redis`** | `redis:7-alpine` | 6379 | **Tool-result cache (added by us)** |
 
 The sidecar is on the **`development-easy_default`** docker network so the
 OpenEMR container can resolve it as `agentforge-sidecar` via internal DNS.
+
+**No new container for the dashboard.** Per the canonical 5-container
+layout, the Vue dashboard SPA is served from inside `agentforge-sidecar`
+via FastAPI's `StaticFiles` mount at `/`. The build output lives on the
+host at `/opt/agentforge/dashboard/dist/` (rsync target) and is
+bind-mounted read-only into the container at `/app/dashboard/dist`.
+Mounting (rather than baking into the image) means a dashboard-only
+redeploy is `rsync` + no rebuild — see "Dashboard deploy" below.
 
 ### Stopped 2026-05-02 — DO NOT restart casually
 
@@ -74,11 +82,13 @@ container via the docker network.
 
 ## Where the AgentForge code lives on the droplet
 
-Two staging directories on the host filesystem (rsync targets):
+Three staging directories on the host filesystem (rsync targets):
 
 ```
 /opt/agentforge/module/          # OpenEMR PHP module — rsync from local
 /opt/agentforge/sidecar/         # Python sidecar — rsync from local + Dockerfile
+/opt/agentforge/dashboard/dist/  # Vue dashboard build output — rsync of `dashboard/dist/`
+                                 #   bind-mounted at /app/dashboard/dist in agentforge-sidecar (T38.14)
 ```
 
 The OpenEMR container's source tree is **inside the `openemr/openemr:flex`
@@ -136,13 +146,34 @@ container restart + health check, and is safe to re-run after every change:
 
 ```bash
 # from the repo root:
-./scripts/deploy-droplet.sh           # both module + sidecar (default)
-./scripts/deploy-droplet.sh module    # only PHP module changed
-./scripts/deploy-droplet.sh sidecar   # only Python sidecar changed
-./scripts/deploy-droplet.sh check     # health-check, no deploy
-./scripts/deploy-droplet.sh logs      # tail the live sidecar log
-./scripts/deploy-droplet.sh help      # show all subcommands
+./scripts/deploy-droplet.sh             # module + sidecar + dashboard (default)
+./scripts/deploy-droplet.sh module      # only PHP module changed
+./scripts/deploy-droplet.sh sidecar     # only Python sidecar changed
+./scripts/deploy-droplet.sh dashboard   # only Vue dashboard changed (npm build → rsync → no image rebuild)
+./scripts/deploy-droplet.sh dashboard --skip-build  # rsync existing dashboard/dist/ as-is
+./scripts/deploy-droplet.sh check       # health-check, no deploy
+./scripts/deploy-droplet.sh logs        # tail the live sidecar log
+./scripts/deploy-droplet.sh help        # show all subcommands
 ```
+
+### Dashboard deploy (T38.14)
+
+The Vue dashboard build output is served from inside the sidecar
+container via FastAPI's `StaticFiles` mount. The deploy flow:
+
+1. `npm run build` runs locally in `dashboard/` to produce `dashboard/dist/`.
+2. `rsync -az --delete dashboard/dist/ → /opt/agentforge/dashboard/dist/`.
+3. The sidecar's bind mount (`/opt/agentforge/dashboard/dist:/app/dashboard/dist:ro`)
+   makes the new files visible inside the container immediately —
+   FastAPI's `StaticFiles` reads from disk on every request, so no
+   container restart is needed for content updates.
+4. The script auto-detects whether the running sidecar already has the
+   bind mount (deployments before T38.14 don't); if not, it falls back
+   to `deploy_sidecar` to restart the container with the mount + the
+   `DASHBOARD_DIST_DIR=/app/dashboard/dist` env var.
+
+If `dashboard/dist/` is missing or the `npm run build` fails locally,
+pass `--skip-build` to use whatever's already on disk.
 
 The script is parameterized via env vars (`DROPLET_HOST`, `OPENEMR_CONTAINER`,
 `OPENEMR_NETWORK`, `SIDECAR_NAME`) so a new droplet only needs:
@@ -186,6 +217,113 @@ Underwood's chart (pid=2), expand the **Clinical Co-Pilot** panel, and ask
 
 - **First `/turn` after a fresh sidecar start may 503.** Cold-start of the
   Anthropic SDK's HTTP client pool. Retry once; subsequent requests are fine.
+
+## Production cutover gotchas (T38.14 dashboard deploy)
+
+The dashboard's BFF auth flow is currently pinned to `localhost:5173` for
+local development (see `PATIENT_DASHBOARD_MIGRATION.md` lines 184-200).
+When the dashboard goes live on the droplet, three things have to move
+in lockstep — miss any one and the OAuth dance fails closed:
+
+### 1. Re-register the OpenEMR OAuth client at the production origin
+
+The dev-easy registration shipped with `redirect_uris=["http://localhost:5173/auth/callback"]`.
+That value is what OpenEMR's `/oauth2/<site>/authorize` checks against
+the `redirect_uri` query param the sidecar sends; a mismatch is rejected
+before the user ever sees a consent screen. Re-register against the
+production origin (or update the existing client's `redirect_uris` and
+`post_logout_redirect_uris`):
+
+```bash
+ssh root@143.244.157.90 \
+  'docker exec -T development-easy-openemr-1 curl -sS -X POST \
+    http://localhost/oauth2/default/registration \
+    -H "Content-Type: application/json" \
+    --data "{
+      \"application_type\": \"private\",
+      \"client_name\": \"AgentForge Dashboard BFF (sidecar, prod)\",
+      \"redirect_uris\": [\"https://143.244.157.90:9300/auth/callback\"],
+      \"post_logout_redirect_uris\": [\"https://143.244.157.90:9300/\"],
+      \"token_endpoint_auth_method\": \"client_secret_post\",
+      \"grant_types\": [\"authorization_code\", \"refresh_token\"],
+      \"response_types\": [\"code\"],
+      \"scope\": \"openid offline_access fhirUser user/Patient.read user/AllergyIntolerance.read user/Condition.read user/MedicationRequest.read user/CareTeam.read user/Observation.read user/Encounter.read user/Practitioner.read user/Organization.read\"
+    }"'
+```
+
+After registration, **enable the client in Admin → System → API Clients
+→ Enable** (one-time per droplet; the OpenEMR `oauth_clients` table
+persists across deploys). Without this step, every `/authorize` call
+returns "client disabled".
+
+The sidecar will need to learn the new `client_id` / `client_secret` —
+both come back in the registration response and need to be written into
+`/opt/agentforge/sidecar/.env` as `DASHBOARD_OAUTH_CLIENT_ID` and
+`DASHBOARD_OAUTH_CLIENT_SECRET`, then `./scripts/deploy-droplet.sh sidecar`
+to restart with the new env.
+
+### 2. Update sidecar env vars to the production origin
+
+In `/opt/agentforge/sidecar/.env` on the droplet:
+
+```bash
+# Where the SPA lives — the post-auth landing page is built as
+# DASHBOARD_APP_URL.rstrip('/') + next_path. Same-origin in production.
+DASHBOARD_APP_URL=https://143.244.157.90:9300/
+
+# Must match the OAuth client's registered redirect_uris (above).
+DASHBOARD_OAUTH_REDIRECT_URI=https://143.244.157.90:9300/auth/callback
+DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI=https://143.244.157.90:9300/
+
+# Discovery URL of the authorization server (HTTPS port; OAuth2
+# endpoints reject HTTP — see PATIENT_DASHBOARD_MIGRATION.md).
+DASHBOARD_OAUTH_AUTHORITY=https://143.244.157.90:9300/oauth2/default
+
+# Required: aud query param on /authorize. Binds the issued token
+# to the FHIR resource server.
+DASHBOARD_OAUTH_AUDIENCE=https://143.244.157.90:9300/apis/default/fhir
+
+# FHIR proxy target. The sidecar forwards /api/fhir/* here with the
+# session's bearer token. Note the HTTPS port — the FHIR API rejects HTTP.
+DASHBOARD_FHIR_BASE_URL=https://143.244.157.90:9300/apis/default/fhir
+
+# Production must serve cookies over HTTPS only.
+DASHBOARD_SESSION_COOKIE_SECURE=true
+
+# Bind mount target inside the container — set automatically by the
+# Dockerfile and the deploy script's `docker run -e`. Listed here for
+# completeness; override only if you change the mount path.
+DASHBOARD_DIST_DIR=/app/dashboard/dist
+```
+
+After changes: `./scripts/deploy-droplet.sh sidecar` restarts the
+container with the new env. (Env vars are read at process start; running
+containers don't pick up `.env` edits.)
+
+### 3. `/auth/login?next=...` must accept production-side paths
+
+The sidecar's `_is_safe_next()` (in `dashboard_auth/routes.py`) only
+accepts **relative paths** (single-leading-slash, no double-slash).
+Origin doesn't enter the check — the sidecar treats every `next=` as
+a path that gets glued onto `DASHBOARD_APP_URL` after auth completes.
+That means the post-auth landing URL is always
+`DASHBOARD_APP_URL.rstrip('/') + next_path`, so once
+`DASHBOARD_APP_URL` is set to the production origin (step 2), the same
+`/auth/login?next=/patient/<uuid>` request that worked locally will
+land at the production origin without any code change.
+
+If a future feature needs to whitelist absolute origins (e.g. a
+multi-tenant dashboard split across hosts), `_is_safe_next` is the
+choke point.
+
+### Cert posture
+
+The droplet currently terminates HTTPS with a **self-signed cert** on
+port 9300 (browsers will warn on first visit; users have to click
+through). The sidecar's two BFF httpx clients pass `verify=False` to
+work against this — see `agentforge.main` for the comment thread. When
+production migrates to a real cert (Let's Encrypt; tracked under
+ARCHITECTURE.md §10), flip `verify=True` and remove the comment.
 
 ## Optional: tighten REST `api_log` body logging
 

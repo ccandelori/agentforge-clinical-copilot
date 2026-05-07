@@ -113,6 +113,33 @@ The PHP module mints; the sidecar verifies. Mismatch = every `/turn` 401s.
 - [ ] **TLS terminates upstream of OpenEMR.** Demo URL uses self-signed on
       port 9300; production migrates to Let's Encrypt (ARCHITECTURE.md §10).
 
+### Dashboard cutover (T38.14)
+
+The Vue dashboard ships through the same `agentforge-sidecar` container
+(no new container — see the 5-container layout note at the bottom of
+this file). Three things must move in lockstep before the SPA can load:
+
+- [ ] **OAuth client re-registered at production origin.** Dev-easy
+      registration pins `redirect_uris=["http://localhost:5173/auth/callback"]`
+      (see `PATIENT_DASHBOARD_MIGRATION.md:184-200`). Re-register or update
+      the client to match the production origin and **enable** it in
+      Admin → System → API Clients. Exact `curl` command in
+      `docs/DEPLOYMENT.md` "Production cutover gotchas".
+- [ ] **Sidecar env vars updated** in `/opt/agentforge/sidecar/.env`:
+      `DASHBOARD_APP_URL`, `DASHBOARD_OAUTH_REDIRECT_URI`,
+      `DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI`, `DASHBOARD_OAUTH_AUTHORITY`,
+      `DASHBOARD_OAUTH_AUDIENCE`, `DASHBOARD_FHIR_BASE_URL`, and
+      `DASHBOARD_SESSION_COOKIE_SECURE=true`. Restart the sidecar with
+      `./scripts/deploy-droplet.sh sidecar` to pick them up.
+- [ ] **`dashboard/dist/` rsync'd to droplet** at
+      `/opt/agentforge/dashboard/dist/` (host) and bind-mounted at
+      `/app/dashboard/dist` (container) — handled by
+      `./scripts/deploy-droplet.sh dashboard`. The sidecar logs
+      `Mounting dashboard SPA from /app/dashboard/dist at /` on startup
+      when the mount is in place; if the dir is empty or missing, it
+      logs a warning and skips the mount, leaving the API surface
+      reachable but the SPA un-served.
+
 ## Configuration checklist — env vars by stack
 
 ### Sidecar (`sidecar/.env` locally; `/opt/agentforge/sidecar/.env` on droplet)
@@ -215,21 +242,23 @@ docker compose exec openemr bash -c \
 Idempotent. Safe to re-run after every code change.
 
 ```bash
-# Default: deploy both halves
-./scripts/deploy-droplet.sh           # = preflight + module + sidecar + check_health
+# Default: deploy all three halves (module + sidecar + dashboard)
+./scripts/deploy-droplet.sh             # = preflight + module + sidecar + dashboard + check_health
 
 # Targeted
-./scripts/deploy-droplet.sh module    # PHP-only changes
-./scripts/deploy-droplet.sh sidecar   # Python-only changes
-./scripts/deploy-droplet.sh check     # health-check only, no deploy
-./scripts/deploy-droplet.sh logs      # tail sidecar logs
+./scripts/deploy-droplet.sh module      # PHP-only changes
+./scripts/deploy-droplet.sh sidecar     # Python-only changes
+./scripts/deploy-droplet.sh dashboard   # Vue dashboard only (npm build → rsync; no image rebuild)
+./scripts/deploy-droplet.sh dashboard --skip-build  # rsync existing dashboard/dist/ as-is
+./scripts/deploy-droplet.sh check       # health-check only, no deploy
+./scripts/deploy-droplet.sh logs        # tail sidecar logs
 ```
 
 The sequence executed by the `all` path (defined in
 `scripts/deploy-droplet.sh`):
 
-1. **`preflight`** — assert local module + sidecar dirs exist, SSH works,
-   warn (don't fail) if either remote `.env` is missing.
+1. **`preflight`** — assert local module + sidecar + dashboard dirs exist,
+   SSH works, warn (don't fail) if either remote `.env` is missing.
 2. **`deploy_module`** —
    - `rsync -az --delete` from `interface/modules/custom_modules/oe-module-agentforge/`
      to `/opt/agentforge/module/` on the droplet, excluding `.git`,
@@ -245,8 +274,16 @@ The sequence executed by the `all` path (defined in
    - `docker rm -f agentforge-sidecar` (force-remove old container).
    - `docker run -d --name agentforge-sidecar --restart unless-stopped
      --network development-easy_default --env-file
-     /opt/agentforge/sidecar/.env agentforge-sidecar:latest`
-4. **`check_health`** — poll `http://agentforge-sidecar:8000/health` from
+     /opt/agentforge/sidecar/.env -e DASHBOARD_DIST_DIR=/app/dashboard/dist
+     -v /opt/agentforge/dashboard/dist:/app/dashboard/dist:ro
+     agentforge-sidecar:latest`
+4. **`deploy_dashboard`** (T38.14) —
+   - Local `npm run build` in `dashboard/` (skip with `--skip-build`).
+   - `rsync -az --delete dashboard/dist/` → `/opt/agentforge/dashboard/dist/`.
+   - Detects whether the running sidecar already has the bind mount
+     (`docker inspect`); if not, falls back to `deploy_sidecar` to pick it up.
+     With the mount in place, content updates are visible without a restart.
+5. **`check_health`** — poll `http://agentforge-sidecar:8000/health` from
    inside the OpenEMR container until it answers (up to 30 s, every 2 s),
    verify module files present, dump last 5 `/turn` log lines.
 
