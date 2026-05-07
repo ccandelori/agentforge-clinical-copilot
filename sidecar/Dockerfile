@@ -77,7 +77,20 @@ COPY --from=builder --chown=agentforge:agentforge /app/data /app/data
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    DASHBOARD_DIST_DIR=/app/dashboard/dist
+
+# Dashboard SPA mount point (T38.14, recon §8 Plan A step 2). The
+# Vue dashboard's `npm run build` output is bind-mounted here at
+# container start (`docker run -v /opt/agentforge/dashboard/dist:/app/dashboard/dist:ro`).
+# Bind-mounting (vs COPY-into-image) keeps the sidecar image stable
+# across dashboard-only redeploys — `./scripts/deploy-droplet.sh dashboard`
+# rsyncs to the host path and the running container sees the new
+# files on the next request without a rebuild. The mkdir below means
+# the sidecar boots cleanly even with no mount: agentforge.main logs
+# a warning and skips the static mount, leaving the API surface
+# (/auth/*, /api/*, /health, /turn) reachable.
+RUN mkdir -p /app/dashboard/dist && chown -R agentforge:agentforge /app/dashboard
 
 USER agentforge
 

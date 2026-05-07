@@ -110,6 +110,57 @@ class Settings(BaseSettings):
     # reach the wire, so streaming is now safe in production.
     streaming_enabled: bool = True
 
+    # ------------------------------------------------------------------
+    # Dashboard BFF (W2 Task 38.2 v2). The Vue dashboard at /dashboard
+    # is a public SPA that talks to OpenEMR exclusively through the
+    # sidecar's /auth/* + /api/fhir/* surface. The sidecar holds the
+    # confidential OAuth2 client_secret server-side so it never ships
+    # to the browser, and proxies FHIR reads with the user/* scopes
+    # OpenEMR rejects for public clients. Defaults are empty so the
+    # bulk of unit tests (which don't exercise the dashboard surface)
+    # don't need to set these env vars; the auth routes degrade to
+    # 503 "BFF not configured" when client_id is unset.
+    # ------------------------------------------------------------------
+    dashboard_oauth_authority: str = ""  # e.g. https://localhost:9300/oauth2/default
+    dashboard_oauth_client_id: str = ""
+    dashboard_oauth_client_secret: str = ""
+    dashboard_oauth_redirect_uri: str = "http://localhost:5173/auth/callback"
+    dashboard_oauth_post_logout_redirect_uri: str = "http://localhost:5173/"
+    dashboard_oauth_scope: str = (
+        "openid offline_access fhirUser "
+        "user/Patient.read user/AllergyIntolerance.read user/Condition.read "
+        "user/MedicationRequest.read user/CareTeam.read user/Observation.read "
+        "user/Encounter.read user/Practitioner.read user/Organization.read"
+    )
+    # OpenEMR-specific aud query parameter on /authorize. Required by
+    # the authorize endpoint; binds the issued access token to the
+    # FHIR resource server. Empty means "don't add aud" — production
+    # against dev-easy needs the FHIR base URL.
+    dashboard_oauth_audience: str = ""
+
+    # Where the Vue dashboard lives — used as the default landing
+    # destination after a successful sign-in when no ``next`` query
+    # parameter is provided to /auth/login. Same-origin in production
+    # (served from the sidecar host); cross-origin in dev (Vite dev
+    # server at :5173 proxies /auth/* + /api/* to the sidecar).
+    dashboard_app_url: str = "http://localhost:5173/"
+
+    # FHIR proxy target. Resource server URL the BFF forwards FHIR
+    # reads to. Typically ``${OPENEMR_BASE_URL_HTTPS}/apis/<site>/fhir``
+    # — kept distinct from ``openemr_base_url`` because the FHIR API
+    # lives behind the HTTPS port (:9300 on dev-easy) while the
+    # legacy REST integration the W1 fetchers use lives behind :8300.
+    dashboard_fhir_base_url: str = ""
+
+    # Session cookie + Redis key configuration.
+    dashboard_session_cookie_name: str = "agentforge_session"
+    dashboard_session_ttl_seconds: int = 8 * 3600  # 8h working day
+    dashboard_pending_auth_ttl_seconds: int = 10 * 60  # 10 min to finish OAuth dance
+    # Secure cookie flag — must be False in dev (browser at http://) and
+    # True in production (https-only). Defaulting False so dev works
+    # out-of-the-box; production deploys override via .env.
+    dashboard_session_cookie_secure: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

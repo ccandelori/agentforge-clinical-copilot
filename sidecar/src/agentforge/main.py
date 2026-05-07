@@ -17,16 +17,26 @@ from __future__ import annotations
 import builtins
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, Protocol, cast
 
+import httpx
 import redis.asyncio as redis_async
 from anthropic import AsyncAnthropic
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from agentforge.dashboard_auth import (
+    OAuthClient,
+    SessionStore,
+    make_dashboard_routers,
+)
 
 from agentforge.breakglass import BreakglassAuditTool
 from agentforge.config import Settings, get_settings
@@ -373,6 +383,41 @@ def create_app(
 
     storage = redis_storage or AgentRedisClient(redis_url=settings.redis_url)
 
+    # ------------------------------------------------------------------
+    # Dashboard BFF wiring (W2 Task 38.2 v2). When the OAuth2 client is
+    # configured (dashboard_oauth_client_id non-empty), construct the
+    # OAuth client + FHIR-proxy httpx client; otherwise leave both
+    # ``None`` so the routes mount but return 503 — keeps the routing
+    # surface stable across configurations and lets tests run without
+    # touching env vars.
+    # ------------------------------------------------------------------
+    session_store = SessionStore(
+        redis_client=cast(Any, redis_client),
+        session_ttl_seconds=settings.dashboard_session_ttl_seconds,
+        pending_ttl_seconds=settings.dashboard_pending_auth_ttl_seconds,
+    )
+    dashboard_oauth_http: httpx.AsyncClient | None = None
+    dashboard_fhir_http: httpx.AsyncClient | None = None
+    dashboard_me_http: httpx.AsyncClient | None = None
+    dashboard_oauth_client: OAuthClient | None = None
+    if settings.dashboard_oauth_client_id and settings.dashboard_oauth_client_secret:
+        # ``verify=False`` is required against dev-easy's self-signed
+        # cert. Production deploys serve OpenEMR with a real cert and
+        # this should be flipped (or removed) — tracked as a T38.14
+        # follow-up in PATIENT_DASHBOARD_MIGRATION.md.
+        dashboard_oauth_http = httpx.AsyncClient(timeout=15.0, verify=False)
+        dashboard_fhir_http = httpx.AsyncClient(timeout=15.0, verify=False)
+        # Separate client for the auth-bridge ``/me`` lookup so its
+        # 5s budget doesn't bleed into the longer FHIR-proxy timeout.
+        dashboard_me_http = httpx.AsyncClient(timeout=5.0, verify=False)
+        dashboard_oauth_client = OAuthClient(
+            authority=settings.dashboard_oauth_authority,
+            client_id=settings.dashboard_oauth_client_id,
+            client_secret=settings.dashboard_oauth_client_secret,
+            redirect_uri=settings.dashboard_oauth_redirect_uri,
+            http=dashboard_oauth_http,
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Sensitivity policy loads at startup so a bad policy fails the
@@ -400,6 +445,13 @@ def create_app(
             # then release the Redis connection pool.
             await _app.state.langfuse.aclose()
             await storage.aclose()
+            # Dashboard BFF httpx clients (created above when configured).
+            if dashboard_oauth_http is not None:
+                await dashboard_oauth_http.aclose()
+            if dashboard_fhir_http is not None:
+                await dashboard_fhir_http.aclose()
+            if dashboard_me_http is not None:
+                await dashboard_me_http.aclose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -597,6 +649,71 @@ def create_app(
     # consumes by chaining fetcher → renderer.
     app.state.pdf_renderer = pdf_renderer_instance
     app.state.document_bytes_fetcher = document_bytes_fetcher_instance
+    # Dashboard BFF state — surfaced for tests / introspection.
+    app.state.dashboard_session_store = session_store
+    app.state.dashboard_oauth_client = dashboard_oauth_client
+
+    # ------------------------------------------------------------------
+    # Dashboard BFF routers — mounted unconditionally; the routes
+    # themselves return 503 when the client is unconfigured so the
+    # routing surface is stable across deployment shapes.
+    # ------------------------------------------------------------------
+    dashboard_auth_router, dashboard_fhir_router = make_dashboard_routers(
+        settings=settings,
+        session_store=session_store,
+        oauth_client=dashboard_oauth_client,
+        fhir_http=dashboard_fhir_http,
+    )
+    app.include_router(dashboard_auth_router)
+    app.include_router(dashboard_fhir_router)
+
+    # Dashboard agent-turn route (ADR-0001). Mounted only when the
+    # BFF stack is configured AND the bridge has its dedicated httpx
+    # client; otherwise the legacy /turn surface is the only path
+    # into the orchestrator.
+    if dashboard_me_http is not None:
+        from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
+        from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
+        from agentforge.dashboard_auth.openemr_patient_pid import (
+            OpenEMRPatientPidFetcher,
+        )
+        from agentforge.dashboard_auth.turn_route import make_agent_turn_router
+
+        class _SystemClock:
+            def now(self) -> datetime:
+                return datetime.now(UTC)
+
+        bridge_clock = _SystemClock()
+        me_fetcher = OpenEMRMeFetcher(
+            http=dashboard_me_http,
+            base_url=settings.openemr_base_url,
+            jwt_secret=settings.jwt_secret,
+            clock=bridge_clock,
+        )
+        # Reuses the same httpx client (and cert-trust posture) as
+        # the /me lookup; both endpoints live in the AgentForge
+        # module under the same OpenEMR base URL.
+        patient_pid_fetcher = OpenEMRPatientPidFetcher(
+            http=dashboard_me_http,
+            base_url=settings.openemr_base_url,
+            jwt_secret=settings.jwt_secret,
+            clock=bridge_clock,
+        )
+        jwt_minter = InternalJwtMinter(
+            jwt_secret=settings.jwt_secret,
+            clock=bridge_clock,
+        )
+        app.include_router(
+            make_agent_turn_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                orchestrator=orchestrator,
+            )
+        )
 
     @app.get("/health")
     async def health() -> dict[str, object]:
@@ -728,5 +845,62 @@ def create_app(
         if trace_id is not None:
             response.headers["X-Trace-Id"] = trace_id
         return TurnResponse(reply=reply, extraction=get_last_turn_extraction())
+
+    # ------------------------------------------------------------------
+    # Dashboard SPA static-file mount (T38.14, recon §8 Plan A step 2).
+    #
+    # Production droplet shape: the Vue dashboard is served from the
+    # same origin as the BFF — `dashboard/dist/` is rsync'd to the
+    # droplet and bind-mounted into this container at
+    # ``/app/dashboard/dist`` (overridable via ``DASHBOARD_DIST_DIR``).
+    # Mounting the static files AFTER all API routers means
+    # ``/auth/*`` and ``/api/*`` keep resolving through their routers
+    # (FastAPI matches in registration order); the static mount only
+    # picks up the catch-all paths the SPA needs (`/`, `/login`,
+    # `/patient/<uuid>`, …). ``html=True`` falls back to ``index.html``
+    # for unknown paths, which is what the Vue Router needs for deep
+    # links to work after a hard refresh.
+    #
+    # Local dev path defaults to ``<repo>/vue-ui/dist`` resolved
+    # relative to this file so a developer who runs ``uvicorn ...``
+    # directly from a checkout still gets the SPA mounted if they've
+    # built it. The Vite dev server (``npm run dev``) remains the
+    # canonical local workflow — the proxy in ``vue-ui/vite.config.ts``
+    # forwards ``/auth/*`` and ``/api/*`` to this same sidecar — so
+    # this mount is only meaningful in two cases: production, and a
+    # local "production-shape" smoke test.
+    #
+    # Failure mode: if the directory doesn't exist at startup we log
+    # a warning and skip the mount. The sidecar must still boot so the
+    # backend routes work; a missing dist dir is a deploy-stage
+    # problem, not a "the whole API is unreachable" problem.
+    # ------------------------------------------------------------------
+    # Container default is /app/dashboard/dist (set in compose / docker run).
+    # Local default resolves to <repo>/vue-ui/dist — this file is at
+    # sidecar/src/agentforge/main.py so parents[3] is the repo root.
+    # ``DASHBOARD_DIST_DIR`` env wins when set explicitly.
+    default_dashboard_dist = (
+        Path(__file__).resolve().parents[3] / "vue-ui" / "dist"
+    )
+    dashboard_dist_dir = Path(
+        os.environ.get("DASHBOARD_DIST_DIR", str(default_dashboard_dist))
+    )
+    if dashboard_dist_dir.is_dir():
+        logger.info(
+            "Mounting dashboard SPA from %s at /", dashboard_dist_dir
+        )
+        app.mount(
+            "/",
+            StaticFiles(directory=str(dashboard_dist_dir), html=True),
+            name="dashboard",
+        )
+    else:
+        logger.warning(
+            "Dashboard dist dir not found at %s — SPA will not be served. "
+            "Set DASHBOARD_DIST_DIR or rsync the build output before "
+            "restarting the sidecar. Backend routes (/auth/*, /api/*, "
+            "/health, /turn) remain available.",
+            dashboard_dist_dir,
+        )
 
     return app

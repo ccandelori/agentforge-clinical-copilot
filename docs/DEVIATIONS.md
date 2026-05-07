@@ -2484,3 +2484,208 @@ behavior (rect + × button + propagation), pdfjsLib readiness via the
 `agentforge:pdfjs-ready` event, error paths, and unmount safety.
 
 ---
+
+## 2026-05-06 — Dashboard OAuth client: public + PKCE, signaled via `application_type`
+
+**Plan:** Task 38.2 and the `NEXT-SESSION.md` walkthrough specified
+`oidc-client-ts` configured with PKCE; client registered via OpenEMR's
+RFC 7591 dynamic-registration endpoint. The implicit assumption was that
+either (a) confidential client with `client_secret` in `VITE_*` env, or
+(b) `token_endpoint_auth_method: "none"` for a public client, would
+work.
+
+**Deviation:** Both assumptions were wrong. Settled on **public client
++ PKCE**, signaled by `application_type: "public"` in the registration
+body and **omitting** `token_endpoint_auth_method` entirely.
+
+**Why:** Two findings:
+
+1. Confidential client is unusable for an SPA — Vite bakes `VITE_*` env
+   into the browser bundle, so the secret would ship to every user.
+   Effectively the same security as no secret at all, but with the
+   illusion of one.
+2. OpenEMR's discovery advertises only `client_secret_post` for
+   `token_endpoint_auth_methods_supported` and the registration handler
+   actively rejects `none` with `"Unsupported token_endpoint_auth_method
+   value : none"`. The signal it actually accepts is OpenEMR-specific:
+   `application_type: "public"` (with no `token_endpoint_auth_method`
+   sent), which causes the server to leave `client_secret` empty and
+   treat the client as public. Reference:
+   `src/RestControllers/AuthorizationController.php:307-325`.
+
+**What we learned:** OAuth2/OIDC server discovery metadata is not
+authoritative for what a server actually accepts. OpenEMR diverges from
+RFC 8414 in the public-client signaling — read the registration handler
+source, not the discovery doc, when a registration call gets an opaque
+rejection. The constraint that follows the public-client choice (no
+`system/*` or `user/*` scopes) is enforced server-side and silently
+shapes the FHIR data layer too — see the next two entries.
+
+**Artifacts:**
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"OAuth2 / OpenID Connect integration",
+[`dashboard/src/services/auth/`](../dashboard/src/services/auth/),
+[`dashboard/.env.example`](../dashboard/.env.example).
+
+---
+
+## 2026-05-06 — `MedicationStatement` and `FamilyMemberHistory` not exposed; meds/prescriptions both source from `MedicationRequest`
+
+**Plan:** Task 38.6 (medications) was scoped to FHIR `MedicationStatement`,
+T38.7 (prescriptions) to `MedicationRequest`. Intake review form (T38.12)
+included a family-history section sourced from `FamilyMemberHistory`.
+
+**Deviation:** Neither `MedicationStatement` nor `FamilyMemberHistory`
+appears in OpenEMR's advertised scope list. T38.6 and T38.7 both source
+from **`MedicationRequest`**, partitioned by `status` (`active` →
+medications card; `completed`/`stopped` → prescription history card).
+T38.12's family-history section cannot commit via FHIR write at all —
+the resource doesn't exist on this server.
+
+**Why:** Discovered while planning T38.2 — `dev-easy`'s OAuth2
+discovery doc lists every read scope OpenEMR exposes, and these two
+resources are absent. Confirms the FHIR R4 surface OpenEMR ships isn't
+fully complete.
+
+**What we learned:** Verify FHIR resource availability against the
+target server's discovery doc *before* designing card boundaries — a
+plan that calls for "MedicationStatement" reads better than a plan that
+says "MedicationRequest filtered by status," but only one is actually
+shippable on the target server. The status-partition pattern is also
+arguably more useful clinically (active meds vs. discontinued history
+is a real workflow distinction; the FHIR distinction between
+`MedicationStatement` and `MedicationRequest` is administrative).
+
+**Artifacts:**
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"FHIR data layer".
+
+---
+
+## 2026-05-06 — Dashboard auth: pivoted from public client (v1) to BFF on the sidecar (v2)
+
+**Plan:** T38.2 specified an OAuth2 / OIDC login flow against OpenEMR
+using `oidc-client-ts` in the SPA. The implicit assumption was that a
+public client + PKCE would let the dashboard speak FHIR directly,
+either against the patient context or the user context.
+
+**Deviation:** Threw away the entire dashboard-side OAuth2
+implementation and rebuilt the auth + FHIR-proxy surface as a
+**Backend For Frontend** on the AgentForge sidecar. The dashboard is
+now a "dumb" client that only knows about an HttpOnly session cookie;
+all OAuth2 mechanics live in `sidecar/src/agentforge/dashboard_auth/`.
+
+**Why:** Cumulative discovery during T38.2:
+
+1. OpenEMR's `patient/*` scopes require a *patient context* claim in
+   the access token. A signed-in admin (or any non-Patient user) gets
+   no patient context, so FHIR endpoints return 401 on `patient/*`
+   reads. SMART-on-FHIR's `launch/patient` would solve this for a
+   *one-patient-at-a-time* dashboard, but our brief is a clinician's
+   browse-many chart view — fundamentally a `user/*` scope problem.
+2. OpenEMR rejects `user/*` and `system/*` scopes for public clients
+   at registration (`AuthorizationController.php:307-325` raises
+   "system and user scopes are only allowed for confidential
+   clients"). So a public-client SPA can never have the scopes the
+   dashboard needs.
+3. A confidential client running in an SPA is a security mistake —
+   Vite bakes `VITE_*` env into the browser bundle, leaking the
+   secret to every user. OAuth 2.1 BCP says don't.
+4. The right shape is **BFF**: a server-side component holds the
+   confidential client_secret, performs the OAuth2 dance, and proxies
+   FHIR reads. The AgentForge sidecar already exists alongside the
+   dashboard; adding `/auth/*` and `/api/fhir/*` endpoints to it is a
+   natural extension.
+
+**What we landed:**
+
+- Sidecar `dashboard_auth` module: `oauth.py` (PKCE + httpx token
+  exchange), `sessions.py` (Redis-backed session + pending-state
+  store), `routes.py` (`/auth/{login,callback,whoami,logout}` +
+  `/api/fhir/{path:path}` proxy). 33 pytest specs.
+- Wired into `main.create_app()` — routes mount unconditionally, return
+  503 when the BFF env vars are unset so existing tests aren't disturbed.
+- Dashboard side: rewrote `stores/auth.ts` (10 Vitest specs) to talk
+  to `/auth/whoami` + `/auth/logout` via `fetch`. Simplified
+  `LoginView` to `window.location.assign('/auth/login?next=…')`.
+  Deleted `services/auth/{config,userManager}.ts` and
+  `views/OAuthCallbackView.vue`. Uninstalled `oidc-client-ts`
+  (~68 KB gzipped saved).
+- Vite proxy config gained `/auth/*` and `/api/*` rules pointed at
+  the sidecar — same-origin from the browser's POV so the HttpOnly
+  session cookie rides cleanly on every dashboard request.
+- Re-registered the OpenEMR client as confidential
+  (`client_role: "user"`) with `user/*.read` scopes; `client_secret`
+  lives in `sidecar/.env`, never in the dashboard bundle.
+
+**What we learned:**
+
+- "Just call OAuth2 from the SPA" is a near-default reflex for
+  modern frontends, and SMART-on-FHIR's marketing leans into it. But
+  the moment you need clinical-user scopes (the typical scope class
+  for any clinician-facing app), the choice collapses to *BFF or
+  confidential-in-SPA* — both real, but the BCP-correct answer is
+  BFF unless you have specific reasons not to.
+- The *cost* of the wrong-first-shape was small here because the
+  Pinia store kept its general shape (status state machine + actions)
+  — only the action *implementations* changed. Same lesson as
+  ARCHITECTURE.md's "FHIR types as the seam": the seam was robust to
+  the implementation pivot.
+- Specifically for OpenEMR: do not trust public/confidential
+  inferences from RFC documents. The dynamic-registration handler's
+  scope-policing logic (`AuthorizationController.php:307-325`) is
+  the load-bearing constraint, and reading it directly is faster than
+  iterating on registration POST attempts.
+
+**Artifacts:**
+[`sidecar/src/agentforge/dashboard_auth/`](../sidecar/src/agentforge/dashboard_auth/),
+[`sidecar/tests/test_dashboard_auth_*.py`](../sidecar/tests/),
+[`dashboard/src/stores/auth.ts`](../dashboard/src/stores/auth.ts),
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"OAuth2 / OpenID Connect integration — BFF flow (v2)".
+
+---
+
+## 2026-05-06 — No `patient/*.write` scopes advertised; T38.12 commit path no longer "FHIR PUT directly"
+
+**Plan:** `NEXT-SESSION.md` decision spine §"Commit path (Q6)" — after
+the W2 brief invalidated the original plan of a session-authed PHP
+endpoint, the updated decision was "browser → FHIR API write directly
+(POST/PUT to FHIR `Condition`, `MedicationStatement`,
+`AllergyIntolerance`, `FamilyMemberHistory`, plus `QuestionnaireResponse`
+referencing the canonical intake Questionnaire as umbrella)."
+
+**Deviation:** Cannot land as planned. **Decision deferred to T38.12**
+with three documented options.
+
+**Why:** OpenEMR's OAuth2 discovery exposes **no `patient/*.write`
+scopes** at all. Writes are gated by `user/*.write` scopes
+(legacy-REST-API-named: `user/medical_problem.write`,
+`user/allergy.write`, `user/medication.write`, etc.), and the
+public-client constraint (see prior deviation) bars us from `user/*`
+entirely. Three options for T38.12:
+
+a. **Downgrade to confidential client** and accept secret-in-SPA. Lets
+   us request `user/*.write`. Security cost: secret in browser bundle.
+b. **Route writes through the AgentForge sidecar BFF.** The sidecar
+   gets a `user/*.write` confidential-client access token server-side
+   and proxies the writes. Architectural cost: ~2-3 hr of new sidecar
+   code; brief allows since the sidecar pre-existed.
+c. **Defer commit-to-chart.** Ship the structured intake-review form
+   (edit-in-place, citation chips, include checkboxes) and end with a
+   *Copy structured summary* button. No write at all. Acceptable
+   demo-quality, weak product-quality.
+
+**What we learned:** "FHIR API write directly" is a clean architecture
+sentence but not a universally-shippable one. SMART-on-FHIR's
+patient-context scopes are read-biased by design (the patient
+themselves is rarely the agent of write); production EMR writes
+typically require either a clinical-user OAuth context or a backend
+service-account flow. Worth surfacing this earlier in future
+SMART-on-FHIR designs.
+
+**Artifacts:**
+[`PATIENT_DASHBOARD_MIGRATION.md`](../PATIENT_DASHBOARD_MIGRATION.md)
+§"FHIR data layer".
+
+---

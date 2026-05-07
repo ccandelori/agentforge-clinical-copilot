@@ -170,6 +170,25 @@ _TURN_EXTRACTION_VAR: ContextVar[dict[str, Any] | None] = ContextVar(
     "agentforge_turn_extraction", default=None
 )
 
+# Per-turn CitationIndex (T38.11 follow-up — richer chat citations).
+# Populated wherever ``build_citation_index`` runs so the /turn endpoint
+# can resolve each ``[type #id]`` token in the reply text to the
+# underlying tool-result row (and surface a real excerpt to the
+# CitationPill UI). Same ContextVar isolation contract as the cost and
+# trace vars.
+_TURN_CITATION_INDEX_VAR: ContextVar[Any] = ContextVar(
+    "agentforge_turn_citation_index", default=None
+)
+
+
+def get_turn_citation_index() -> Any:
+    """Return the CitationIndex from the current asyncio task's most
+    recent turn, or ``None`` if no index was built (e.g. evidence-only
+    turn with no chart tool results, or a path that bypassed the
+    verifier). Read AFTER :meth:`Orchestrator.turn` returns.
+    """
+    return _TURN_CITATION_INDEX_VAR.get()
+
 
 def get_turn_cost_usd() -> float:
     """Return the accumulated LLM cost for the current asyncio task.
@@ -361,6 +380,10 @@ class Orchestrator:
         # turn (or a W1 chart-question turn) doesn't surface the
         # previous turn's extracted fields back to the browser.
         _TURN_EXTRACTION_VAR.set(None)
+        # Reset the per-turn citation index so a citation-bearing
+        # follow-up turn doesn't surface stale records from the
+        # previous turn back to the browser.
+        _TURN_CITATION_INDEX_VAR.set(None)
 
         # W2 cutover: route through the graph when its surface is wired
         # AND the caller has W2 inputs. Same total-turn timeout envelope
@@ -947,6 +970,7 @@ class Orchestrator:
                                 _final_holder.append(event.response)
 
                     _index = build_citation_index(tool_results)
+                    _TURN_CITATION_INDEX_VAR.set(_index)
                     _verifier = StreamingVerifier(
                         citation_index=_index,
                         domain_checker=self._domain_constraints,
@@ -1172,6 +1196,7 @@ class Orchestrator:
     ) -> str:
         """Run StreamingVerifier over ``text`` and return the gated reply."""
         index = build_citation_index(tool_results)
+        _TURN_CITATION_INDEX_VAR.set(index)
         verifier = StreamingVerifier(
             citation_index=index, domain_checker=self._domain_constraints
         )
