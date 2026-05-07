@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5174,
+      port: 5173,
       strictPort: false,
       host: '127.0.0.1',
       // Same-origin proxy onto the AgentForge sidecar BFF. The vue-ui
@@ -50,7 +50,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     preview: {
-      port: 5174,
+      port: 5173,
     },
   }
 })
