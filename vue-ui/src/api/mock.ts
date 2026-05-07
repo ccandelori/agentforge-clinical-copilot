@@ -9,10 +9,7 @@
  * data to live `fetch` calls against the OpenEMR FHIR API (proxied via the
  * sidecar BFF at `/api/fhir/*`); auth rides on the HttpOnly session cookie set
  * by the sidecar's `/auth/callback` handler — there is no Authorization
- * header to set client-side. Pattern is lifted from
- * `dashboard/src/composables/useFhirResource.ts` and the `is{Resource}` type
- * guards in `dashboard/src/components/AllergiesCard.vue` /
- * `MedicationsCard.vue`.
+ * header to set client-side.
  *
  * No `localStorage` / `sessionStorage` / `IndexedDB` writes anywhere in this
  * file — pure fetch + map.
