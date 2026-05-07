@@ -82,6 +82,36 @@ ssh root@143.244.157.90 \
 
 Folding this into `deploy-droplet.sh` is a post-deadline TODO.
 
+## Per-droplet Synthea data backfill (vitals)
+
+Each droplet's MySQL is a separate database. The dev-easy fix for
+Synthea-imported vitals (forms-row backfill + uuid_mapping backfill)
+has to be repeated per environment. Recipe used on droplet today:
+
+```bash
+# 1. Link orphan form_vitals to encounters
+ssh root@143.244.157.90 'docker exec development-easy-mysql-1 mariadb -uopenemr -popenemr openemr -e "
+INSERT INTO forms (date, encounter, form_name, form_id, pid, user, deleted, formdir, issue_id, provider_id)
+SELECT v.date,
+  (SELECT fe.encounter FROM form_encounter fe WHERE fe.pid = v.pid ORDER BY ABS(TIMESTAMPDIFF(SECOND, fe.date, v.date)) LIMIT 1),
+  \"Vitals\", v.id, v.pid, \"ExternalProvider\", 0, \"vitals\", 0, 0
+FROM form_vitals v
+WHERE NOT EXISTS (SELECT 1 FROM forms f WHERE f.form_id = v.id AND f.formdir=\"vitals\");"'
+
+# 2. Backfill uuid_mappings (idempotent)
+ssh root@143.244.157.90 'docker exec development-easy-openemr-1 php -r "
+\$_GET[\"site\"] = \"default\";
+\$ignoreAuth = true;
+require \"/var/www/localhost/htdocs/openemr/interface/globals.php\";
+echo \OpenEMR\Common\Uuid\UuidMapping::createAllMissingResourceUuids();"'
+```
+
+Note: order matters — backfill forms FIRST, then uuid_mappings. The
+inverse order leaves the second-pass uuid_mapping run a no-op
+because the mappings are keyed by form_vitals.uuid, not by forms
+linkage. The forms join is what makes a vital surface as a FHIR
+Observation; the uuid_mapping is what gives it a FHIR id.
+
 ## `DASHBOARD_FHIR_BASE_URL` must be set in sidecar env
 
 The sidecar's FHIR proxy reads `settings.dashboard_fhir_base_url`

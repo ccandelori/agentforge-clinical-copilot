@@ -51,28 +51,56 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
   async function load(id: string): Promise<void> {
     loading.value = true
     error.value = null
+
+    // Patient is the only fetch the page truly can't render without —
+    // every secondary card consumes the patient's identity / demographics.
+    // Try it first; if it fails, surface the error and bail.
     try {
-      const [p, v, pr, m, a, e, l] = await Promise.all([
-        getPatient(id),
-        getVitals(id),
-        getProblems(id),
-        getMedications(id),
-        getAllergies(id),
-        getEncounters(id),
-        getLabs(id),
-      ])
+      const p = await getPatient(id)
+      if (p === null) {
+        error.value = new Error(`Patient ${id} not found`)
+        loading.value = false
+        return
+      }
       patient.value = p
-      vitals.value = v
-      problems.value = pr
-      medications.value = m
-      allergies.value = a
-      encounters.value = e
-      labs.value = l
     } catch (err) {
       error.value = err instanceof Error ? err : new Error(String(err))
-    } finally {
       loading.value = false
+      return
     }
+
+    // The remaining six fetches are independent — a slow / failing lab
+    // query (Synthea Observations are heavy) shouldn't kill problems,
+    // meds, encounters, etc. Promise.allSettled lets each card decide
+    // whether to render a skeleton or its data, and surfaces the
+    // first error on the screen-level error banner without blocking
+    // partial rendering.
+    const settled = await Promise.allSettled([
+      getVitals(id),
+      getProblems(id),
+      getMedications(id),
+      getAllergies(id),
+      getEncounters(id),
+      getLabs(id),
+    ])
+    const [vR, prR, mR, aR, eR, lR] = settled
+    vitals.value = vR.status === 'fulfilled' ? vR.value : []
+    problems.value = prR.status === 'fulfilled' ? prR.value : []
+    medications.value = mR.status === 'fulfilled' ? mR.value : []
+    allergies.value = aR.status === 'fulfilled' ? aR.value : []
+    encounters.value = eR.status === 'fulfilled' ? eR.value : []
+    labs.value = lR.status === 'fulfilled' ? lR.value : []
+
+    // Surface the first failure as a soft warning on the error ref so
+    // the page can render a non-blocking notice. Patient + the cards
+    // that DID succeed still display.
+    const firstFail = settled.find((s) => s.status === 'rejected')
+    if (firstFail && firstFail.status === 'rejected') {
+      const reason = firstFail.reason
+      error.value = reason instanceof Error ? reason : new Error(String(reason))
+    }
+
+    loading.value = false
   }
 
   async function refresh(): Promise<void> {

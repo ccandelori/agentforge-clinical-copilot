@@ -142,7 +142,7 @@ function onEditSave(): void {
 
     <!-- Error -->
     <BaseEmptyState
-      v-else-if="error"
+      v-else-if="error && !patient"
       icon="⚠"
       title="Could not load patient"
       :message="error.message"
@@ -162,8 +162,18 @@ function onEditSave(): void {
       :message="`No patient with ID ${id}`"
     />
 
-    <!-- Loaded -->
+    <!-- Loaded (patient resolved; secondary cards may have partially failed) -->
     <template v-else>
+      <!-- Soft warning when patient loaded but one of the cards failed -->
+      <div
+        v-if="error"
+        class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-warning-300 bg-warning-50 px-4 py-2 text-xs text-warning-700 dark:border-warning-700/60 dark:bg-warning-900/30 dark:text-warning-300"
+        role="status"
+      >
+        <span>Some chart data didn't load: {{ error.message }}</span>
+        <BaseButton variant="ghost" size="sm" @click="refresh">Retry</BaseButton>
+      </div>
+
       <PatientHeaderBand
         :patient="patient"
         :allergy-count="allergies.length"

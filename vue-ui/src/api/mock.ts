@@ -336,8 +336,16 @@ export interface SearchResults {
 // FHIR fetch helper
 // ---------------------------------------------------------------------------
 
-/** Hard-cap on a single FHIR call so a stuck sidecar can't lock the UI. */
-const FHIR_TIMEOUT_MS = 5000
+/**
+ * Hard-cap on a single FHIR call so a stuck sidecar can't lock the UI.
+ * Production droplet path is browser → Apache (HTTPS, self-signed) →
+ * sidecar → OpenEMR Apache → PHP, which is materially slower than the
+ * same-origin localhost dev loop. 20s leaves headroom for a slow lab
+ * query (`Observation?category=laboratory&_count=50`) without making
+ * the user feel a true network outage; the per-screen loader is the
+ * affordance for "this is taking a moment."
+ */
+const FHIR_TIMEOUT_MS = 20_000
 
 /**
  * Single point of contact with the FHIR API. Returns the parsed JSON body as
