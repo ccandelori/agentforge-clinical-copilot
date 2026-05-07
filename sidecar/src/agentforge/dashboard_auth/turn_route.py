@@ -77,7 +77,31 @@ class _OrchestratorProto:
         user_message: str,
         *,
         session_id: str | None = None,
+        pdf_pages: list[Any] | None = None,
+        document_id: int | None = None,
     ) -> str: ...
+
+
+class _DocumentBytesProto:
+    """Subset of :class:`DocumentBytesFetcher` the route depends on.
+
+    Carrying this as a Protocol-style stub keeps the heavy ``httpx``
+    + ``DocumentBytesFetchError`` machinery out of unit-test imports.
+    The route narrows the failure shape via duck-typed ``status_code``
+    on the raised exception (mirroring what
+    :class:`DocumentUploadError` does in upload_route).
+    """
+
+    async def fetch(  # pragma: no cover — protocol stub
+        self, *, document_id: int, raw_token: str
+    ) -> Any: ...
+
+
+class _PdfRendererProto:
+    """Subset of :class:`PdfRenderer` the route depends on."""
+
+    def render_pages(self, pdf_bytes: bytes) -> list[Any]:  # pragma: no cover
+        ...
 
 
 class AgentTurnRequest(BaseModel):
@@ -90,6 +114,16 @@ class AgentTurnRequest(BaseModel):
     # returns. See ADR-0001 §5.
     patient_uuid: str = Field(min_length=1)
     session_id: str | None = None
+    # T38.15: optional pointer to an OpenEMR document the user just
+    # uploaded via /api/agent/upload. When supplied, the route fetches
+    # the bytes via DocumentBytesFetcher, renders to per-page PNGs via
+    # PdfRenderer, and forwards ``pdf_pages`` + ``document_id`` to the
+    # orchestrator. The orchestrator then routes through the W2
+    # supervisor + extractor + verifier rather than the W1 chart-
+    # question loop. Modeled as ``str`` (not ``int``) so the dashboard
+    # can carry the value as a string in JSON without lossy precision
+    # at very large ids; we parse to int at the boundary.
+    document_id: str | None = None
 
 
 class AgentTurnCitation(BaseModel):
@@ -381,8 +415,18 @@ def make_agent_turn_router(
     jwt_minter: InternalJwtMinter,
     auth_gateway: AuthGateway,
     orchestrator: _OrchestratorProto,
+    document_bytes_fetcher: _DocumentBytesProto | None = None,
+    pdf_renderer: _PdfRendererProto | None = None,
 ) -> APIRouter:
-    """Build the BFF agent-turn router. Mounted at ``/api/agent``."""
+    """Build the BFF agent-turn router. Mounted at ``/api/agent``.
+
+    ``document_bytes_fetcher`` + ``pdf_renderer`` are required when
+    callers send ``document_id`` on the turn request body (T38.15).
+    Both are kept optional on the constructor so test setups that
+    never exercise the W2 path don't have to wire them; the route
+    handler raises a clear 500 if a request arrives with
+    ``document_id`` but the helpers are missing.
+    """
     router = APIRouter(prefix="/api/agent", tags=["dashboard-agent"])
 
     # In-memory cache: access_token → resolved identity. Keyed by
@@ -473,6 +517,25 @@ def make_agent_turn_router(
         request: Request,
         body: Annotated[AgentTurnRequest, Body()],
     ) -> AgentTurnResponse:
+        # Parse document_id at the boundary (string in JSON → int).
+        # Reject non-positive values up front rather than letting the
+        # PHP side return 400 — the panel can act on the response
+        # status uniformly that way.
+        document_id_int: int | None = None
+        if body.document_id is not None:
+            try:
+                document_id_int = int(body.document_id)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="document_id must parse as a positive integer.",
+                ) from exc
+            if document_id_int <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="document_id must be a positive integer.",
+                )
+
         session = await _resolve_session(request)
         identity = await _resolve_identity(session)
         patient_id = await _resolve_patient_pid(body.patient_uuid)
@@ -489,10 +552,75 @@ def make_agent_turn_router(
             ) from exc
 
         ctx = await auth_gateway.validate_request(f"Bearer {internal_jwt}")
+
+        # Resolve document_id → pdf_pages (T38.15). Mirror the legacy
+        # main.py /turn path: 503 on transport failure, 502 on upstream
+        # error, 422 on non-pdf mimetype or unrenderable bytes.
+        pdf_pages: list[Any] | None = None
+        if document_id_int is not None:
+            if document_bytes_fetcher is None or pdf_renderer is None:
+                # Misconfiguration: caller passed document_id but the
+                # router was mounted without the W2 helpers. Fail loud
+                # instead of silently dropping the input.
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "document_id supplied but the BFF router has no "
+                        "document fetcher / PDF renderer wired."
+                    ),
+                )
+            try:
+                document = await document_bytes_fetcher.fetch(
+                    document_id=document_id_int,
+                    raw_token=ctx.raw_token,
+                )
+            except Exception as exc:  # narrowed by status_code attr below
+                # Duck-typed: DocumentBytesFetchError carries
+                # ``status_code``. Anything else propagates.
+                upstream_status = getattr(exc, "status_code", None)
+                if not isinstance(upstream_status, int):
+                    raise
+                if upstream_status == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Document fetch failed: OpenEMR unreachable.",
+                    ) from exc
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={
+                        "error": "Document fetch failed.",
+                        "sidecar_upstream_status": upstream_status,
+                    },
+                ) from exc
+
+            mimetype = getattr(document, "mimetype", "")
+            content = getattr(document, "content", b"")
+            if mimetype != "application/pdf":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Document {document_id_int} is not a PDF "
+                        f"(mimetype: {mimetype})."
+                    ),
+                )
+
+            try:
+                pdf_pages = pdf_renderer.render_pages(content)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Document {document_id_int} could not be "
+                        f"rendered as a PDF."
+                    ),
+                ) from exc
+
         reply = await orchestrator.turn(
             ctx,
             body.message,
             session_id=body.session_id,
+            pdf_pages=pdf_pages,
+            document_id=document_id_int,
         )
         # Read the extraction snapshot AFTER ``turn`` returns — same
         # ContextVar isolation contract as ``get_turn_citation_index``

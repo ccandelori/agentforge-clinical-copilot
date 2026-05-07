@@ -76,12 +76,16 @@ class _CapturingOrchestrator:
         user_message: str,
         *,
         session_id: str | None = None,
+        pdf_pages: Any = None,
+        document_id: int | None = None,
         **_: Any,
     ) -> str:
         self.captured = {
             "ctx": ctx,
             "user_message": user_message,
             "session_id": session_id,
+            "pdf_pages": pdf_pages,
+            "document_id": document_id,
         }
         return self.reply
 
@@ -115,6 +119,8 @@ def _build_app(
     me_response: dict[str, Any] | int = 200,
     pid_response: dict[str, Any] | int = 200,
     orchestrator: _CapturingOrchestrator | None = None,
+    document_bytes_fetcher: Any = None,
+    pdf_renderer: Any = None,
 ) -> tuple[FastAPI, _CapturingOrchestrator, SessionStore]:
     settings = _settings()
     redis = _make_redis_mock()
@@ -159,6 +165,8 @@ def _build_app(
         jwt_minter=minter,
         auth_gateway=gateway,
         orchestrator=orch,  # type: ignore[arg-type]
+        document_bytes_fetcher=document_bytes_fetcher,
+        pdf_renderer=pdf_renderer,
     )
 
     app = FastAPI()
@@ -475,3 +483,311 @@ async def test_identity_and_pid_lookups_are_cached() -> None:
     # 3 turns → 1 /me call AND 1 /patient_pid call.
     assert me_invocations["count"] == 1
     assert pid_invocations["count"] == 1
+
+
+# ---------------------------------------------------------------------
+# T38.15 — document_id field + W2 graph hookup
+# ---------------------------------------------------------------------
+
+
+class _StubDocumentBytes:
+    """Mirrors agentforge.tools.document_bytes.DocumentBytes shape."""
+
+    def __init__(self, *, content: bytes, mimetype: str) -> None:
+        self.content = content
+        self.mimetype = mimetype
+
+
+class _CapturingDocumentBytesFetcher:
+    """Captures fetch() inputs and returns a fixed PDF body."""
+
+    def __init__(
+        self,
+        *,
+        content: bytes = b"%PDF-1.4\nstub",
+        mimetype: str = "application/pdf",
+    ) -> None:
+        self._content = content
+        self._mimetype = mimetype
+        self.captured: dict[str, Any] = {}
+
+    async def fetch(
+        self, *, document_id: int, raw_token: str
+    ) -> _StubDocumentBytes:
+        self.captured = {
+            "document_id": document_id,
+            "raw_token": raw_token,
+        }
+        return _StubDocumentBytes(content=self._content, mimetype=self._mimetype)
+
+
+class _CapturingPdfRenderer:
+    """Captures render_pages() bytes and returns a fixed list of stubs."""
+
+    def __init__(self, *, pages: list[Any] | None = None) -> None:
+        self.pages = pages if pages is not None else ["page-1", "page-2"]
+        self.captured: dict[str, Any] = {}
+
+    def render_pages(self, pdf_bytes: bytes) -> list[Any]:
+        self.captured = {"pdf_bytes": pdf_bytes}
+        return self.pages
+
+
+@pytest.mark.asyncio
+async def test_request_with_document_id_is_accepted() -> None:
+    """``document_id`` is no longer rejected by extra=forbid (T38.15)."""
+    fetcher = _CapturingDocumentBytesFetcher()
+    renderer = _CapturingPdfRenderer()
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=fetcher,
+        pdf_renderer=renderer,
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract this lab",
+                "patient_uuid": "p",
+                "document_id": "123",
+            },
+        )
+    # Pre-T38.15 this would have been 422 (extra=forbid).
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_document_id_routes_through_fetcher_and_renderer_to_orchestrator() -> None:
+    """When ``document_id`` is supplied, the route fetches bytes via the
+    fetcher, renders them via the renderer, and forwards ``pdf_pages``
+    + ``document_id`` to ``orchestrator.turn``."""
+    fetcher = _CapturingDocumentBytesFetcher(content=b"%PDF-1.4\nlab-bytes")
+    renderer = _CapturingPdfRenderer(pages=["page-A", "page-B", "page-C"])
+    app, orch, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=fetcher,
+        pdf_renderer=renderer,
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract",
+                "patient_uuid": "p",
+                "document_id": "777",
+            },
+        )
+
+    assert resp.status_code == 200
+
+    # Fetcher saw the document_id (parsed to int) and a non-empty token.
+    assert fetcher.captured["document_id"] == 777
+    assert isinstance(fetcher.captured["raw_token"], str)
+    assert len(fetcher.captured["raw_token"]) > 0
+
+    # Renderer saw the bytes the fetcher returned.
+    assert renderer.captured["pdf_bytes"] == b"%PDF-1.4\nlab-bytes"
+
+    # Orchestrator received the rendered pages + document_id verbatim.
+    assert orch.captured["pdf_pages"] == ["page-A", "page-B", "page-C"]
+    assert orch.captured["document_id"] == 777
+
+
+@pytest.mark.asyncio
+async def test_no_document_id_does_not_invoke_fetcher_or_renderer() -> None:
+    """Backwards compat: a request without document_id MUST NOT touch
+    the fetcher / renderer — keeps chart-question turns unchanged."""
+    fetcher = _CapturingDocumentBytesFetcher()
+    renderer = _CapturingPdfRenderer()
+    app, orch, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=fetcher,
+        pdf_renderer=renderer,
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "what's the patient's allergies?", "patient_uuid": "p"},
+        )
+
+    assert resp.status_code == 200
+
+    # Neither helper saw any input.
+    assert fetcher.captured == {}
+    assert renderer.captured == {}
+
+    # Orchestrator's W2 kwargs were NOT populated.
+    assert orch.captured["pdf_pages"] is None
+    assert orch.captured["document_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_document_id_with_non_pdf_mimetype_returns_422() -> None:
+    """If the document store records the file as image/jpeg, the renderer
+    can't parse it as PDF — surface that to the panel as 422 (the same
+    status the legacy /turn route uses)."""
+    fetcher = _CapturingDocumentBytesFetcher(
+        content=b"\xff\xd8\xff", mimetype="image/jpeg"
+    )
+    renderer = _CapturingPdfRenderer()
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=fetcher,
+        pdf_renderer=renderer,
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract",
+                "patient_uuid": "p",
+                "document_id": "5",
+            },
+        )
+
+    assert resp.status_code == 422
+    # Renderer must NOT have been called for a non-pdf mimetype.
+    assert renderer.captured == {}
+
+
+@pytest.mark.asyncio
+async def test_document_bytes_transport_failure_maps_to_503() -> None:
+    """Mirrors legacy main.py /turn behavior: status_code == 0 from the
+    fetcher (transport failure) → 503."""
+    from agentforge.tools.document_bytes import DocumentBytesFetchError
+
+    class _FailingFetcher:
+        async def fetch(self, *, document_id: int, raw_token: str) -> Any:
+            raise DocumentBytesFetchError(
+                status_code=0, message="transport failure"
+            )
+
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=_FailingFetcher(),
+        pdf_renderer=_CapturingPdfRenderer(),
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract",
+                "patient_uuid": "p",
+                "document_id": "5",
+            },
+        )
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_document_bytes_upstream_error_maps_to_502() -> None:
+    """Non-zero status_code from the fetcher (upstream error) → 502."""
+    from agentforge.tools.document_bytes import DocumentBytesFetchError
+
+    class _FailingFetcher:
+        async def fetch(self, *, document_id: int, raw_token: str) -> Any:
+            raise DocumentBytesFetchError(status_code=403, message="forbidden")
+
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=_FailingFetcher(),
+        pdf_renderer=_CapturingPdfRenderer(),
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract",
+                "patient_uuid": "p",
+                "document_id": "5",
+            },
+        )
+    assert resp.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_document_id_provided_without_fetcher_returns_500() -> None:
+    """Defensive: if main.py mounts the router without a fetcher
+    (misconfiguration), a request with document_id must not silently
+    proceed without rendering — surface a 500 so the operator notices."""
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        # No fetcher / renderer wired.
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract",
+                "patient_uuid": "p",
+                "document_id": "5",
+            },
+        )
+    assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_document_id_must_be_positive() -> None:
+    """Pydantic / route validation rejects 0 / negative document_id."""
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+        document_bytes_fetcher=_CapturingDocumentBytesFetcher(),
+        pdf_renderer=_CapturingPdfRenderer(),
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "extract",
+                "patient_uuid": "p",
+                "document_id": "0",
+            },
+        )
+    assert resp.status_code == 422

@@ -716,6 +716,13 @@ def create_app(
                 jwt_minter=jwt_minter,
                 auth_gateway=auth_gateway,
                 orchestrator=orchestrator,
+                # T38.15: when a request body carries ``document_id``,
+                # the route fetches bytes via this fetcher and renders
+                # them via this renderer before forwarding to the
+                # orchestrator. Reuses the same singletons the legacy
+                # /turn route uses (constructed earlier in create_app).
+                document_bytes_fetcher=document_bytes_fetcher_instance,
+                pdf_renderer=pdf_renderer_instance,
             )
         )
 
