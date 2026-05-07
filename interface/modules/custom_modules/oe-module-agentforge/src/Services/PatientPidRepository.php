@@ -37,7 +37,10 @@ class PatientPidRepository
      */
     public function findPidByUuid(string $uuid): ?int
     {
-        $sql = 'SELECT pid FROM patient_data WHERE uuid = ? LIMIT 1';
+        // patient_data.uuid is BINARY(16) (same convention as users.uuid).
+        // The dashboard supplies the hyphenated string form from the
+        // FHIR Patient resource id; we convert at the SQL boundary.
+        $sql = 'SELECT pid FROM patient_data WHERE uuid = UNHEX(REPLACE(?, "-", "")) LIMIT 1';
 
         $row = $this->connection->fetchOne($sql, [$uuid]);
         if ($row === false) {

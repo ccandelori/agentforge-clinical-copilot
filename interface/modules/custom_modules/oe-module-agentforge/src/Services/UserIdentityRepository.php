@@ -38,7 +38,10 @@ class UserIdentityRepository
      */
     public function findByUuid(string $uuid): ?UserIdentity
     {
-        $sql = 'SELECT id, username FROM users WHERE uuid = ? LIMIT 1';
+        // OpenEMR stores uuid as BINARY(16). The OIDC fhirUser claim
+        // emits the hyphenated string form, so convert at the SQL
+        // boundary rather than reshaping the input upstream.
+        $sql = 'SELECT id, username FROM users WHERE uuid = UNHEX(REPLACE(?, "-", "")) LIMIT 1';
 
         $row = $this->connection->fetchAssociative($sql, [$uuid]);
         if ($row === false) {

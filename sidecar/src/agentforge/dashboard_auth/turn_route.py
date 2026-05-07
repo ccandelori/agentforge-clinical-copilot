@@ -35,10 +35,13 @@ follow with the intake form / research-mode subtasks.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+
+_log = logging.getLogger(__name__)
 
 from agentforge.config import Settings
 from agentforge.dashboard_auth.internal_jwt import (
@@ -158,13 +161,20 @@ def make_agent_turn_router(
         except OpenEMRMeFetchError as exc:
             # 5xx / transport / 4xx from /me all surface as 502 to the
             # dashboard — the BFF itself is fine, but the upstream
-            # bootstrap failed. The dashboard treats this as
-            # "couldn't talk to OpenEMR; ask the user to retry".
+            # bootstrap failed. Log the upstream status + UUID we
+            # tried so failures are diagnosable from the sidecar log.
+            _log.warning(
+                "Bridge /me failed: upstream_status=%s user_uuid=%s err=%s",
+                exc.status_code,
+                user_uuid,
+                exc,
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={
                     "error": "OpenEMR identity bootstrap failed.",
                     "upstream_status": exc.status_code,
+                    "stage": "me",
                 },
             ) from exc
         identity_cache[session.access_token] = identity
@@ -177,11 +187,18 @@ def make_agent_turn_router(
         try:
             pid = await patient_pid_fetcher.fetch(patient_uuid=patient_uuid)
         except OpenEMRPatientPidFetchError as exc:
+            _log.warning(
+                "Bridge /patient_pid failed: upstream_status=%s patient_uuid=%s err=%s",
+                exc.status_code,
+                patient_uuid,
+                exc,
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={
                     "error": "OpenEMR patient bootstrap failed.",
                     "upstream_status": exc.status_code,
+                    "stage": "patient_pid",
                 },
             ) from exc
         patient_pid_cache[patient_uuid] = pid
