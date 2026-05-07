@@ -29,7 +29,9 @@ const STORAGE_KEY = 'agentforge-conversations'
 
 export type MessageRole = 'user' | 'assistant'
 
-export type { Citation } from '@/composables/useAgentTurn'
+export type { Citation, IntakeExtraction } from '@/composables/useAgentTurn'
+
+import type { IntakeExtraction } from '@/composables/useAgentTurn'
 
 export interface ChatMessage {
   readonly id: string
@@ -37,6 +39,12 @@ export interface ChatMessage {
   readonly text: string
   readonly createdAt: string
   readonly citations?: readonly Citation[]
+  /**
+   * Structured intake-form extraction snapshot the sidecar attaches when
+   * the turn included a scanned document. Drives the
+   * <ExtractionPanel> rendered below the assistant bubble.
+   */
+  readonly extraction?: IntakeExtraction
   /**
    * Set when the assistant turn failed (network error, timeout, non-2xx
    * from the sidecar). The chat pane styles error bubbles distinctly
@@ -337,6 +345,9 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
         createdAt: nowIso(),
         ...(result.citations.length > 0
           ? { citations: result.citations }
+          : {}),
+        ...(result.extraction !== undefined
+          ? { extraction: result.extraction }
           : {}),
       }
       conv.messages = [...conv.messages, assistantMsg]

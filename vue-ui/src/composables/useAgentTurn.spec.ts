@@ -135,4 +135,48 @@ describe('useAgentTurn', () => {
     expect(result.citations).toHaveLength(1)
     expect(result.citations[0]!.id).toBe('note-1')
   })
+
+  it('surfaces a parsed extraction when the sidecar attaches one', async () => {
+    const { respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'extract', document_id: '7' })
+    respond({
+      reply: 'extracted',
+      citations: [],
+      extraction: {
+        document_id: 7,
+        patient_id: 42,
+        extraction_confidence: 0.85,
+        chief_concern: 'Knee pain',
+        chief_concern_citation: {
+          source_type: 'intake_form',
+          source_id: 'doc-7',
+          page_or_section: 'page 1',
+          evidence_text: 'Chief: knee pain',
+        },
+        demographics: [],
+        medications: [],
+        allergies: [],
+        family_history: [],
+        unsupported_fields: [],
+      },
+    })
+    const result = await promise
+
+    expect(result.extraction).toBeDefined()
+    expect(result.extraction?.documentId).toBe(7)
+    expect(result.extraction?.chiefConcern).toBe('Knee pain')
+  })
+
+  it('omits extraction when the sidecar surfaces null', async () => {
+    const { respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'hi' })
+    respond({ reply: 'no doc attached', citations: [], extraction: null })
+    const result = await promise
+
+    expect('extraction' in result).toBe(false)
+  })
 })

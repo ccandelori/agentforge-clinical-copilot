@@ -1,5 +1,10 @@
 import { ref, type Ref } from 'vue'
 
+import {
+  parseIntakeExtraction,
+  type IntakeExtraction,
+} from './parseIntakeExtraction'
+
 // Wave 3 wiring: replaces vue-ui's canned typewriter with the real BFF
 // `/api/agent/turn` round-trip. The sidecar owns identity, JWT minting,
 // and `RequestContext` construction; this composable only shapes the
@@ -91,11 +96,20 @@ export interface AgentTurnRequest {
 export interface AgentTurnResult {
   readonly reply: string
   readonly citations: readonly Citation[]
+  /**
+   * Structured intake extraction surfaced when the turn included a
+   * scanned form. Null when the turn was a chart Q&A (no document
+   * attached) or when the W2 graph chose not to extract.
+   */
+  readonly extraction?: IntakeExtraction
 }
+
+export type { IntakeExtraction } from './parseIntakeExtraction'
 
 interface AgentTurnResponseBody {
   reply: string
   citations?: unknown
+  extraction?: unknown
 }
 
 const ALLOWED_KINDS: ReadonlySet<CitationKind> = new Set<CitationKind>([
@@ -199,8 +213,13 @@ export function useAgentTurn(): UseAgentTurn {
         throw new Error('Agent response was malformed.')
       }
       const citations = parseCitations(parsed.citations)
+      const extraction = parseIntakeExtraction(parsed.extraction)
       status.value = 'success'
-      return { reply: parsed.reply, citations }
+      return {
+        reply: parsed.reply,
+        citations,
+        ...(extraction !== null ? { extraction } : {}),
+      }
     } catch (caught) {
       let friendly: Error
       if (caught instanceof DOMException && caught.name === 'AbortError') {
