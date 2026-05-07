@@ -17,6 +17,35 @@ import {
   type Vital,
 } from '@/api/mock'
 
+// ---------------------------------------------------------------------------
+// In-memory patient bundle cache
+//
+// The patient chart aggregates seven FHIR queries; on the production droplet
+// each one is a real round-trip through Apache → sidecar → OpenEMR PHP.
+// Re-fetching the whole bundle every time the user navigates back to a
+// patient feels slow even when nothing's wrong. A small per-tab cache with
+// a short TTL keeps revisits instant while staying honest about staleness.
+// ---------------------------------------------------------------------------
+
+interface CachedBundle {
+  patient: Patient
+  vitals: readonly Vital[]
+  problems: readonly Problem[]
+  medications: readonly Medication[]
+  allergies: readonly Allergy[]
+  encounters: readonly Encounter[]
+  labs: readonly LabResult[]
+  fetchedAt: number
+}
+
+const CACHE_TTL_MS = 60_000
+const cache = new Map<string, CachedBundle>()
+
+/** Drop a patient's cache entry — used by the explicit `refresh()` action. */
+function invalidate(id: string): void {
+  cache.delete(id)
+}
+
 export interface UsePatientResult {
   readonly patient: Ref<Patient | null>
   readonly vitals: Ref<readonly Vital[]>
@@ -48,13 +77,36 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
   const loading = ref<boolean>(false)
   const error = ref<Error | null>(null)
 
+  function hydrateFromCache(entry: CachedBundle): void {
+    patient.value = entry.patient
+    vitals.value = entry.vitals
+    problems.value = entry.problems
+    medications.value = entry.medications
+    allergies.value = entry.allergies
+    encounters.value = entry.encounters
+    labs.value = entry.labs
+    error.value = null
+    loading.value = false
+  }
+
   async function load(id: string): Promise<void> {
+    // Cache hit within TTL — render instantly from the prior bundle.
+    // Encounters drift fastest (signing a note adds a row), but for the
+    // length of a single chart-review session a 60s window is generous
+    // without feeling stale.
+    const cached = cache.get(id)
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+      hydrateFromCache(cached)
+      return
+    }
+
     loading.value = true
     error.value = null
 
     // Patient is the only fetch the page truly can't render without —
     // every secondary card consumes the patient's identity / demographics.
     // Try it first; if it fails, surface the error and bail.
+    let resolvedPatient: Patient
     try {
       const p = await getPatient(id)
       if (p === null) {
@@ -63,6 +115,7 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
         return
       }
       patient.value = p
+      resolvedPatient = p
     } catch (err) {
       error.value = err instanceof Error ? err : new Error(String(err))
       loading.value = false
@@ -100,10 +153,28 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
       error.value = reason instanceof Error ? reason : new Error(String(reason))
     }
 
+    // Only cache when the whole bundle resolved cleanly — caching a
+    // partial bundle would freeze user-visible failures into the cache
+    // and the soft-warning Retry button would just keep re-rendering
+    // the same broken state.
+    if (!firstFail) {
+      cache.set(id, {
+        patient: resolvedPatient,
+        vitals: vitals.value,
+        problems: problems.value,
+        medications: medications.value,
+        allergies: allergies.value,
+        encounters: encounters.value,
+        labs: labs.value,
+        fetchedAt: Date.now(),
+      })
+    }
+
     loading.value = false
   }
 
   async function refresh(): Promise<void> {
+    invalidate(patientId.value)
     await load(patientId.value)
   }
 
