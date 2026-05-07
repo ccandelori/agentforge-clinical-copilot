@@ -1,87 +1,96 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
+import AgentChatPane from '@/components/agent/AgentChatPane.vue'
+import CitationsPane from '@/components/agent/CitationsPane.vue'
+import HistoryPane from '@/components/agent/HistoryPane.vue'
 import PatientContextConflictOverlay from '@/components/PatientContextConflictOverlay.vue'
-import { useAgentTurn } from '@/composables/useAgentTurn'
-import { useAgentDrawer, type AgentMode } from '@/stores/agentDrawer'
+import {
+  useAgentDrawer,
+  type AgentMode,
+  type AgentTab,
+} from '@/stores/agentDrawer'
 
-// AgentForge drawer shell (T38.10).
+// AgentForge drawer shell (T38.10 + T38.11 + UX polish).
 //
 // Lives at the App.vue level so it persists across route changes.
 // Reads/writes through the `useAgentDrawer` Pinia store; this component
-// stays focused on layout, animation, and mode-tab affordances.
+// stays focused on layout, the mode-tab strip, and the new tab strip
+// (Chat / Citations / History).
+//
+// The drawer has TWO orthogonal axes:
+//   * Mode  — Chart / Intake / Research (which agent surface). Owned
+//             by `store.mode`. Determines the active scope.
+//   * Tab   — Chat / Citations / History (which view of the active
+//             scope). Owned by `store.activeTab`. Independent of mode.
 //
 // Chart-mode messages are sent through the auth bridge described in
 // docs/adr/0001-dashboard-auth-bridging.md: dashboard cookie →
 // sidecar session → minted internal JWT → AuthGateway → Orchestrator.
-// Research and Intake modes are not yet wired to the agent (T38.11+);
-// the input is disabled in those modes until the cross-mode turn
-// surface is in place.
+// The chat pane (`AgentChatPane.vue`) owns the actual `/api/agent/turn`
+// call; this shell just hosts the panes.
 
 const store = useAgentDrawer()
-const agentTurn = useAgentTurn()
-const draft = ref<string>('')
 
-const tabs: { mode: AgentMode; label: string; testId: string }[] = [
+interface ModeTabDef {
+  readonly mode: AgentMode
+  readonly label: string
+  readonly testId: string
+}
+
+interface MainTabDef {
+  readonly tab: AgentTab
+  readonly label: string
+  readonly testId: string
+}
+
+const modeTabs: readonly ModeTabDef[] = [
   { mode: 'chart', label: 'Chart', testId: 'agent-tab-chart' },
   { mode: 'intake', label: 'Intake', testId: 'agent-tab-intake' },
   { mode: 'research', label: 'Research', testId: 'agent-tab-research' },
 ]
 
-function tabDisabled(mode: AgentMode): boolean {
+const mainTabs: readonly MainTabDef[] = [
+  { tab: 'chat', label: 'Chat', testId: 'agent-maintab-chat' },
+  { tab: 'citations', label: 'Citations', testId: 'agent-maintab-citations' },
+  { tab: 'history', label: 'History', testId: 'agent-maintab-history' },
+]
+
+const highlightedCitationId = ref<string | null>(null)
+
+function modeDisabled(mode: AgentMode): boolean {
   if (mode === 'chart') return !store.canChart
   if (mode === 'intake') return !store.canIntake
   return false
 }
 
-function selectTab(mode: AgentMode): void {
-  if (tabDisabled(mode)) return
+function selectMode(mode: AgentMode): void {
+  if (modeDisabled(mode)) return
   store.setMode(mode)
 }
 
-const agentReady = computed<boolean>(
-  () =>
-    store.mode === 'chart'
-    && store.canChart
-    && store.pendingPatientChange === null,
-)
-
-const inputDisabled = computed<boolean>(
-  () => !agentReady.value || agentTurn.status.value === 'loading',
-)
-
-function send(): void {
-  if (!agentReady.value) return
-  if (agentTurn.status.value === 'loading') return
-  const text = draft.value.trim()
-  if (text === '') return
-
-  // store.activePatient is the FHIR Patient resource UUID (the
-  // dashboard route's :pid param). The BFF route resolves it
-  // server-side into the integer pid the agent JWT carries —
-  // see ADR-0001 §5.
-  const patientUuid = store.activePatient
-  if (patientUuid === null || patientUuid === '') {
-    return
+function selectTab(tab: AgentTab): void {
+  store.setActiveTab(tab)
+  if (tab !== 'citations') {
+    highlightedCitationId.value = null
   }
-
-  store.addUserTurn(text)
-  draft.value = ''
-
-  void agentTurn
-    .send({
-      message: text,
-      patient_uuid: patientUuid,
-      session_id: store.currentScopeId,
-    })
-    .then((reply) => {
-      store.addAssistantTurn(reply)
-    })
-    .catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err)
-      store.addAssistantTurn(`Error: ${message}. Please try again.`)
-    })
 }
+
+function onCitationClickFromChat(id: string): void {
+  highlightedCitationId.value = id
+  store.setActiveTab('citations')
+}
+
+function onSelectConversation(id: string): void {
+  store.selectConversation(id)
+}
+
+function onNewConversation(): void {
+  store.newConversation()
+}
+
+const citationsCount = computed<number>(() => store.currentCitations.length)
+const historyCount = computed<number>(() => store.conversationHistory.length)
 </script>
 
 <template>
@@ -99,108 +108,138 @@ function send(): void {
 
   <aside
     v-if="store.open"
-    class="agent-drawer shadow-lg bg-white d-flex flex-column"
+    class="agent-drawer shadow-lg d-flex flex-column"
     role="dialog"
     aria-label="AgentForge drawer"
     data-test="agent-drawer"
   >
     <header
-      class="agent-drawer__header border-bottom px-3 py-2 d-flex align-items-center"
+      class="agent-drawer__header border-bottom px-3 py-2 d-flex flex-column gap-2"
     >
+      <div class="d-flex align-items-center gap-2">
+        <div
+          class="agent-drawer__brand-icon d-flex align-items-center justify-content-center rounded-2 flex-shrink-0"
+          aria-hidden="true"
+        >
+          <i class="bi bi-stars"></i>
+        </div>
+        <div class="d-flex flex-column lh-sm flex-grow-1 min-w-0">
+          <span class="fw-semibold small">AgentForge</span>
+          <span class="text-body-secondary" style="font-size: 0.7rem;">
+            Clinical Co-Pilot
+          </span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-link btn-sm text-body-secondary p-1"
+          aria-label="New conversation"
+          title="New conversation"
+          data-test="agent-new-conversation"
+          @click="onNewConversation"
+        >
+          <i class="bi bi-plus-lg" aria-hidden="true"></i>
+        </button>
+        <button
+          type="button"
+          class="btn btn-link btn-sm text-body-secondary p-1"
+          data-test="agent-drawer-close"
+          aria-label="Close drawer"
+          @click="store.close"
+        >
+          <i class="bi bi-x-lg" aria-hidden="true"></i>
+        </button>
+      </div>
+
       <div
-        class="btn-group btn-group-sm flex-grow-1"
+        class="btn-group btn-group-sm w-100"
         role="tablist"
         aria-label="Agent mode"
       >
         <button
-          v-for="tab in tabs"
-          :key="tab.mode"
+          v-for="t in modeTabs"
+          :key="t.mode"
           type="button"
           class="btn"
-          :class="store.mode === tab.mode ? 'btn-primary' : 'btn-outline-secondary'"
+          :class="store.mode === t.mode ? 'btn-primary' : 'btn-outline-secondary'"
           role="tab"
-          :data-test="tab.testId"
-          :disabled="tabDisabled(tab.mode)"
-          :aria-selected="store.mode === tab.mode ? 'true' : 'false'"
-          @click="selectTab(tab.mode)"
+          :data-test="t.testId"
+          :disabled="modeDisabled(t.mode)"
+          :aria-selected="store.mode === t.mode ? 'true' : 'false'"
+          @click="selectMode(t.mode)"
         >
-          {{ tab.label }}
+          {{ t.label }}
         </button>
       </div>
-      <button
-        type="button"
-        class="btn btn-link text-muted ms-2 p-1"
-        data-test="agent-drawer-close"
-        aria-label="Close drawer"
-        @click="store.close"
-      >
-        <i class="bi bi-x-lg" aria-hidden="true"></i>
-      </button>
     </header>
 
+    <nav
+      class="agent-drawer__tabs border-bottom d-flex"
+      role="tablist"
+      aria-label="Drawer view"
+    >
+      <button
+        v-for="t in mainTabs"
+        :key="t.tab"
+        type="button"
+        class="agent-drawer__tab flex-grow-1 btn btn-link btn-sm rounded-0 px-3 py-2 d-inline-flex align-items-center justify-content-center gap-1"
+        :class="store.activeTab === t.tab ? 'agent-drawer__tab--active' : ''"
+        role="tab"
+        :data-test="t.testId"
+        :aria-selected="store.activeTab === t.tab ? 'true' : 'false'"
+        @click="selectTab(t.tab)"
+      >
+        <span>{{ t.label }}</span>
+        <span
+          v-if="t.tab === 'citations' && citationsCount > 0"
+          class="badge text-bg-secondary"
+          style="font-size: 0.625rem;"
+        >
+          {{ citationsCount }}
+        </span>
+        <span
+          v-if="t.tab === 'history' && historyCount > 0"
+          class="badge text-bg-secondary"
+          style="font-size: 0.625rem;"
+        >
+          {{ historyCount }}
+        </span>
+      </button>
+    </nav>
+
     <div
-      class="agent-drawer__body flex-grow-1 overflow-auto position-relative px-3 py-3"
+      class="agent-drawer__body flex-grow-1 position-relative overflow-hidden"
     >
       <PatientContextConflictOverlay />
 
-      <ul
-        class="list-unstyled mb-0 d-flex flex-column gap-2"
-        data-test="agent-message-list"
+      <!-- Chat pane stays mounted (v-show) so existing data-test ids
+           (agent-input, agent-send, agent-message-list) remain in the
+           DOM regardless of which tab is active — and so the composer's
+           textarea height tracking survives tab switches. -->
+      <div
+        v-show="store.activeTab === 'chat'"
+        class="h-100"
+        role="tabpanel"
+        aria-label="Chat"
       >
-        <li
-          v-for="(msg, idx) in store.currentMessages"
-          :key="idx"
-          :class="msg.role === 'user' ? 'text-end' : 'text-start'"
-        >
-          <span
-            class="d-inline-block px-3 py-2 rounded"
-            :class="
-              msg.role === 'user'
-                ? 'bg-primary text-white'
-                : 'bg-light text-body border'
-            "
-          >
-            {{ msg.text }}
-          </span>
-        </li>
-      </ul>
-      <p
-        v-if="store.currentMessages.length === 0"
-        class="text-muted small mb-0"
-      >
-        Start a conversation in
-        <strong>{{ store.mode }}</strong> mode.
-      </p>
-    </div>
-
-    <footer class="agent-drawer__footer border-top p-2">
-      <div class="input-group input-group-sm">
-        <input
-          v-model="draft"
-          type="text"
-          class="form-control"
-          :placeholder="
-            agentReady
-              ? agentTurn.status.value === 'loading'
-                ? 'Thinking…'
-                : 'Ask AgentForge…'
-              : 'Open a patient chart to chat with the agent.'
-          "
-          data-test="agent-input"
-          :disabled="inputDisabled"
-          @keyup.enter="send"
-        />
-        <button
-          type="button"
-          class="btn btn-primary"
-          data-test="agent-send"
-          :disabled="inputDisabled"
-          @click="send"
-        >
-          {{ agentTurn.status.value === 'loading' ? '…' : 'Send' }}
-        </button>
+        <AgentChatPane @citation-click="onCitationClickFromChat" />
       </div>
-    </footer>
+      <div
+        v-if="store.activeTab === 'citations'"
+        class="h-100"
+        role="tabpanel"
+        aria-label="Citations"
+      >
+        <CitationsPane :highlighted-id="highlightedCitationId" />
+      </div>
+      <div
+        v-if="store.activeTab === 'history'"
+        class="h-100"
+        role="tabpanel"
+        aria-label="History"
+      >
+        <HistoryPane @select="onSelectConversation" />
+      </div>
+    </div>
   </aside>
 </template>
 
@@ -213,6 +252,16 @@ function send(): void {
   width: 480px;
   max-width: 100vw;
   z-index: 1040;
+  background-color: var(--surface);
+  color: var(--ink);
+  border-left: 1px solid var(--line);
+}
+
+.agent-drawer__brand-icon {
+  width: 2rem;
+  height: 2rem;
+  background-color: var(--bs-primary);
+  color: #fff;
 }
 
 .agent-drawer__toggle {
@@ -224,5 +273,27 @@ function send(): void {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
   z-index: 1030;
+}
+
+.agent-drawer__tab {
+  color: var(--ink-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  font-weight: 500;
+}
+
+.agent-drawer__tab:hover,
+.agent-drawer__tab:focus-visible {
+  color: var(--ink);
+  background-color: var(--surface-2);
+}
+
+.agent-drawer__tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.agent-drawer__tab--active:hover {
+  color: var(--accent-hover);
 }
 </style>

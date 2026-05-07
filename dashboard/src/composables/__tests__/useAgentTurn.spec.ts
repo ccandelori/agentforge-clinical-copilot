@@ -48,13 +48,14 @@ describe('useAgentTurn', () => {
     )
 
     const turn = useAgentTurn()
-    const reply = await turn.send({
+    const result = await turn.send({
       message: 'ping',
       patient_uuid: 'patient-uuid-abc',
       session_id: 'chart:patient-uuid-abc',
     })
 
-    expect(reply).toBe('pong')
+    expect(result.reply).toBe('pong')
+    expect(result.citations).toEqual([])
     expect(spy.lastRequest?.url).toBe('/api/agent/turn')
     expect(spy.lastRequest?.init?.method).toBe('POST')
     expect(spy.lastRequest?.init?.credentials).toBe('same-origin')
@@ -67,6 +68,61 @@ describe('useAgentTurn', () => {
         session_id: 'chart:patient-uuid-abc',
       }),
     )
+  })
+
+  it('parses citations from the response when sidecar returns them', async () => {
+    mockFetch(() =>
+      new Response(
+        JSON.stringify({
+          reply: 'with sources',
+          citations: [
+            {
+              id: 'c-1',
+              source: 'Note 2024-09-12',
+              excerpt: 'BP 128/78',
+              date: '2024-09-12',
+              kind: 'note',
+              provenance: 'Encounter/abc',
+            },
+            {
+              id: 'c-2',
+              source: 'Lab Result',
+              excerpt: 'A1C 6.8%',
+              date: '2024-08-30',
+              kind: 'lab',
+            },
+            // Unknown kind — should be dropped at the boundary.
+            {
+              id: 'c-bad',
+              source: 'x',
+              excerpt: 'x',
+              date: 'x',
+              kind: 'imaging',
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    )
+
+    const turn = useAgentTurn()
+    const result = await turn.send({ message: 'q', patient_uuid: 'p' })
+    expect(result.reply).toBe('with sources')
+    expect(result.citations).toHaveLength(2)
+    expect(result.citations[0]?.id).toBe('c-1')
+    expect(result.citations[0]?.provenance).toBe('Encounter/abc')
+    expect(result.citations[1]?.id).toBe('c-2')
+  })
+
+  it('returns an empty citations array when sidecar omits the field', async () => {
+    mockFetch(() =>
+      new Response(JSON.stringify({ reply: 'no cites' }), { status: 200 }),
+    )
+
+    const turn = useAgentTurn()
+    const result = await turn.send({ message: 'q', patient_uuid: 'p' })
+    expect(result.reply).toBe('no cites')
+    expect(result.citations).toEqual([])
   })
 
   it('omits session_id from the body when not provided', async () => {
