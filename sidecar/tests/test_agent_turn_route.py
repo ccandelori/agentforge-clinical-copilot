@@ -217,7 +217,11 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
         )
 
     assert resp.status_code == 200
-    assert resp.json() == {"reply": "ok"}
+    # AgentTurnResponse now includes a `citations` field (T38.11) that
+    # defaults to [] when the orchestrator reply has no inline [type #id]
+    # markers. The test reply is the bare string "ok" so no citations
+    # are extracted; assert the exact shape including the empty list.
+    assert resp.json() == {"reply": "ok", "citations": []}
 
     # Orchestrator received the right ctx — user_id from /me, pid from
     # /patient_pid — both routed through the real AuthGateway.
