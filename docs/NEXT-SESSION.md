@@ -1,268 +1,310 @@
-# Where we left off — 2026-05-06 (W2 pivoted: dashboard port to Vue 3)
+# Where we left off — 2026-05-06 night (chart row complete; drawer next)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-**W2 scope expanded mid-week.** A Surprise Challenge brief landed on
-2026-05-06 requiring the OpenEMR patient dashboard to be ported to a
-modern frontend framework. **Deadline: 2026-05-10 noon** — effectively
-Saturday night / Sunday wee hours. Brief: `~/Downloads/AgentForge —
-Clinical Co-Pilot W2 — Surprise Challenge_ Modernize the Patient
-Dashboard.pdf`.
+**The entire chart row landed in one Wednesday-evening session.**
+T38.3 (patient header + picker + ClinicalCard wrapper) plus the six
+clinical cards (T38.4 Allergies, T38.5 Problem List, T38.6 Active
+Medications, T38.7 Prescription history, T38.8 Care Team, T38.9 Lab
+Results) all shipped TDD-style with 160 vitest specs total. Branch
+`feat/dashboard-port` is 13 commits ahead of origin, **no MR yet**.
+T38.10 (AgentForge drawer) is the next big architectural move.
 
 | MR | Branch | Status |
 |---|---|---|
 | !35 | `feat/w2-mr7-cutover-wiring` | merged 2026-05-06 |
 | !36 | `feat/w2-task-24-citation-overlay` | merged 2026-05-06 |
-| (open) | `feat/dashboard-port` | 1 commit (T38.1 scaffold), no MR yet |
+| (open) | `feat/dashboard-port` | 13 commits, no MR yet |
 
-`task-master next` — work the 14 subtasks under **Task 38** in
-dependency order; T38.2 (OAuth2/OIDC) is the next-up after the scaffold.
+`task-master next` — **T38.10 (AgentForge drawer)** is the next-up
+critical-path task. T38.13 (defense doc) remains parallel-friendly.
 
-## What just shipped this session
+## What shipped this session (Wed evening 2026-05-06)
 
-* **MR !35 — MR 7 production cutover wiring.** Upload → extract →
-  synthesize end-to-end through OpenEMR UI. Merged.
-* **MR !36 — Task 24 citation overlay + integration.** pdf.js 5.7.284
-  vendored via npm/gulp at `public/assets/pdfjs-dist/`; vanilla-JS
-  citation overlay component with 1-indexed page contract preserved;
-  citation chips in the receipts panel wire clicks to
-  `window.AgentforgeCitationOverlay.mount()`. 31 new JS tests, 400 total
-  passing. Merged.
-* **`.gitignore` rule** for `sites/default/documents/[0-9]*/` (encrypted
-  runtime patient uploads).
-* **Panel-placement design grilling** (2026-05-06) — five decisions
-  resolved before the W2 surprise landed (see "Decision spine" below).
-* **W2 Surprise Challenge plan** — Task 38 created with 14 subtasks;
-  framework defense seeded; `feat/dashboard-port` branch off main with
-  T38.1 (scaffold) committed and pushed.
+Eight commits on `feat/dashboard-port`:
+
+```
+feb872a4c  chore(taskmaster): mark T38.3–T38.9 done; add T39
+de945ce24  feat(dashboard): lab results card + sparklines (T38.9)
+17f91390d  feat(dashboard): care team card (T38.8)
+25ba3be8c  feat(dashboard): prescription history card (T38.7)
+18099a5b7  feat(dashboard): active medications card (T38.6)
+83f266e85  feat(dashboard): problem list card (T38.5)
+2e801314b  feat(dashboard): allergies card + collapse on ClinicalCard (T38.4)
+7112b6ed6  feat(dashboard): patient header + picker + ClinicalCard (T38.3)
+```
+
+Plus **T39** (low priority) added: seed CareTeam data in dev-easy
+because `care_teams` and `care_team_member` tables are both empty
+(0 rows) — the card itself works correctly, just renders empty for
+every patient.
+
+## The card pattern (stable; T38.10+ should respect it)
+
+Every chart card follows the same shape; cloning is a 30-min move:
+
+* `defineProps<{ pid: string }>()`
+* `useFhirResource<fhir4.Bundle>('/api/fhir/Resource?patient=…')`
+  auto-fires; exposes `status`, `data`, `error`, `refetch`
+* Type-guard via `is<Resource>(r): r is fhir4.Resource`
+* Project entries → row interface (`name`, `status`, `date`, etc.)
+* Sort by clinical-importance rank then date desc (or just date)
+* `cardState` computed: `loading | empty | error | ready`
+* Render via `<ClinicalCard collapsible :title :count :state :error>`
+  — header chevron toggle, slots for `loading | empty | error |
+  default`, v-show on body so child composables don't refire on expand
+
+Shared helpers worth knowing:
+
+* `useFhirResource<T>(path)` at `src/composables/useFhirResource.ts`
+  — cookie-authed FHIR fetch. Auto-fires on mount, `refetch()` to
+  refresh. Same Accept header (`application/fhir+json`), same
+  `credentials: 'same-origin'`.
+* `formatFhirDate(iso)` at `src/utils/formatDate.ts` — handles
+  `YYYY-MM-DD` (parses as local-date to dodge UTC-midnight TZ shift)
+  and ISO datetime strings; returns `'—'` for null/undefined/empty.
+* `<ClinicalCard>` at `src/components/ClinicalCard.vue` — title,
+  count, header-actions slot, optional collapsible chevron.
+
+## Discoveries this session worth carrying forward
+
+### Data gaps (Synthea / dev-easy)
+
+* **CareTeam:** Synthea bundles ship 1-5 CareTeams per patient with
+  multiple clinicians, but OpenEMR's `care_teams` + `care_team_member`
+  tables have 0 rows. Whatever ingestion path populated allergies /
+  conditions / medications skipped CareTeam. **T39** captures the
+  follow-up.
+* **Problem List:** Synthea `Condition` resources are all
+  `category=encounter-diagnosis`, never `problem-list-item`. Strict
+  category filter (per T38.5 spec) returns empty for every patient.
+* **Active Medications:** All Synthea `MedicationRequest` resources
+  have `status=completed`, so the active-status filter is empty.
+  T38.7's history card surfaces them all.
+* **Lab interpretation/refRange:** Synthea `Observation` resources
+  don't carry `interpretation[]` or `referenceRange[]`. Color coding
+  (red high / blue low / bold red critical) is wired correctly but
+  doesn't fire on dev-easy data. To colorize, we'd need hardcoded
+  LOINC ranges — out of scope for the cards.
+
+### OpenEMR FHIR mapper bugs to know
+
+* **`{entry.value}` template placeholder:** OpenEMR's FHIR mapper
+  sometimes emits an unsubstituted Smarty/template string as
+  `Observation.valueString` instead of the actual value (observed
+  on Cause of Death observations, LOINC 69453-9). LabResultsCard
+  filters them via `/^\{[^}]+\}$/`.
+* **`/userinfo` returns 404** despite OIDC discovery advertising it
+  (still applies; sidecar reads identity from id_token JWT).
+* **`procedure_result` UUID-backfill SQL bug** still occasionally
+  hits the FHIR `/metadata` endpoint with a 500 (doesn't affect any
+  of the chart cards' endpoints).
+
+### TDD wrinkle
+
+* `wrapper.isVisible()` from `@vue/test-utils` is flaky in JSDOM for
+  `v-show` ancestor styles (relies on `getComputedStyle` /
+  `offsetParent` which JSDOM doesn't fully implement). Inspect the
+  inline style attribute directly — see `ClinicalCard.spec.ts`'s
+  `bodyHidden(wrapper)` helper for the pattern.
+* `oxlint` requires explicit type parameters on `vi.fn()` mocks;
+  mocking fetch should look like `vi.fn<typeof fetch>().mockResolvedValue(...)`.
 
 ## Branch state
 
-`feat/dashboard-port` (off main, 1 commit, pushed). Working tree has
-local-only doc edits the user has called out as not-important
-(`docs/NEXT-SESSION.md` ← the file you're reading,
-`docs/w2-defense-slides.html`, `docs/architecture-overview-slides.html`).
+`feat/dashboard-port` (13 commits ahead of origin, pushed). Working
+tree only has the two not-important doc HTMLs:
 
-## The W2 dashboard port plan (Task 38 + 14 subtasks)
+```
+M  docs/w2-defense-slides.html
+?? docs/architecture-overview-slides.html
+```
+
+Both flagged as not-important previously; ignore for commits.
+
+## The W2 dashboard port plan (Task 38)
 
 ```
 38   Port the OpenEMR patient dashboard to Vue 3
 ├── 38.1   Scaffold Vue 3 project at dashboard/         ✓ done
-├── 38.2   OAuth2/OIDC login flow against OpenEMR       ← next
-├── 38.3   Patient header (FHIR Patient)                deps: 38.2
-├── 38.4   Allergies card (FHIR AllergyIntolerance)     deps: 38.3
-├── 38.5   Problem List card (FHIR Condition)           deps: 38.3
-├── 38.6   Medications card (MedicationStatement)       deps: 38.3
-├── 38.7   Prescriptions card (MedicationRequest)       deps: 38.3
-├── 38.8   Care Team card (FHIR CareTeam)               deps: 38.3
-├── 38.9   Lab Results card (FHIR Observation, bonus)   deps: 38.3
-├── 38.10  AgentForge drawer (right-edge slide-out)     deps: 38.2, 38.3
+├── 38.2   OAuth2/OIDC login flow against OpenEMR       ✓ done (v1+v2)
+├── 38.3   Patient header (FHIR Patient)                ✓ done
+├── 38.4   Allergies card (FHIR AllergyIntolerance)     ✓ done
+├── 38.5   Problem List card (FHIR Condition)           ✓ done
+├── 38.6   Medications card (MedicationRequest, active) ✓ done
+├── 38.7   Prescriptions card (MedicationRequest hist)  ✓ done
+├── 38.8   Care Team card (FHIR CareTeam)               ✓ done (empty data — see T39)
+├── 38.9   Lab Results card (FHIR Observation, bonus)   ✓ done
+├── 38.10  AgentForge drawer (right-edge slide-out)     ← next
 ├── 38.11  Citation overlay re-port to Vue + FHIR Bin   deps: 38.10
-├── 38.12  Intake review form + FHIR write commit       deps: 38.10, 38.11
+├── 38.12  Intake review form + commit (path TBD)       deps: 38.10, 38.11
 ├── 38.13  PATIENT_DASHBOARD_MIGRATION.md defense doc   ← parallel
-└── 38.14  Deploy new dashboard to droplet              deps: cards + drawer
+└── 38.14  Deploy new dashboard to droplet              deps: drawer + overlay
+
+39   Seed CareTeam data in dev-easy                     ○ low priority
 ```
 
-**Critical path** (sequential): 38.1 → 38.2 → 38.3 → 38.10 → 38.11 →
-38.12 → 38.14. Cards 38.4–38.9 and the defense doc 38.13 are
-parallel-friendly with the critical path.
+**Remaining critical path**: 38.10 → 38.11 → 38.12 → 38.14. Defense
+doc (38.13) and seed-CareTeam (T39) are parallel-friendly.
 
-**Card pattern leverage:** build 38.4 (allergies) carefully — establish
-a `<ClinicalCard>` wrapper component (collapse/expand chrome,
-loading/empty/error states, FHIR fetch composable) — then 38.5–38.9 each
-become 30–45 min copy-paste-modify operations. That bank pays for the
-drawer/overlay polish on Saturday.
+## Decision spine — unchanged from pre-session
 
-## Decision spine
-
-Things that are settled and shouldn't be re-litigated:
-
-### Framework
+### Framework — unchanged
 
 **Vue 3 + Vite + TypeScript + Vue Router + Pinia + BootstrapVueNext +
-Bootstrap 5/Icons + oidc-client-ts + @types/fhir + pdfjs-dist@5.7.284 +
-Vitest.** No JSX. No Playwright (revisit Saturday morning if there's
-slack). Repo layout: `dashboard/` at repo root, sibling to `sidecar/`,
-independent `package.json`/`node_modules`.
+Bootstrap 5/Icons + @types/fhir + pdfjs-dist@5.7.284 + Vitest.** No
+JSX. No Playwright (revisit Saturday morning if there's slack).
 
-The defense (graded artifact at `PATIENT_DASHBOARD_MIGRATION.md`):
-three legs — gain over PHP-rendered, Vue specifically vs alternatives
-(React / Angular / Svelte / Qwik / HTMX), tradeoffs accepted. Qwik is
-called out as the road-not-taken with concrete reasons (UI ecosystem
-maturity for clinical cards, OAuth lib maturity, learning-curve risk on
-a 3.5-day timer). Narrative arc: **predictability is a clinical-software
-value, not a hedge.**
+### Auth — settled v2 (BFF)
 
-### AgentForge drawer (settled in panel-placement grilling 2026-05-06)
+Sidecar holds OAuth2 client credentials; dashboard talks to `/auth/*`
+and `/api/fhir/*` over an HttpOnly session cookie. Tokens never touch
+JS. See `sidecar/src/agentforge/dashboard_auth/` for the implementation
+and `feat/dashboard-port`'s T38.2 commits for the dashboard side.
 
-* **Q1 — Shape:** right-edge slide-out drawer (~480–560px wide). Not
-  bottom-up, not floating, not left-edge.
+### AgentForge drawer — settled (carries from pre-pivot)
+
+* **Q1 — Shape:** right-edge slide-out drawer (~480-560px wide).
 * **Q2 — Persistence:** drawer stays open across tab/page navigation.
 * **Q3 — Patient-context safety:** when the active patient changes
-  while a Chart-mode conversation is in progress, render a **hard-
-  interrupt OVERLAY on top of the chat** (NOT a banner) with three
-  resolution buttons: *Switch to <new>'s conversation* / *Stay on
-  <previous>* / *Start fresh with <new>* (the third only when a stale
-  conversation exists for new). Send/input disabled until choice made.
-  Conversation must be **scoped per-patient** with absolutely no risk
-  of cross-patient pollution. Sidecar-side hard refusal if asserted
-  patient_id ≠ session pid is the safety belt; the overlay is the
-  belt-and-suspenders affordance.
+  while a Chart-mode conversation is in progress, render a hard-
+  interrupt **OVERLAY on top of the chat** with three resolution
+  buttons. Conversation must be **scoped per-patient**.
 * **Q4 — Three flows:** explicit mode tabs in the drawer header —
-  **Chart / Intake / Research**. Chart-mode keyed by patient_id;
-  Intake-mode keyed by upload session/document_id; Research-mode is
-  one global scope. **Explicit > implicit.** No silent flow inference.
-* **Q5 — Save-to-chart UI (Intake mode only):** structured review form
-  with single Commit button. Sections mirror IntakeFormExtraction
-  (chief concern, demographics, medications, allergies, family
-  history). Each row: editable value + include checkbox + citation
-  chip (provenance affordance, mounts overlay). Bottom: *Commit
-  selected to chart*. One audit gesture, edit-in-place handles the
-  "LLM read it slightly wrong" case, include checkboxes handle partial
-  commits.
+  **Chart / Intake / Research**. Explicit > implicit.
+* **Q5 — Save-to-chart UI (Intake mode only):** structured review
+  form with single Commit button.
 
-### Commit path (Q6 — INVALIDATED then RE-DECIDED)
+### Commit path (Q6) — TBD at T38.12
 
-Original recommendation pre-W2-pivot: browser → new session-authed
-PHP endpoint. **Invalidated** by the W2 brief — no new backend
-allowed. **Updated decision:** browser → FHIR API write directly
-(POST/PUT to FHIR `Condition`, `MedicationStatement`,
-`AllergyIntolerance`, `FamilyMemberHistory`, plus `QuestionnaireResponse`
-referencing the canonical intake Questionnaire as umbrella).
-Validate session pid matches form patient_id before writing.
-Optimistic UI with rollback on FHIR write failure.
+Three options at T38.12:
 
-### Bonus section choice
+a. **BFF proxy** the legacy REST writes (sidecar's token already has
+   `user/*.write` scopes; add a `/api/legacy/*` passthrough).
+b. **Defer commit-to-chart** — surface the structured intake-review
+   form, end with a *Copy structured summary* button. Demo-grade.
+c. Keep deferred and revisit if there's slack on Saturday.
 
-**Lab Results** (FHIR `Observation`, laboratory category) — chosen
-over encounter history / vitals / immunizations / appointments /
-patient notes because W2 already has lab-extraction infrastructure and
-a labs card with normal-range coloring + sparkline trends shows off
-something more concrete than a static list.
+## Next session pick-up — T38.10 (AgentForge drawer)
 
-## Next session pick-up — T38.2 (OAuth2/OIDC login flow)
+The drawer is the next big architectural piece. Per the decision
+spine (above): right-edge slide-out, ~480-560px wide, persistent
+across navigation, three explicit mode tabs (Chart / Intake /
+Research), per-patient conversation scoping with a hard-interrupt
+overlay on patient-context change.
 
-The substantive auth work. Scope:
+### Likely shape (subject to TDD discipline)
 
-1. **OpenEMR OAuth2 client registration.** OpenEMR exposes
-   `/oauth2/<site>/{authorize,token,userinfo,jwks}`. Register the
-   dashboard as an OAuth2 client (Authorization Code + PKCE) via
-   OpenEMR admin → Client Registrations. Capture the client_id +
-   redirect_uri setup steps in PATIENT_DASHBOARD_MIGRATION.md.
-2. **`oidc-client-ts` config.** authority = OpenEMR base + `/oauth2/<site>`,
-   client_id from .env, redirect_uri = `<dashboard>/auth/callback`,
-   scope = `openid fhirUser patient/*.read patient/*.write`,
-   response_type = `code`, PKCE enabled.
-3. **Pinia auth store.** id_token + access_token + expiry; refresh
-   logic; sign-out tears down session and revokes. Token storage:
-   `sessionStorage` (cleared on tab close), never `localStorage` in
-   plaintext.
-4. **Vue Router auth guard.** Unauthenticated routes redirect to
-   `/login`. `/auth/callback` view handles the authorization-code
-   exchange.
-5. **LoginView + OAuthCallbackView.** Minimal Bootstrap 5 layouts;
-   the actual visual polish lands with the patient header in 38.3.
-6. **Tests.** Vitest covers the Pinia store transitions (signed-out →
-   signing-in → signed-in → signed-out, refresh path) with mocked
-   `oidc-client-ts`. The full OAuth handshake is browser-only —
-   verified manually against dev-easy after the wiring lands.
+* `<AgentDrawer>` shell component — slide-out animation, three mode
+  tabs, scoped per-patient.
+* Pinia store `useAgentDrawer` — current mode, drawer open/closed,
+  per-patient conversation registry, active conversation id.
+* Composable bridging the sidecar's existing `/turn` endpoint —
+  reuse the W2 graph + intake/evidence flows; auth flips from a
+  custom JWT to the sidecar session cookie since sidecar now owns
+  sessions.
+* PatientDashboardView gets a `<AgentDrawer>` mounted at root level
+  (sibling to the navbar + main, fixed-positioned right edge).
+* Patient-context overlay — when `patientId` changes while a Chart
+  conversation has unsaved state, render a modal-ish overlay with
+  three resolution buttons (Discard / Save & Switch / Cancel).
 
-Estimated: 2–3 hr of careful work.
+### Estimated cost
 
-## Time budget reality check (~28 hrs total)
+3-4 hr — drawer shell + three modes + overlay + Pinia store + sidecar
+bridging. Bigger than any single card.
 
-| Day | Hours | Tasks |
-|---|---|---|
-| Wed evening (done) | 4 | T38.1 scaffold (✓) |
-| Thu | 8 | T38.2 auth, T38.3 header, T38.4 allergies (exemplar card), T38.5 problem list |
-| Fri | 8 | T38.6 meds, T38.7 prescriptions, T38.8 care team, T38.9 labs, T38.10 drawer (start) |
-| Sat | 8 | T38.10 drawer (finish), T38.11 overlay re-port, T38.12 commit form, T38.13 defense doc, T38.14 deploy |
+## Time budget reality check
 
-Saturday is dense; the card-pattern leverage move is what makes it
-fit. Defense doc drafted in parallel from Wed night (already seeded);
-refine bullets daily so it isn't a Saturday-night writing exercise.
+| Day | Hours | Tasks | Status |
+|---|---|---|---|
+| Wed 2026-05-06 | ~8 | T38.1, T38.2 v1+v2, T38.3–T38.9, T39 | done |
+| Thu 2026-05-07 | 8 | T38.10 (drawer), T38.13 (defense doc start) | next |
+| Fri 2026-05-08 | 8 | T38.11 (overlay re-port), T38.12 (commit form), T38.13 polish | |
+| Sat 2026-05-09 | ~6 | T38.14 (deploy), T39 (if time), buffer for fixes | |
 
-## What's preserved from the pre-pivot W2 work
-
-* **Task 24 (citation overlay)** — merged. The vanilla `citation_overlay.js`
-  IIFE logic (1-indexed page contract, mount/unmount, click dismiss
-  with × button + onClose callback) ports as Vue component logic in
-  T38.11. Tests port to Vitest.
-* **`pdfjs-dist@5.7.284` npm dep** — already in OpenEMR's root
-  `package.json`. Dashboard installs its own copy at
-  `dashboard/package.json`.
-* **MR 7 backend (W2 graph + sidecar /turn + intake/evidence flows)** —
-  unchanged. The new dashboard talks to the sidecar via the same
-  /turn endpoint (different auth — JWT minted from the OAuth2
-  access_token instead of the OpenEMR session cookie).
-* **5-container droplet layout** at `143.244.157.90:9300/`. The
-  existing OpenEMR + sidecar + redis + mysql + phpmyadmin keep
-  running. T38.14 adds the dashboard SPA either via a new container,
-  an nginx volume, or a static mount on the existing sidecar
-  FastAPI — pick the lowest-friction option Saturday.
+**Deadline: Sat 2026-05-10 noon.** ~6 hours of cushion gained
+tonight by closing all six cards in one session instead of spread
+across Thu+Fri.
 
 ## Caveats / things to watch
 
-* **OpenEMR FHIR API capabilities.** The brief says "consume
-  OpenEMR's existing REST + FHIR API as your data layer" — verify
-  early which FHIR resources are actually exposed and writable on
-  the droplet's OpenEMR. Do this Wed/Thu night, not Saturday.
-* **CORS.** OpenEMR REST/FHIR endpoints likely need CORS configuration
-  to accept the dashboard origin. Surface in 38.2 (auth) when the
-  first OAuth call surfaces a CORS error.
-* **OAuth2 redirect URI mismatch** is the most common first-time
-  failure. Verify the exact URI registered in OpenEMR matches what
-  `oidc-client-ts` sends.
+### Runtime requirements (must be running for dashboard work)
+
+1. **Dev-easy stack** — `cd docker/development-easy && docker compose ps`
+   should show 7 containers. If down: `docker compose up --detach --wait`.
+2. **`agentforge-redis` container** — required by sidecar for sessions.
+   `docker ps --filter name=agentforge-redis`. If missing:
+   `docker run -d --name agentforge-redis -p 6379:6379 redis:7-alpine`.
+3. **Sidecar** — `cd sidecar && ./scripts/sidecar.sh status` should
+   say `running on :8000`. If not: `./scripts/sidecar.sh start`.
+4. **Vite dev server** — `cd dashboard && npm run dev`. Restart on
+   `vite.config.ts` edits (proxy block doesn't HMR).
+
+### Security / production tradeoffs accepted
+
+* **id_token signature verification deferred** — sidecar decodes the
+  JWT without verifying against the JWKS endpoint. T38.14 follow-up.
+* **Token refresh not wired** — when the access_token expires the
+  user gets re-prompted to sign in.
 * **Anthropic API key was leaked in conversation** during MR 7's
-  build session. Rotate before any non-demo use:
-  Anthropic console → revoke + reissue → update
-  `/opt/agentforge/sidecar/.env` → restart sidecar.
+  build session. Rotate before any non-demo use.
 * **HF cache is not mounted as a volume on the droplet** — every
-  redeploy re-downloads ~190 MB. One-line fix in
-  `scripts/deploy-droplet.sh` (mentioned but never landed; do
-  alongside T38.14 if there's time).
+  redeploy re-downloads ~190 MB.
 * **Disk pressure on the droplet** crossed 79% during MR 7 deploys.
   Run `docker system prune -f` before redeploys.
 
 ## Memory pointers (via `MEMORY.md`)
 
 * `project_w2_dashboard_port.md` — the surprise pivot, deadline,
-  framework lean, AgentForge-in-dashboard decision.
-* `project_panel_placement.md` — top-level drawer decision (resolved
-  one of the three pre-pivot open design decisions). Most of the
-  grilling output now lives in the Decision spine above.
+  framework lean.
+* `project_panel_placement.md` — top-level drawer decision.
 * `project_droplet.md` — droplet IP + SSH access.
 * `project_droplet_containers.md` — canonical 5-container layout.
+* `project_repo_layout.md` — sidecar/ + interface/modules/.../oe-module-agentforge/.
 * `feedback_git_workflow.md` — branch per task, one commit per
-  subtask, `Assisted-by: Claude Code` trailer.
-* `feedback_use_taskmaster_cli.md` — `task-master list/show/next`,
-  not raw tasks.json.
-* `feedback_no_rm_rf.md` — `rm` is permission-blocked at the agent
-  layer; surface paths to the user instead.
+  Taskmaster subtask, `Assisted-by` trailer, batched
+  `chore(taskmaster):` commits at session boundaries.
+* `feedback_task_ordering.md` — depth-first / context continuity
+  preferred when CLI proposes a context switch.
+* `feedback_use_taskmaster_cli.md` — `task-master list/show/next`
+  not raw JSON.
+* `feedback_no_rm_rf.md` — `rm -rf` is permission-blocked; use
+  `git rm` for tracked deletes.
+* `feedback_tdd_primary.md` — default to TDD; vitest for dashboard.
+* `user_web_background.md` — explain web fundamentals (cookies,
+  sessions, OAuth) from scratch when load-bearing.
 
 ## Quick-start checklist for next session
 
-1. `git status` — confirm clean (or known-not-important diffs).
-2. `git log --oneline -5` — verify latest is the T38.1 scaffold commit
-   on `feat/dashboard-port`.
-3. `task-master show 38` — confirm 38.1 done, 38.2 next.
-4. `cd dashboard && npm run dev` — confirm scaffold still serves at
-   `http://localhost:5173`.
-5. Begin T38.2: register the OAuth2 client in dev-easy OpenEMR's
-   admin → Client Registrations panel; copy client_id + redirect_uri
-   to `dashboard/.env`; wire `oidc-client-ts`.
-6. Manual verification after each piece lands: full OAuth handshake
-   in a real browser against dev-easy.
+1. `git status` — confirm clean (or known-not-important diffs only).
+2. `git log --oneline -5` — verify latest commit is
+   `feb872a4c chore(taskmaster): mark T38.3–T38.9 done; …`.
+3. `task-master show 38` — confirm 38.1–38.9 done, 38.10 pending.
+4. **Spin up the runtime stack** (in this order):
+   - `docker ps --filter name=agentforge-redis` — start if missing.
+   - `cd sidecar && ./scripts/sidecar.sh status` — start if not running.
+   - `cd dashboard && npm run dev` — confirm dashboard serves at
+     :5173, `/patient/<pid>` shows the full chart row.
+5. Begin T38.10:
+   - Sketch `<AgentDrawer>` shell + Pinia store from the decision
+     spine (mode tabs, patient-scoped conversations, persistent
+     across nav).
+   - Decide on overlay-on-patient-change UX (probably a Bootstrap
+     `<modal>` rendered above the drawer chat area, not the page).
+   - Wire to sidecar `/turn` with the existing session cookie (no
+     custom JWT — it's the same identity that owns the FHIR proxy).
 
 ## What's deployed where
 
 * **`http://143.244.157.90:9300/`** — production droplet running the
-  MR-7 image. Upload → extract → synthesize end-to-end through the
-  OpenEMR UI; W2 evidence retriever loaded; citation chips clickable
-  in the receipts panel (MR !36). The new Vue dashboard is **not yet
-  deployed** — that lands with T38.14 Saturday.
-* **`http://localhost:5173/`** (or whatever Vite picks) — local dev
-  server for the Vue dashboard, after `npm run dev` in `dashboard/`.
+  MR-7 image. Dashboard SPA **not yet deployed** — lands with T38.14.
+* **`http://localhost:5173/`** — local dashboard (Vite). `/auth/*`
+  and `/api/*` proxied to the sidecar at `localhost:8000`.
+* **`http://localhost:8000/`** — local sidecar (FastAPI). `/health`,
+  `/turn`, plus the dashboard BFF surface.
+* **`https://localhost:9300/`** — local dev-easy OpenEMR (HTTPS only
+  for OAuth2 endpoints).
