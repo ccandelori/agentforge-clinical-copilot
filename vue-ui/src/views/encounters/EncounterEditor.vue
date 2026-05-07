@@ -420,6 +420,19 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
         >
           {{ draftCtx.isDirty.value ? 'Saving…' : lastSavedLabel }}
         </span>
+        <!--
+          HIPAA: drafts persist to sessionStorage, not localStorage — they
+          live only for the current browser session. Surface that here so
+          clinicians don't expect cross-session recovery.
+        -->
+        <span
+          class="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded-full border border-line text-[10px] font-semibold text-ink-muted"
+          role="img"
+          aria-label="Drafts auto-save to this session only"
+          title="Drafts auto-save to this session only. Closing this tab clears the draft."
+        >
+          i
+        </span>
         <span v-if="draftCtx.signedAt.value" class="h-3 w-px bg-line" aria-hidden="true" />
         <span v-if="draftCtx.signedAt.value" class="text-success-700">Signed</span>
       </div>

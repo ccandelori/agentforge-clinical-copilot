@@ -1,7 +1,11 @@
 import { reactive, ref, watch, type Ref } from 'vue'
 
 /**
- * Encounter draft state shape. Persisted to localStorage as JSON.
+ * Encounter draft state shape. Persisted to **sessionStorage** as JSON
+ * (HIPAA: PHI must not sit at rest in unencrypted, cross-session browser
+ * storage; localStorage is therefore disqualified). Drafts die when the
+ * tab/session ends — surface that expectation in the editor UI.
+ *
  * Stays plain & serialisable on purpose — anything fancier (Date,
  * Map, Set) breaks `JSON.parse` round-trips.
  */
@@ -128,10 +132,32 @@ function defaultDraft(id: string): EncounterDraft {
   }
 }
 
+/**
+ * If a draft for this encounter id is sitting in `localStorage` (written by
+ * the pre-fix build), move it into `sessionStorage` and remove the original.
+ * Idempotent — safe to run on every hydrate.
+ */
+function migrateLegacyDraft(id: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const key = storageKey(id)
+    const legacy = window.localStorage.getItem(key)
+    if (legacy === null) return
+    // Don't clobber an in-flight session draft for the same encounter.
+    if (window.sessionStorage.getItem(key) === null) {
+      window.sessionStorage.setItem(key, legacy)
+    }
+    window.localStorage.removeItem(key)
+  } catch {
+    // Disabled / quota-exceeded — ignore.
+  }
+}
+
 function readFromStorage(id: string): EncounterDraft | null {
   if (typeof window === 'undefined') return null
   try {
-    const raw = window.localStorage.getItem(storageKey(id))
+    migrateLegacyDraft(id)
+    const raw = window.sessionStorage.getItem(storageKey(id))
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return null
@@ -146,7 +172,7 @@ function readFromStorage(id: string): EncounterDraft | null {
 function writeToStorage(id: string, draft: EncounterDraft): void {
   if (typeof window === 'undefined') return
   try {
-    window.localStorage.setItem(storageKey(id), JSON.stringify(draft))
+    window.sessionStorage.setItem(storageKey(id), JSON.stringify(draft))
   } catch {
     // Quota exceeded / disabled storage — ignore silently.
   }
@@ -189,6 +215,8 @@ export function useEncounterDraft(id: string): UseEncounterDraftReturn {
     signedAt.value = null
     isDirty.value = false
     if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(storageKey(id))
+      // Also clear any legacy localStorage entry so reset is total.
       window.localStorage.removeItem(storageKey(id))
     }
   }
