@@ -861,11 +861,11 @@ def create_app(
     # for unknown paths, which is what the Vue Router needs for deep
     # links to work after a hard refresh.
     #
-    # Local dev path defaults to ``<repo>/dashboard/dist`` resolved
+    # Local dev path defaults to ``<repo>/vue-ui/dist`` resolved
     # relative to this file so a developer who runs ``uvicorn ...``
     # directly from a checkout still gets the SPA mounted if they've
     # built it. The Vite dev server (``npm run dev``) remains the
-    # canonical local workflow — the proxy in ``dashboard/vite.config.ts``
+    # canonical local workflow — the proxy in ``vue-ui/vite.config.ts``
     # forwards ``/auth/*`` and ``/api/*`` to this same sidecar — so
     # this mount is only meaningful in two cases: production, and a
     # local "production-shape" smoke test.
@@ -876,11 +876,11 @@ def create_app(
     # problem, not a "the whole API is unreachable" problem.
     # ------------------------------------------------------------------
     # Container default is /app/dashboard/dist (set in compose / docker run).
-    # Local default resolves to <repo>/dashboard/dist — this file is at
+    # Local default resolves to <repo>/vue-ui/dist — this file is at
     # sidecar/src/agentforge/main.py so parents[3] is the repo root.
     # ``DASHBOARD_DIST_DIR`` env wins when set explicitly.
     default_dashboard_dist = (
-        Path(__file__).resolve().parents[3] / "dashboard" / "dist"
+        Path(__file__).resolve().parents[3] / "vue-ui" / "dist"
     )
     dashboard_dist_dir = Path(
         os.environ.get("DASHBOARD_DIST_DIR", str(default_dashboard_dist))

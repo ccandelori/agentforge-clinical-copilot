@@ -7,7 +7,7 @@
 #   ./scripts/deploy-droplet.sh module      # just the OpenEMR PHP module
 #   ./scripts/deploy-droplet.sh sidecar     # just the Python sidecar (rebuild + restart)
 #   ./scripts/deploy-droplet.sh dashboard   # just the Vue dashboard (npm run build → rsync → bind-mount)
-#   ./scripts/deploy-droplet.sh dashboard --skip-build  # rsync existing dashboard/dist/ without rebuilding
+#   ./scripts/deploy-droplet.sh dashboard --skip-build  # rsync existing vue-ui/dist/ without rebuilding
 #   ./scripts/deploy-droplet.sh check       # health check only, no deploy
 #   ./scripts/deploy-droplet.sh logs        # tail the sidecar log
 #
@@ -36,7 +36,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE_LOCAL="$REPO_ROOT/interface/modules/custom_modules/oe-module-agentforge"
 SIDECAR_LOCAL="$REPO_ROOT/sidecar"
 PROMPTS_LOCAL="$REPO_ROOT/prompts"
-DASHBOARD_LOCAL="$REPO_ROOT/dashboard"
+DASHBOARD_LOCAL="$REPO_ROOT/vue-ui"
 
 MODULE_REMOTE="/opt/agentforge/module"
 SIDECAR_REMOTE="/opt/agentforge/sidecar"
@@ -136,7 +136,7 @@ deploy_dashboard() {
     if [[ "$skip_build" != "--skip-build" ]]; then
         step "building dashboard locally (npm run build)"
         if ! command -v npm >/dev/null 2>&1; then
-            die "npm not found locally. Install Node, or pass --skip-build to use the existing dashboard/dist/"
+            die "npm not found locally. Install Node, or pass --skip-build to use the existing vue-ui/dist/"
         fi
         ( cd "$DASHBOARD_LOCAL" && npm run build )
         ok "dashboard built → $DASHBOARD_LOCAL/dist/"
@@ -146,7 +146,7 @@ deploy_dashboard() {
             || die "$DASHBOARD_LOCAL/dist/ does not exist — drop --skip-build or run 'npm run build' first"
     fi
 
-    step "rsyncing dashboard/dist → $DROPLET_HOST:$DASHBOARD_REMOTE/"
+    step "rsyncing vue-ui/dist → $DROPLET_HOST:$DASHBOARD_REMOTE/"
     ssh_run "mkdir -p $DASHBOARD_REMOTE"
     rsync -az --delete \
         "$DASHBOARD_LOCAL/dist/" "$DROPLET_HOST:$DASHBOARD_REMOTE/"
