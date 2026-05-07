@@ -395,6 +395,7 @@ def create_app(
     )
     dashboard_oauth_http: httpx.AsyncClient | None = None
     dashboard_fhir_http: httpx.AsyncClient | None = None
+    dashboard_me_http: httpx.AsyncClient | None = None
     dashboard_oauth_client: OAuthClient | None = None
     if settings.dashboard_oauth_client_id and settings.dashboard_oauth_client_secret:
         # ``verify=False`` is required against dev-easy's self-signed
@@ -403,6 +404,9 @@ def create_app(
         # follow-up in PATIENT_DASHBOARD_MIGRATION.md.
         dashboard_oauth_http = httpx.AsyncClient(timeout=15.0, verify=False)
         dashboard_fhir_http = httpx.AsyncClient(timeout=15.0, verify=False)
+        # Separate client for the auth-bridge ``/me`` lookup so its
+        # 5s budget doesn't bleed into the longer FHIR-proxy timeout.
+        dashboard_me_http = httpx.AsyncClient(timeout=5.0, verify=False)
         dashboard_oauth_client = OAuthClient(
             authority=settings.dashboard_oauth_authority,
             client_id=settings.dashboard_oauth_client_id,
@@ -443,6 +447,8 @@ def create_app(
                 await dashboard_oauth_http.aclose()
             if dashboard_fhir_http is not None:
                 await dashboard_fhir_http.aclose()
+            if dashboard_me_http is not None:
+                await dashboard_me_http.aclose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -657,6 +663,41 @@ def create_app(
     )
     app.include_router(dashboard_auth_router)
     app.include_router(dashboard_fhir_router)
+
+    # Dashboard agent-turn route (ADR-0001). Mounted only when the
+    # BFF stack is configured AND the bridge has its dedicated httpx
+    # client; otherwise the legacy /turn surface is the only path
+    # into the orchestrator.
+    if dashboard_me_http is not None:
+        from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
+        from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
+        from agentforge.dashboard_auth.turn_route import make_agent_turn_router
+
+        class _SystemClock:
+            def now(self) -> datetime:
+                return datetime.now(UTC)
+
+        bridge_clock = _SystemClock()
+        me_fetcher = OpenEMRMeFetcher(
+            http=dashboard_me_http,
+            base_url=settings.openemr_base_url,
+            jwt_secret=settings.jwt_secret,
+            clock=bridge_clock,
+        )
+        jwt_minter = InternalJwtMinter(
+            jwt_secret=settings.jwt_secret,
+            clock=bridge_clock,
+        )
+        app.include_router(
+            make_agent_turn_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                orchestrator=orchestrator,
+            )
+        )
 
     @app.get("/health")
     async def health() -> dict[str, object]:
