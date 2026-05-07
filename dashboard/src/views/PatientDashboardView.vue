@@ -3,7 +3,7 @@ import { useFhirResource } from '@/composables/useFhirResource'
 import { useAuthStore } from '@/stores/auth'
 import AllergiesCard from '@/components/AllergiesCard.vue'
 import CareTeamCard from '@/components/CareTeamCard.vue'
-import ClinicalCard from '@/components/ClinicalCard.vue'
+import LabResultsCard from '@/components/LabResultsCard.vue'
 import MedicationsCard from '@/components/MedicationsCard.vue'
 import PatientHeader from '@/components/PatientHeader.vue'
 import PrescriptionsCard from '@/components/PrescriptionsCard.vue'
@@ -16,11 +16,9 @@ const { status, data, error } = useFhirResource<fhir4.Patient>(
   `/api/fhir/Patient/${encodeURIComponent(props.pid)}`,
 )
 
-// Card placeholders for the cards still to come. T38.4–T38.8 landed;
-// only Lab Results remains.
-const placeholders: ReadonlyArray<{ title: string; subtask: string }> = [
-  { title: 'Lab Results', subtask: 'T38.9' },
-]
+// All chart cards (T38.4–T38.9) landed. AgentForge drawer (T38.10)
+// is the next piece, but it lives at the page edge — not in this
+// vertical card stack.
 
 async function signOut(): Promise<void> {
   await auth.signOut()
@@ -76,21 +74,8 @@ async function signOut(): Promise<void> {
         <ProblemListCard :pid="props.pid" />
         <MedicationsCard :pid="props.pid" />
         <PrescriptionsCard :pid="props.pid" />
+        <LabResultsCard :pid="props.pid" />
         <CareTeamCard :pid="props.pid" />
-        <ClinicalCard
-          v-for="card in placeholders"
-          :key="card.title"
-          :title="card.title"
-          state="empty"
-          collapsible
-        >
-          <template #empty>
-            <div class="text-muted small">
-              Pending {{ card.subtask }} —
-              {{ card.title.toLowerCase() }} placeholder.
-            </div>
-          </template>
-        </ClinicalCard>
       </main>
     </template>
   </div>
