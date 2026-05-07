@@ -78,7 +78,7 @@ const isActive = computed<boolean>(() => props.patient.active !== false)
 
 <template>
   <header
-    class="patient-header bg-white border-bottom shadow-sm py-3 px-4 sticky-top"
+    class="patient-header bg-body border-bottom shadow-sm py-3 px-4 sticky-top"
     style="top: 0; z-index: 1020"
     aria-label="Patient identity"
   >

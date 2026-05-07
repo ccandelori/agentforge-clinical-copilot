@@ -41,7 +41,7 @@ const bodyVisible = computed<boolean>(
 <template>
   <section class="card mb-3">
     <header
-      class="card-header bg-white d-flex justify-content-between align-items-center"
+      class="card-header bg-body-tertiary d-flex justify-content-between align-items-center"
     >
       <button
         v-if="collapsible"

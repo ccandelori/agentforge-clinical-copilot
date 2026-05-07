@@ -8,6 +8,7 @@ import MedicationsCard from '@/components/MedicationsCard.vue'
 import PatientHeader from '@/components/PatientHeader.vue'
 import PrescriptionsCard from '@/components/PrescriptionsCard.vue'
 import ProblemListCard from '@/components/ProblemListCard.vue'
+import VitalsStrip from '@/components/VitalsStrip.vue'
 
 const props = defineProps<{ pid: string }>()
 
@@ -26,9 +27,9 @@ async function signOut(): Promise<void> {
 </script>
 
 <template>
-  <div class="bg-light min-vh-100">
+  <div class="bg-body-tertiary min-vh-100">
     <nav
-      class="navbar navbar-light bg-white border-bottom px-4 py-2 d-flex justify-content-between"
+      class="navbar bg-body border-bottom px-4 py-2 d-flex justify-content-between"
     >
       <RouterLink
         :to="{ name: 'patient-picker' }"
@@ -69,6 +70,7 @@ async function signOut(): Promise<void> {
     </div>
     <template v-else-if="data">
       <PatientHeader :patient="data" />
+      <VitalsStrip :pid="props.pid" />
       <main class="container py-4">
         <AllergiesCard :pid="props.pid" />
         <ProblemListCard :pid="props.pid" />
