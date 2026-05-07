@@ -1,10 +1,9 @@
 import { ref, type Ref } from 'vue'
 
 // Wave 3 wiring: replaces vue-ui's canned typewriter with the real BFF
-// `/api/agent/turn` round-trip. Ported from
-// `dashboard/src/composables/useAgentTurn.ts`. The sidecar owns identity,
-// JWT minting, and `RequestContext` construction; this composable only
-// shapes the body and surfaces a typed result.
+// `/api/agent/turn` round-trip. The sidecar owns identity, JWT minting,
+// and `RequestContext` construction; this composable only shapes the
+// body and surfaces a typed result.
 //
 // Tokens are never visible to JS — `credentials: 'same-origin'` instructs
 // fetch() to attach the HttpOnly session cookie set by /auth/callback so
