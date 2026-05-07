@@ -10,6 +10,9 @@ authors = [
 ]
 dependencies = [
     "fastapi>=0.111",
+    # python-multipart powers fastapi's Form()/File()/UploadFile parsing
+    # — required by the BFF /api/agent/upload route (T38.15).
+    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.30",
     "pydantic-settings>=2.3",
     "langgraph>=0.2",

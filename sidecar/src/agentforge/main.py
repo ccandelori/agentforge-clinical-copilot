@@ -678,6 +678,10 @@ def create_app(
             OpenEMRPatientPidFetcher,
         )
         from agentforge.dashboard_auth.turn_route import make_agent_turn_router
+        from agentforge.dashboard_auth.upload_route import (
+            make_agent_upload_router,
+        )
+        from agentforge.tools.document_upload import DocumentUploadWriter
 
         class _SystemClock:
             def now(self) -> datetime:
@@ -712,6 +716,27 @@ def create_app(
                 jwt_minter=jwt_minter,
                 auth_gateway=auth_gateway,
                 orchestrator=orchestrator,
+            )
+        )
+
+        # Document-upload route (T38.15). Same auth pipeline as /turn;
+        # adds DocumentUploadWriter for the BFF → OpenEMR bridge. The
+        # writer reuses the dashboard httpx client (same cert posture
+        # as the /me + /patient_pid lookups) so production deployments
+        # don't need a second TLS-trust configuration.
+        document_upload_writer = DocumentUploadWriter(
+            base_url=settings.openemr_base_url,
+            http_client=dashboard_me_http,
+        )
+        app.include_router(
+            make_agent_upload_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                document_upload_writer=document_upload_writer,
             )
         )
 
