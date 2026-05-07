@@ -91,6 +91,8 @@ def _settings() -> Settings:
         anthropic_api_key="x",
         jwt_secret=SECRET,
         dashboard_session_cookie_name=SESSION_COOKIE,
+        redis_url="redis://localhost:6379/0",
+        hmac_key="dGVzdC1obWFjLWtleS0zMi1ieXRlcy1zZWNyZXQtdGVzdGluZw==",
     )
 
 

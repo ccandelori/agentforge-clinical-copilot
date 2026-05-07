@@ -82,7 +82,7 @@ final class UserIdentityRepositoryTest extends TestCase
                         && str_contains($sql, 'id')
                         && str_contains($sql, 'username');
                 }),
-                self::isType('array'),
+                self::isArray(),
             )
             ->willReturn(['id' => 1, 'username' => 'admin']);
 

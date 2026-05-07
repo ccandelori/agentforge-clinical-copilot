@@ -91,7 +91,7 @@ final class PatientPidRepositoryTest extends TestCase
                         && str_contains($sql, 'uuid')
                         && str_contains($sql, 'pid');
                 }),
-                self::isType('array'),
+                self::isArray(),
             )
             ->willReturn(1);
 
