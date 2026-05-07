@@ -50,6 +50,10 @@ from agentforge.dashboard_auth.openemr_me import (
     OpenEMRMeFetcher,
     OpenEMRMeFetchError,
 )
+from agentforge.dashboard_auth.openemr_patient_pid import (
+    OpenEMRPatientPidFetcher,
+    OpenEMRPatientPidFetchError,
+)
 from agentforge.dashboard_auth.sessions import Session, SessionStore
 from agentforge.gateway.auth_gateway import AuthGateway
 
@@ -74,7 +78,11 @@ class AgentTurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(min_length=1)
-    patient_id: int
+    # FHIR Patient resource UUID — what the dashboard knows. The route
+    # resolves it server-side via OpenEMRPatientPidFetcher; the agent
+    # JWT carries the integer ``patient_data.pid`` the resolver
+    # returns. See ADR-0001 §5.
+    patient_uuid: str = Field(min_length=1)
     session_id: str | None = None
 
 
@@ -102,6 +110,7 @@ def make_agent_turn_router(
     settings: Settings,
     session_store: SessionStore,
     me_fetcher: OpenEMRMeFetcher,
+    patient_pid_fetcher: OpenEMRPatientPidFetcher,
     jwt_minter: InternalJwtMinter,
     auth_gateway: AuthGateway,
     orchestrator: _OrchestratorProto,
@@ -113,6 +122,11 @@ def make_agent_turn_router(
     # access_token (not session_id) so an access-token rotation
     # invalidates the cached identity in lockstep.
     identity_cache: dict[str, OpenEMRIdentity] = {}
+    # Patient-UUID → integer pid resolution. Cheaper than identity
+    # (no role / GACL lookup), but also cheap enough that a missing
+    # cache turns into an extra OpenEMR round-trip per turn — worth
+    # caching across turns for the same patient.
+    patient_pid_cache: dict[str, int] = {}
 
     async def _resolve_session(request: Request) -> Session:
         cookie = request.cookies.get(settings.dashboard_session_cookie_name)
@@ -156,29 +170,38 @@ def make_agent_turn_router(
         identity_cache[session.access_token] = identity
         return identity
 
+    async def _resolve_patient_pid(patient_uuid: str) -> int:
+        cached = patient_pid_cache.get(patient_uuid)
+        if cached is not None:
+            return cached
+        try:
+            pid = await patient_pid_fetcher.fetch(patient_uuid=patient_uuid)
+        except OpenEMRPatientPidFetchError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "error": "OpenEMR patient bootstrap failed.",
+                    "upstream_status": exc.status_code,
+                },
+            ) from exc
+        patient_pid_cache[patient_uuid] = pid
+        return pid
+
     @router.post("/turn", response_model=AgentTurnResponse)
     async def agent_turn(
         request: Request,
         body: Annotated[AgentTurnRequest, Body()],
     ) -> AgentTurnResponse:
-        if body.patient_id <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="patient_id must be positive",
-            )
-
         session = await _resolve_session(request)
         identity = await _resolve_identity(session)
+        patient_id = await _resolve_patient_pid(body.patient_uuid)
 
         try:
             internal_jwt = jwt_minter.mint(
                 identity=identity,
-                patient_id=body.patient_id,
+                patient_id=patient_id,
             )
         except InternalJwtMintError as exc:
-            # Defensive — InternalJwtMinter validates the same
-            # invariants we already check here, but if it ever
-            # diverges we want a clean 400 instead of a 500.
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),

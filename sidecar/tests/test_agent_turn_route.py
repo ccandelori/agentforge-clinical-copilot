@@ -24,6 +24,7 @@ from agentforge.config import Settings
 from agentforge.dashboard_auth import SessionStore
 from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
 from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
+from agentforge.dashboard_auth.openemr_patient_pid import OpenEMRPatientPidFetcher
 from agentforge.dashboard_auth.turn_route import make_agent_turn_router
 from agentforge.gateway.auth_gateway import AuthGateway, RequestContext
 
@@ -110,6 +111,7 @@ async def _seed_session(
 def _build_app(
     *,
     me_response: dict[str, Any] | int = 200,
+    pid_response: dict[str, Any] | int = 200,
     orchestrator: _CapturingOrchestrator | None = None,
 ) -> tuple[FastAPI, _CapturingOrchestrator, SessionStore]:
     settings = _settings()
@@ -125,8 +127,19 @@ def _build_app(
             return httpx.Response(me_response, json={"error": "synthetic"})
         return httpx.Response(200, json=me_response)
 
+    def pid_handler(request: httpx.Request) -> httpx.Response:
+        if isinstance(pid_response, int):
+            return httpx.Response(pid_response, json={"error": "synthetic"})
+        return httpx.Response(200, json=pid_response)
+
     me_fetcher = OpenEMRMeFetcher(
         http=httpx.AsyncClient(transport=httpx.MockTransport(me_handler)),
+        base_url=OPENEMR_BASE,
+        jwt_secret=SECRET,
+        clock=_Clock(),
+    )
+    pid_fetcher = OpenEMRPatientPidFetcher(
+        http=httpx.AsyncClient(transport=httpx.MockTransport(pid_handler)),
         base_url=OPENEMR_BASE,
         jwt_secret=SECRET,
         clock=_Clock(),
@@ -140,6 +153,7 @@ def _build_app(
         settings=settings,
         session_store=session_store,
         me_fetcher=me_fetcher,
+        patient_pid_fetcher=pid_fetcher,
         jwt_minter=minter,
         auth_gateway=gateway,
         orchestrator=orch,  # type: ignore[arg-type]
@@ -156,7 +170,7 @@ async def test_unauthenticated_request_returns_401() -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/api/agent/turn",
-            json={"message": "hi", "patient_id": 1},
+            json={"message": "hi", "patient_uuid": "p-uuid"},
         )
         assert resp.status_code == 401
 
@@ -169,7 +183,7 @@ async def test_session_with_no_fhir_user_returns_401() -> None:
         client.cookies.set(SESSION_COOKIE, sid)
         resp = client.post(
             "/api/agent/turn",
-            json={"message": "hi", "patient_id": 1},
+            json={"message": "hi", "patient_uuid": "p-uuid"},
         )
         assert resp.status_code == 401
 
@@ -182,6 +196,7 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
             "username": "admin",
             "role": "Administrators",
         },
+        pid_response={"pid": 42},
     )
     sid = await _seed_session(
         store,
@@ -194,7 +209,7 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
             "/api/agent/turn",
             json={
                 "message": "what's the patient's allergies?",
-                "patient_id": 42,
+                "patient_uuid": "patient-resource-uuid",
                 "session_id": "convo-1",
             },
         )
@@ -202,8 +217,8 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
     assert resp.status_code == 200
     assert resp.json() == {"reply": "ok"}
 
-    # Orchestrator received the right ctx, derived from cookie identity
-    # via the bridge and validated through the real AuthGateway.
+    # Orchestrator received the right ctx — user_id from /me, pid from
+    # /patient_pid — both routed through the real AuthGateway.
     ctx: RequestContext = orch.captured["ctx"]
     assert ctx.user_id == 17
     assert ctx.patient_id == 42
@@ -219,6 +234,7 @@ async def test_uuid_extraction_handles_bare_practitioner_resource() -> None:
     full URI prefix; the bridge must accept either shape."""
     app, orch, store = _build_app(
         me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 99},
     )
     sid = await _seed_session(store, fhir_user="Practitioner/just-a-uuid")
 
@@ -226,7 +242,7 @@ async def test_uuid_extraction_handles_bare_practitioner_resource() -> None:
         client.cookies.set(SESSION_COOKIE, sid)
         resp = client.post(
             "/api/agent/turn",
-            json={"message": "hi", "patient_id": 1},
+            json={"message": "hi", "patient_uuid": "p"},
         )
 
     assert resp.status_code == 200
@@ -236,9 +252,8 @@ async def test_uuid_extraction_handles_bare_practitioner_resource() -> None:
 @pytest.mark.asyncio
 async def test_me_endpoint_404_returns_502() -> None:
     """If OpenEMR has no row for the session's UUID, the bridge surfaces
-    a 502 (bad gateway) — the dashboard can't proceed but the BFF
-    itself isn't broken."""
-    app, _, store = _build_app(me_response=404)
+    a 502 (bad gateway)."""
+    app, _, store = _build_app(me_response=404, pid_response={"pid": 1})
     sid = await _seed_session(
         store,
         fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/missing",
@@ -247,15 +262,38 @@ async def test_me_endpoint_404_returns_502() -> None:
         client.cookies.set(SESSION_COOKIE, sid)
         resp = client.post(
             "/api/agent/turn",
-            json={"message": "hi", "patient_id": 1},
+            json={"message": "hi", "patient_uuid": "p"},
         )
     assert resp.status_code == 502
 
 
 @pytest.mark.asyncio
-async def test_request_with_non_positive_patient_id_returns_400() -> None:
+async def test_patient_pid_endpoint_404_returns_502() -> None:
+    """Likewise for an unknown patient UUID — the BFF stays healthy
+    but the request can't proceed without the resolved pid."""
     app, _, store = _build_app(
         me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response=404,
+    )
+    sid = await _seed_session(
+        store,
+        fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/u",
+    )
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "hi", "patient_uuid": "missing-patient"},
+        )
+    assert resp.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_request_with_empty_patient_uuid_returns_422() -> None:
+    """Pydantic enforces ``min_length=1`` on patient_uuid."""
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 1},
     )
     sid = await _seed_session(
         store,
@@ -265,16 +303,17 @@ async def test_request_with_non_positive_patient_id_returns_400() -> None:
         client.cookies.set(SESSION_COOKIE, sid)
         resp = client.post(
             "/api/agent/turn",
-            json={"message": "hi", "patient_id": 0},
+            json={"message": "hi", "patient_uuid": ""},
         )
-    assert resp.status_code == 400
+    # FastAPI/Pydantic surfaces validation errors as 422.
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_identity_lookup_is_cached_per_access_token() -> None:
-    """Second turn on the same session should not re-hit /me — caching
-    keeps a per-turn round-trip off the hot path. Verify by counting
-    handler invocations."""
+async def test_identity_and_pid_lookups_are_cached() -> None:
+    """Second turn on the same session + patient should not re-hit
+    /me OR /patient_pid — caching keeps the round-trips off the hot
+    path."""
     settings = _settings()
     redis = _make_redis_mock()
     session_store = SessionStore(
@@ -283,17 +322,28 @@ async def test_identity_lookup_is_cached_per_access_token() -> None:
         pending_ttl_seconds=settings.dashboard_pending_auth_ttl_seconds,
     )
 
-    invocations = {"count": 0}
+    me_invocations = {"count": 0}
+    pid_invocations = {"count": 0}
 
     def me_handler(request: httpx.Request) -> httpx.Response:
-        invocations["count"] += 1
+        me_invocations["count"] += 1
         return httpx.Response(
             200,
             json={"user_id": 1, "username": "u", "role": None},
         )
 
+    def pid_handler(request: httpx.Request) -> httpx.Response:
+        pid_invocations["count"] += 1
+        return httpx.Response(200, json={"pid": 99})
+
     me_fetcher = OpenEMRMeFetcher(
         http=httpx.AsyncClient(transport=httpx.MockTransport(me_handler)),
+        base_url=OPENEMR_BASE,
+        jwt_secret=SECRET,
+        clock=_Clock(),
+    )
+    pid_fetcher = OpenEMRPatientPidFetcher(
+        http=httpx.AsyncClient(transport=httpx.MockTransport(pid_handler)),
         base_url=OPENEMR_BASE,
         jwt_secret=SECRET,
         clock=_Clock(),
@@ -306,6 +356,7 @@ async def test_identity_lookup_is_cached_per_access_token() -> None:
         settings=settings,
         session_store=session_store,
         me_fetcher=me_fetcher,
+        patient_pid_fetcher=pid_fetcher,
         jwt_minter=minter,
         auth_gateway=gateway,
         orchestrator=orch,  # type: ignore[arg-type]
@@ -324,9 +375,10 @@ async def test_identity_lookup_is_cached_per_access_token() -> None:
         for _ in range(3):
             resp = client.post(
                 "/api/agent/turn",
-                json={"message": "hi", "patient_id": 1},
+                json={"message": "hi", "patient_uuid": "p-uuid"},
             )
             assert resp.status_code == 200
 
-    # 3 turns → 1 /me call.
-    assert invocations["count"] == 1
+    # 3 turns → 1 /me call AND 1 /patient_pid call.
+    assert me_invocations["count"] == 1
+    assert pid_invocations["count"] == 1

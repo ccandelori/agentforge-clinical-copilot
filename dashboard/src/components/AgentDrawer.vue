@@ -56,11 +56,12 @@ function send(): void {
   const text = draft.value.trim()
   if (text === '') return
 
-  // patient_id from activePatient (the route's :pid). Defensive parse
-  // so a malformed pid surfaces as a typed error instead of a silent
-  // 422 from the BFF route.
-  const pid = Number.parseInt(store.activePatient ?? '', 10)
-  if (Number.isNaN(pid) || pid <= 0) {
+  // store.activePatient is the FHIR Patient resource UUID (the
+  // dashboard route's :pid param). The BFF route resolves it
+  // server-side into the integer pid the agent JWT carries —
+  // see ADR-0001 §5.
+  const patientUuid = store.activePatient
+  if (patientUuid === null || patientUuid === '') {
     return
   }
 
@@ -70,7 +71,7 @@ function send(): void {
   void agentTurn
     .send({
       message: text,
-      patient_id: pid,
+      patient_uuid: patientUuid,
       session_id: store.currentScopeId,
     })
     .then((reply) => {

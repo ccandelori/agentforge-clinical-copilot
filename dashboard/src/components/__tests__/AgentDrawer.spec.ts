@@ -164,7 +164,7 @@ describe('<AgentDrawer>', () => {
     const wrapper = mountDrawer()
     const store = useAgentDrawer()
     store.openDrawer()
-    store.setActivePatient('42')
+    store.setActivePatient('patient-uuid-42')
     store.setMode('chart')
     await wrapper.vm.$nextTick()
 
@@ -184,7 +184,7 @@ describe('<AgentDrawer>', () => {
     const wrapper = mountDrawer()
     const store = useAgentDrawer()
     store.openDrawer()
-    store.setActivePatient('42')
+    store.setActivePatient('patient-uuid-42')
     store.setMode('chart')
     await wrapper.vm.$nextTick()
 
@@ -200,7 +200,7 @@ describe('<AgentDrawer>', () => {
     const wrapper = mountDrawer()
     const store = useAgentDrawer()
     store.openDrawer()
-    store.setActivePatient('42')
+    store.setActivePatient('patient-uuid-42')
     store.setMode('chart')
     await wrapper.vm.$nextTick()
 
@@ -213,8 +213,8 @@ describe('<AgentDrawer>', () => {
     expect(init?.method).toBe('POST')
     const body = JSON.parse(init?.body as string)
     expect(body.message).toBe('any allergies?')
-    expect(body.patient_id).toBe(42)
-    expect(body.session_id).toBe('chart:42')
+    expect(body.patient_uuid).toBe('patient-uuid-42')
+    expect(body.session_id).toBe('chart:patient-uuid-42')
 
     expect(store.currentMessages).toHaveLength(2)
     expect(store.currentMessages[1]?.text).toBe('the patient has 2 active allergies.')
@@ -228,7 +228,7 @@ describe('<AgentDrawer>', () => {
     const wrapper = mountDrawer()
     const store = useAgentDrawer()
     store.openDrawer()
-    store.setActivePatient('42')
+    store.setActivePatient('patient-uuid-42')
     store.setMode('chart')
     await wrapper.vm.$nextTick()
 

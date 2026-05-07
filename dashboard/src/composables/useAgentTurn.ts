@@ -14,7 +14,13 @@ export type AgentTurnStatus = 'idle' | 'loading' | 'success' | 'error'
 
 export interface AgentTurnRequest {
   message: string
-  patient_id: number
+  /**
+   * FHIR Patient resource UUID — what the dashboard knows about its
+   * active patient. The sidecar BFF route resolves this server-side
+   * into the integer ``patient_data.pid`` the agent JWT carries.
+   * See docs/adr/0001-dashboard-auth-bridging.md §5.
+   */
+  patient_uuid: string
   session_id?: string
 }
 
@@ -38,7 +44,7 @@ export function useAgentTurn(): UseAgentTurn {
 
     const body: Record<string, unknown> = {
       message: req.message,
-      patient_id: req.patient_id,
+      patient_uuid: req.patient_uuid,
     }
     if (req.session_id !== undefined) {
       body.session_id = req.session_id

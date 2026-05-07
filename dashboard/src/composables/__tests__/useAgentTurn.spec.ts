@@ -42,7 +42,7 @@ describe('useAgentTurn', () => {
     expect(turn.error.value).toBeNull()
   })
 
-  it('POSTs to /api/agent/turn with message + patient_id + session_id', async () => {
+  it('POSTs to /api/agent/turn with message + patient_uuid + session_id', async () => {
     const spy = mockFetch(() =>
       new Response(JSON.stringify({ reply: 'pong' }), { status: 200 }),
     )
@@ -50,8 +50,8 @@ describe('useAgentTurn', () => {
     const turn = useAgentTurn()
     const reply = await turn.send({
       message: 'ping',
-      patient_id: 42,
-      session_id: 'chart:42',
+      patient_uuid: 'patient-uuid-abc',
+      session_id: 'chart:patient-uuid-abc',
     })
 
     expect(reply).toBe('pong')
@@ -63,8 +63,8 @@ describe('useAgentTurn', () => {
     expect(spy.lastRequest?.init?.body).toBe(
       JSON.stringify({
         message: 'ping',
-        patient_id: 42,
-        session_id: 'chart:42',
+        patient_uuid: 'patient-uuid-abc',
+        session_id: 'chart:patient-uuid-abc',
       }),
     )
   })
@@ -75,12 +75,12 @@ describe('useAgentTurn', () => {
     )
 
     const turn = useAgentTurn()
-    await turn.send({ message: 'hi', patient_id: 1 })
+    await turn.send({ message: 'hi', patient_uuid: 'p' })
 
     const body = JSON.parse(
       (globalThis.fetch as unknown as FetchSpy).lastRequest?.init?.body as string,
     )
-    expect(body).toEqual({ message: 'hi', patient_id: 1 })
+    expect(body).toEqual({ message: 'hi', patient_uuid: 'p' })
   })
 
   it('flips status loading → success around a successful call', async () => {
@@ -91,7 +91,7 @@ describe('useAgentTurn', () => {
     mockFetch(() => pending)
 
     const turn = useAgentTurn()
-    const promise = turn.send({ message: 'q', patient_id: 1 })
+    const promise = turn.send({ message: 'q', patient_uuid: 'p' })
 
     // Loading state visible mid-flight
     await Promise.resolve()
@@ -111,7 +111,7 @@ describe('useAgentTurn', () => {
 
     const turn = useAgentTurn()
     await expect(
-      turn.send({ message: 'q', patient_id: 1 }),
+      turn.send({ message: 'q', patient_uuid: 'p' }),
     ).rejects.toThrow(/502/)
     expect(turn.status.value).toBe('error')
     expect(turn.error.value).not.toBeNull()
@@ -124,7 +124,7 @@ describe('useAgentTurn', () => {
 
     const turn = useAgentTurn()
     await expect(
-      turn.send({ message: 'q', patient_id: 1 }),
+      turn.send({ message: 'q', patient_uuid: 'p' }),
     ).rejects.toThrow(/Failed to fetch/)
     expect(turn.status.value).toBe('error')
   })
@@ -134,7 +134,7 @@ describe('useAgentTurn', () => {
 
     const turn = useAgentTurn()
     await expect(
-      turn.send({ message: 'q', patient_id: 1 }),
+      turn.send({ message: 'q', patient_uuid: 'p' }),
     ).rejects.toThrow(/missing reply/)
   })
 })

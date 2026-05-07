@@ -671,6 +671,9 @@ def create_app(
     if dashboard_me_http is not None:
         from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
         from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
+        from agentforge.dashboard_auth.openemr_patient_pid import (
+            OpenEMRPatientPidFetcher,
+        )
         from agentforge.dashboard_auth.turn_route import make_agent_turn_router
 
         class _SystemClock:
@@ -679,6 +682,15 @@ def create_app(
 
         bridge_clock = _SystemClock()
         me_fetcher = OpenEMRMeFetcher(
+            http=dashboard_me_http,
+            base_url=settings.openemr_base_url,
+            jwt_secret=settings.jwt_secret,
+            clock=bridge_clock,
+        )
+        # Reuses the same httpx client (and cert-trust posture) as
+        # the /me lookup; both endpoints live in the AgentForge
+        # module under the same OpenEMR base URL.
+        patient_pid_fetcher = OpenEMRPatientPidFetcher(
             http=dashboard_me_http,
             base_url=settings.openemr_base_url,
             jwt_secret=settings.jwt_secret,
@@ -693,6 +705,7 @@ def create_app(
                 settings=settings,
                 session_store=session_store,
                 me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
                 jwt_minter=jwt_minter,
                 auth_gateway=auth_gateway,
                 orchestrator=orchestrator,
