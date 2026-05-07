@@ -1,122 +1,114 @@
-# Where we left off — 2026-05-06 night (chart row complete; drawer next)
+# Where we left off — 2026-05-06 late night (drawer + auth bridge live)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-**The entire chart row landed in one Wednesday-evening session.**
-T38.3 (patient header + picker + ClinicalCard wrapper) plus the six
-clinical cards (T38.4 Allergies, T38.5 Problem List, T38.6 Active
-Medications, T38.7 Prescription history, T38.8 Care Team, T38.9 Lab
-Results) all shipped TDD-style with 160 vitest specs total. Branch
-`feat/dashboard-port` is 13 commits ahead of origin, **no MR yet**.
-T38.10 (AgentForge drawer) is the next big architectural move.
+**T38.10 is functionally done — the AgentForge drawer talks to the
+orchestrator end-to-end.** The harder half wasn't the drawer; it was
+the auth bridge between the dashboard's cookie session and the
+agent's JWT trust boundary. That's now landed and documented in
+**`docs/adr/0001-dashboard-auth-bridging.md`** — read it before
+touching the BFF or the AuthGateway.
+
+Branch `feat/dashboard-port` is 22 commits ahead of origin, **no MR
+yet**. Tests across all three stacks green: 214 vitest · 1083 sidecar
+pytest · 352 AgentForge PHP isolated.
 
 | MR | Branch | Status |
 |---|---|---|
 | !35 | `feat/w2-mr7-cutover-wiring` | merged 2026-05-06 |
 | !36 | `feat/w2-task-24-citation-overlay` | merged 2026-05-06 |
-| (open) | `feat/dashboard-port` | 13 commits, no MR yet |
+| (open) | `feat/dashboard-port` | 22 commits, no MR yet |
 
-`task-master next` — **T38.10 (AgentForge drawer)** is the next-up
-critical-path task. T38.13 (defense doc) remains parallel-friendly.
+`task-master next` — **T38.13 (defense doc)** is parallel-friendly;
+**T38.11 (citation overlay re-port)** is the next critical-path
+piece.
 
-## What shipped this session (Wed evening 2026-05-06)
+## What shipped this session (Wed evening + late night 2026-05-06)
 
-Eight commits on `feat/dashboard-port`:
+Eight commits on top of the chart-row sweep:
 
 ```
-feb872a4c  chore(taskmaster): mark T38.3–T38.9 done; add T39
-de945ce24  feat(dashboard): lab results card + sparklines (T38.9)
-17f91390d  feat(dashboard): care team card (T38.8)
-25ba3be8c  feat(dashboard): prescription history card (T38.7)
-18099a5b7  feat(dashboard): active medications card (T38.6)
-83f266e85  feat(dashboard): problem list card (T38.5)
-2e801314b  feat(dashboard): allergies card + collapse on ClinicalCard (T38.4)
-7112b6ed6  feat(dashboard): patient header + picker + ClinicalCard (T38.3)
+04e6c2611  fix(agentforge): UNHEX hyphenated UUIDs at the SQL boundary
+b3696d421  feat(agentforge): patient UUID → pid resolver completes the bridge
+20ceda157  feat(dashboard): wire AgentDrawer to /api/agent/turn
+9214bc6ea  feat(sidecar): dashboard auth bridge + /api/agent/turn route
+2a387e0f7  feat(agentforge): /me identity-bootstrap endpoint + ADR-0001
+e78924772  fix(dashboard): use v-if for drawer aside (T38.10)
+13eb7f5a4  feat(dashboard): AgentForge drawer shell + patient-context overlay
+138bf41e8  docs(next-session): refresh after chart-row sweep
 ```
 
-Plus **T39** (low priority) added: seed CareTeam data in dev-easy
-because `care_teams` and `care_team_member` tables are both empty
-(0 rows) — the card itself works correctly, just renders empty for
-every patient.
+Net additions:
 
-## The card pattern (stable; T38.10+ should respect it)
+* AgentDrawer with three mode tabs (Chart/Intake/Research),
+  patient-context conflict overlay (Switch / Stay / Fresh), and
+  per-scope conversation history in a Pinia store.
+* OpenEMR module: two new identity-bootstrap endpoints
+  (`/internal/me.php`, `/internal/patient_pid.php`) — both authed
+  by a "lookup-purpose" JWT (signature + issuer + exp only).
+* Sidecar: `OpenEMRMeFetcher`, `OpenEMRPatientPidFetcher`,
+  `InternalJwtMinter`, and a new `POST /api/agent/turn` route. All
+  routed through the existing `AuthGateway` — the trust boundary
+  stays a single chokepoint.
+* Dashboard: `useAgentTurn` composable + AgentDrawer wired to it.
+* **ADR-0001** — the architectural decision record for the bridge.
 
-Every chart card follows the same shape; cloning is a 30-min move:
+## The auth bridge — quick mental model (full version in ADR-0001)
 
-* `defineProps<{ pid: string }>()`
-* `useFhirResource<fhir4.Bundle>('/api/fhir/Resource?patient=…')`
-  auto-fires; exposes `status`, `data`, `error`, `refetch`
-* Type-guard via `is<Resource>(r): r is fhir4.Resource`
-* Project entries → row interface (`name`, `status`, `date`, etc.)
-* Sort by clinical-importance rank then date desc (or just date)
-* `cardState` computed: `loading | empty | error | ready`
-* Render via `<ClinicalCard collapsible :title :count :state :error>`
-  — header chevron toggle, slots for `loading | empty | error |
-  default`, v-show on body so child composables don't refire on expand
+```
+Browser ── HttpOnly cookie ──► Sidecar /api/agent/turn
+                                    │
+                                    ▼
+                      OpenEMR /internal/me.php          (cached per access_token)
+                          → {user_id, username, role}
+                                    │
+                                    ▼
+                      OpenEMR /internal/patient_pid.php (cached per patient UUID)
+                          → {pid: int}
+                                    │
+                                    ▼
+                      InternalJwtMinter (HS256, AGENTFORGE_JWT_SECRET)
+                                    │
+                                    ▼
+                      AuthGateway.validate_request()    ← unchanged
+                                    │
+                                    ▼
+                      RequestContext  ◄── trust boundary (ARCHITECTURE.md §2)
+                                    │
+                                    ▼
+                      Orchestrator.turn() — full tool access
+```
 
-Shared helpers worth knowing:
+### Two gotchas worth carrying forward
 
-* `useFhirResource<T>(path)` at `src/composables/useFhirResource.ts`
-  — cookie-authed FHIR fetch. Auto-fires on mount, `refetch()` to
-  refresh. Same Accept header (`application/fhir+json`), same
-  `credentials: 'same-origin'`.
-* `formatFhirDate(iso)` at `src/utils/formatDate.ts` — handles
-  `YYYY-MM-DD` (parses as local-date to dodge UTC-midnight TZ shift)
-  and ISO datetime strings; returns `'—'` for null/undefined/empty.
-* `<ClinicalCard>` at `src/components/ClinicalCard.vue` — title,
-  count, header-actions slot, optional collapsible chevron.
+* **`users.uuid` and `patient_data.uuid` are stored as `BINARY(16)`.**
+  The OIDC `fhirUser` claim and FHIR Patient resource id both expose
+  the **hyphenated string** form. Both new repositories use
+  `UNHEX(REPLACE(?, "-", ""))` at the SQL boundary; copy that pattern
+  if you ever look up another OpenEMR row by UUID.
+* **`Bootstrap's `.d-flex` carries `display: flex !important`** which
+  silently overrides Vue's `v-show` inline style. Use `v-if` for any
+  drawer/modal that has utility classes — caught here in the
+  AgentDrawer aside (commit `e78924772`).
 
-## Discoveries this session worth carrying forward
+### Bridge things deferred (intentional, captured in ADR §6)
 
-### Data gaps (Synthea / dev-easy)
-
-* **CareTeam:** Synthea bundles ship 1-5 CareTeams per patient with
-  multiple clinicians, but OpenEMR's `care_teams` + `care_team_member`
-  tables have 0 rows. Whatever ingestion path populated allergies /
-  conditions / medications skipped CareTeam. **T39** captures the
-  follow-up.
-* **Problem List:** Synthea `Condition` resources are all
-  `category=encounter-diagnosis`, never `problem-list-item`. Strict
-  category filter (per T38.5 spec) returns empty for every patient.
-* **Active Medications:** All Synthea `MedicationRequest` resources
-  have `status=completed`, so the active-status filter is empty.
-  T38.7's history card surfaces them all.
-* **Lab interpretation/refRange:** Synthea `Observation` resources
-  don't carry `interpretation[]` or `referenceRange[]`. Color coding
-  (red high / blue low / bold red critical) is wired correctly but
-  doesn't fire on dev-easy data. To colorize, we'd need hardcoded
-  LOINC ranges — out of scope for the cards.
-
-### OpenEMR FHIR mapper bugs to know
-
-* **`{entry.value}` template placeholder:** OpenEMR's FHIR mapper
-  sometimes emits an unsubstituted Smarty/template string as
-  `Observation.valueString` instead of the actual value (observed
-  on Cause of Death observations, LOINC 69453-9). LabResultsCard
-  filters them via `/^\{[^}]+\}$/`.
-* **`/userinfo` returns 404** despite OIDC discovery advertising it
-  (still applies; sidecar reads identity from id_token JWT).
-* **`procedure_result` UUID-backfill SQL bug** still occasionally
-  hits the FHIR `/metadata` endpoint with a 500 (doesn't affect any
-  of the chart cards' endpoints).
-
-### TDD wrinkle
-
-* `wrapper.isVisible()` from `@vue/test-utils` is flaky in JSDOM for
-  `v-show` ancestor styles (relies on `getComputedStyle` /
-  `offsetParent` which JSDOM doesn't fully implement). Inspect the
-  inline style attribute directly — see `ClinicalCard.spec.ts`'s
-  `bodyHidden(wrapper)` helper for the pattern.
-* `oxlint` requires explicit type parameters on `vi.fn()` mocks;
-  mocking fetch should look like `vi.fn<typeof fetch>().mockResolvedValue(...)`.
+* Token refresh — when the access_token expires the user re-signs in.
+* Breakglass UI — internal JWT carries `breakglass_flag=false`
+  unconditionally from the dashboard.
+* Streaming on `/api/agent/turn` — buffered only; the legacy `/turn`
+  still has SSE behind a flag.
+* Research and Intake modes are NOT wired to the agent yet — the
+  drawer disables the input outside Chart mode. T38.11+ territory.
 
 ## Branch state
 
-`feat/dashboard-port` (13 commits ahead of origin, pushed). Working
-tree only has the two not-important doc HTMLs:
+`feat/dashboard-port` (22 commits ahead of origin, pushed through
+slice 4). Working tree only has the same two not-important doc
+HTMLs:
 
 ```
 M  docs/w2-defense-slides.html
@@ -124,6 +116,10 @@ M  docs/w2-defense-slides.html
 ```
 
 Both flagged as not-important previously; ignore for commits.
+
+**Taskmaster:** T38.10 is still flagged `in-progress`. Batch the
+status flip into the next `chore(taskmaster):` commit — same pattern
+as the chart-row sweep.
 
 ## The W2 dashboard port plan (Task 38)
 
@@ -138,8 +134,8 @@ Both flagged as not-important previously; ignore for commits.
 ├── 38.7   Prescriptions card (MedicationRequest hist)  ✓ done
 ├── 38.8   Care Team card (FHIR CareTeam)               ✓ done (empty data — see T39)
 ├── 38.9   Lab Results card (FHIR Observation, bonus)   ✓ done
-├── 38.10  AgentForge drawer (right-edge slide-out)     ← next
-├── 38.11  Citation overlay re-port to Vue + FHIR Bin   deps: 38.10
+├── 38.10  AgentForge drawer + auth bridge              ✓ done (taskmaster pending)
+├── 38.11  Citation overlay re-port to Vue + FHIR Bin   ← critical path
 ├── 38.12  Intake review form + commit (path TBD)       deps: 38.10, 38.11
 ├── 38.13  PATIENT_DASHBOARD_MIGRATION.md defense doc   ← parallel
 └── 38.14  Deploy new dashboard to droplet              deps: drawer + overlay
@@ -147,10 +143,11 @@ Both flagged as not-important previously; ignore for commits.
 39   Seed CareTeam data in dev-easy                     ○ low priority
 ```
 
-**Remaining critical path**: 38.10 → 38.11 → 38.12 → 38.14. Defense
-doc (38.13) and seed-CareTeam (T39) are parallel-friendly.
+**Remaining critical path**: 38.11 → 38.12 → 38.14. Defense doc
+(38.13) and seed-CareTeam (T39) are parallel-friendly. ADR-0001
+already does heavy lifting for 38.13.
 
-## Decision spine — unchanged from pre-session
+## Decision spine — unchanged from earlier
 
 ### Framework — unchanged
 
@@ -158,77 +155,74 @@ doc (38.13) and seed-CareTeam (T39) are parallel-friendly.
 Bootstrap 5/Icons + @types/fhir + pdfjs-dist@5.7.284 + Vitest.** No
 JSX. No Playwright (revisit Saturday morning if there's slack).
 
-### Auth — settled v2 (BFF)
+### Auth — settled, plus the bridge
 
-Sidecar holds OAuth2 client credentials; dashboard talks to `/auth/*`
-and `/api/fhir/*` over an HttpOnly session cookie. Tokens never touch
-JS. See `sidecar/src/agentforge/dashboard_auth/` for the implementation
-and `feat/dashboard-port`'s T38.2 commits for the dashboard side.
+* Browser → Sidecar uses BFF cookies (T38.2 v2). Tokens never touch
+  JS.
+* Sidecar → OpenEMR uses two pipelines today:
+  * **FHIR proxy** (`/api/fhir/*`) forwards reads with the session's
+    OAuth access_token. Established by T38.2.
+  * **Agent bridge** (`/api/agent/turn`) mints an internal JWT after
+    bootstrapping identity through the two new endpoints. Established
+    by ADR-0001.
+* Both pipelines end at the same trust boundaries on the OpenEMR
+  side (FHIR's BearerToken validation and the legacy
+  AGENTFORGE_JWT_SECRET respectively).
 
-### AgentForge drawer — settled (carries from pre-pivot)
+### AgentForge drawer — settled (this session shipped it)
 
-* **Q1 — Shape:** right-edge slide-out drawer (~480-560px wide).
-* **Q2 — Persistence:** drawer stays open across tab/page navigation.
-* **Q3 — Patient-context safety:** when the active patient changes
-  while a Chart-mode conversation is in progress, render a hard-
-  interrupt **OVERLAY on top of the chat** with three resolution
-  buttons. Conversation must be **scoped per-patient**.
-* **Q4 — Three flows:** explicit mode tabs in the drawer header —
-  **Chart / Intake / Research**. Explicit > implicit.
-* **Q5 — Save-to-chart UI (Intake mode only):** structured review
-  form with single Commit button.
+* Right-edge slide-out, ~480 px wide, persistent across navigation.
+* Three explicit mode tabs (Chart / Intake / Research). Chart is the
+  only one wired to the agent today. Research is the default when no
+  active patient.
+* Per-patient conversation scoping with a hard-interrupt overlay on
+  patient-context change (Switch / Stay / Fresh).
+* Conversation history lives in Pinia, lost on reload.
 
 ### Commit path (Q6) — TBD at T38.12
 
 Three options at T38.12:
 
-a. **BFF proxy** the legacy REST writes (sidecar's token already has
+a. **BFF proxy** the legacy REST writes (sidecar's session token has
    `user/*.write` scopes; add a `/api/legacy/*` passthrough).
 b. **Defer commit-to-chart** — surface the structured intake-review
    form, end with a *Copy structured summary* button. Demo-grade.
 c. Keep deferred and revisit if there's slack on Saturday.
 
-## Next session pick-up — T38.10 (AgentForge drawer)
+## Next session pick-up — pick one of two
 
-The drawer is the next big architectural piece. Per the decision
-spine (above): right-edge slide-out, ~480-560px wide, persistent
-across navigation, three explicit mode tabs (Chart / Intake /
-Research), per-patient conversation scoping with a hard-interrupt
-overlay on patient-context change.
+### Option A — T38.11 (citation overlay re-port to Vue)
 
-### Likely shape (subject to TDD discipline)
+The legacy citation overlay lives in the OpenEMR module's chart
+embed; we need it ported to the Vue dashboard so the agent's
+"sources" affordance still works. Re-uses the BFF FHIR proxy plus
+the existing pdfjs-dist setup. Estimate ~2-3 hr.
 
-* `<AgentDrawer>` shell component — slide-out animation, three mode
-  tabs, scoped per-patient.
-* Pinia store `useAgentDrawer` — current mode, drawer open/closed,
-  per-patient conversation registry, active conversation id.
-* Composable bridging the sidecar's existing `/turn` endpoint —
-  reuse the W2 graph + intake/evidence flows; auth flips from a
-  custom JWT to the sidecar session cookie since sidecar now owns
-  sessions.
-* PatientDashboardView gets a `<AgentDrawer>` mounted at root level
-  (sibling to the navbar + main, fixed-positioned right edge).
-* Patient-context overlay — when `patientId` changes while a Chart
-  conversation has unsaved state, render a modal-ish overlay with
-  three resolution buttons (Discard / Save & Switch / Cancel).
+Critical path. Do this first if you only have one session.
 
-### Estimated cost
+### Option B — T38.13 (defense doc) — parallel-friendly
 
-3-4 hr — drawer shell + three modes + overlay + Pinia store + sidecar
-bridging. Bigger than any single card.
+`PATIENT_DASHBOARD_MIGRATION.md` writeup. ADR-0001 already covers
+the auth bridge in depth — fold it in as the "hardest piece" section.
+The remaining sections cover: framework choice, BFF over storing
+tokens in JS, the /me + /patient_pid bootstrap, the chart-row TDD
+pattern, what's deferred and why. Estimate ~1.5 hr.
+
+Doesn't block anything else — good background work or a slot for
+when the dev-easy stack is misbehaving.
 
 ## Time budget reality check
 
 | Day | Hours | Tasks | Status |
 |---|---|---|---|
-| Wed 2026-05-06 | ~8 | T38.1, T38.2 v1+v2, T38.3–T38.9, T39 | done |
-| Thu 2026-05-07 | 8 | T38.10 (drawer), T38.13 (defense doc start) | next |
-| Fri 2026-05-08 | 8 | T38.11 (overlay re-port), T38.12 (commit form), T38.13 polish | |
-| Sat 2026-05-09 | ~6 | T38.14 (deploy), T39 (if time), buffer for fixes | |
+| Wed 2026-05-06 | ~10 | T38.1, T38.2 v1+v2, T38.3–T38.9, T39, **T38.10 + bridge** | done |
+| Thu 2026-05-07 | 8 | T38.11 (overlay), start T38.13 | next |
+| Fri 2026-05-08 | 8 | T38.12 (commit form), finish T38.13 | |
+| Sat 2026-05-09 | ~6 | T38.14 (deploy), T39 (if time), buffer | |
 
-**Deadline: Sat 2026-05-10 noon.** ~6 hours of cushion gained
-tonight by closing all six cards in one session instead of spread
-across Thu+Fri.
+**Deadline: Sat 2026-05-10 noon.** A full half-day was reclaimed
+across Wed evening + late night by closing the chart row AND the
+drawer + bridge in one push.
 
 ## Caveats / things to watch
 
@@ -241,6 +235,9 @@ across Thu+Fri.
    `docker run -d --name agentforge-redis -p 6379:6379 redis:7-alpine`.
 3. **Sidecar** — `cd sidecar && ./scripts/sidecar.sh status` should
    say `running on :8000`. If not: `./scripts/sidecar.sh start`.
+   Tail logs at `sidecar/var/sidecar.log` — bridge failures now
+   include `stage=` (me / patient_pid) and `upstream_status` so they
+   diagnose at a glance.
 4. **Vite dev server** — `cd dashboard && npm run dev`. Restart on
    `vite.config.ts` edits (proxy block doesn't HMR).
 
@@ -249,13 +246,27 @@ across Thu+Fri.
 * **id_token signature verification deferred** — sidecar decodes the
   JWT without verifying against the JWKS endpoint. T38.14 follow-up.
 * **Token refresh not wired** — when the access_token expires the
-  user gets re-prompted to sign in.
+  user gets re-prompted to sign in. The agent bridge's identity
+  cache is keyed by access_token so it invalidates in lockstep when
+  refresh lands.
 * **Anthropic API key was leaked in conversation** during MR 7's
   build session. Rotate before any non-demo use.
 * **HF cache is not mounted as a volume on the droplet** — every
   redeploy re-downloads ~190 MB.
 * **Disk pressure on the droplet** crossed 79% during MR 7 deploys.
   Run `docker system prune -f` before redeploys.
+
+### OpenEMR FHIR mapper bugs to know (carried forward)
+
+* **`{entry.value}` template placeholder** — OpenEMR's FHIR mapper
+  sometimes emits an unsubstituted Smarty/template string as
+  `Observation.valueString` (observed on Cause of Death, LOINC
+  69453-9). LabResultsCard filters them via `/^\{[^}]+\}$/`.
+* **`/userinfo` returns 404** despite OIDC discovery advertising it
+  (still applies; sidecar reads identity from id_token JWT, and the
+  agent bridge uses fhirUser → /me instead).
+* **`procedure_result` UUID-backfill SQL bug** still occasionally
+  hits the FHIR `/metadata` endpoint with a 500.
 
 ## Memory pointers (via `MEMORY.md`)
 
@@ -282,21 +293,24 @@ across Thu+Fri.
 
 1. `git status` — confirm clean (or known-not-important diffs only).
 2. `git log --oneline -5` — verify latest commit is
-   `feb872a4c chore(taskmaster): mark T38.3–T38.9 done; …`.
-3. `task-master show 38` — confirm 38.1–38.9 done, 38.10 pending.
+   `04e6c2611 fix(agentforge): UNHEX hyphenated UUIDs …`.
+3. `task-master show 38` — confirm 38.1–38.9 done; 38.10 *should* be
+   marked done (batch into the next `chore(taskmaster):` commit
+   if it's still `in-progress`).
 4. **Spin up the runtime stack** (in this order):
    - `docker ps --filter name=agentforge-redis` — start if missing.
    - `cd sidecar && ./scripts/sidecar.sh status` — start if not running.
    - `cd dashboard && npm run dev` — confirm dashboard serves at
-     :5173, `/patient/<pid>` shows the full chart row.
-5. Begin T38.10:
-   - Sketch `<AgentDrawer>` shell + Pinia store from the decision
-     spine (mode tabs, patient-scoped conversations, persistent
-     across nav).
-   - Decide on overlay-on-patient-change UX (probably a Bootstrap
-     `<modal>` rendered above the drawer chat area, not the page).
-   - Wire to sidecar `/turn` with the existing session cookie (no
-     custom JWT — it's the same identity that owns the FHIR proxy).
+     :5173, `/patient/<uuid>` shows the chart row, and clicking
+     the right-edge **Agent** tab → typing a chart question →
+     send produces a real orchestrator reply.
+5. Read **`docs/adr/0001-dashboard-auth-bridging.md`** if you're
+   touching the BFF, the auth gateway, or either bootstrap endpoint.
+6. Pick a path:
+   - **T38.11** if you have a full session and want critical-path
+     progress (citation overlay re-port).
+   - **T38.13** if you have a smaller window or the dev-easy stack
+     is misbehaving (defense doc; ADR-0001 covers half of it).
 
 ## What's deployed where
 
@@ -305,6 +319,8 @@ across Thu+Fri.
 * **`http://localhost:5173/`** — local dashboard (Vite). `/auth/*`
   and `/api/*` proxied to the sidecar at `localhost:8000`.
 * **`http://localhost:8000/`** — local sidecar (FastAPI). `/health`,
-  `/turn`, plus the dashboard BFF surface.
-* **`https://localhost:9300/`** — local dev-easy OpenEMR (HTTPS only
-  for OAuth2 endpoints).
+  `/turn` (legacy JWT path), `/auth/*`, `/api/fhir/*`, and the new
+  `/api/agent/turn` (BFF agent path).
+* **`https://localhost:9300/`** — local dev-easy OpenEMR (HTTPS).
+  The two new `/internal/me.php` + `/internal/patient_pid.php`
+  endpoints live here; sidecar reaches them over `:8300` HTTP.
