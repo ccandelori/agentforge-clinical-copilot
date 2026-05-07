@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import PatientContextConflictOverlay from '@/components/PatientContextConflictOverlay.vue'
+import { useAgentTurn } from '@/composables/useAgentTurn'
 import { useAgentDrawer, type AgentMode } from '@/stores/agentDrawer'
 
 // AgentForge drawer shell (T38.10).
@@ -10,13 +11,15 @@ import { useAgentDrawer, type AgentMode } from '@/stores/agentDrawer'
 // Reads/writes through the `useAgentDrawer` Pinia store; this component
 // stays focused on layout, animation, and mode-tab affordances.
 //
-// The chat I/O is intentionally minimal — addUserTurn echoes into the
-// active scope; bridging to the sidecar /turn endpoint lands with the
-// follow-up subtasks (T38.11+). Disabling the input while a pending
-// patient-change is staged is the only conflict-related responsibility
-// here; the overlay component handles its own visibility + buttons.
+// Chart-mode messages are sent through the auth bridge described in
+// docs/adr/0001-dashboard-auth-bridging.md: dashboard cookie →
+// sidecar session → minted internal JWT → AuthGateway → Orchestrator.
+// Research and Intake modes are not yet wired to the agent (T38.11+);
+// the input is disabled in those modes until the cross-mode turn
+// surface is in place.
 
 const store = useAgentDrawer()
+const agentTurn = useAgentTurn()
 const draft = ref<string>('')
 
 const tabs: { mode: AgentMode; label: string; testId: string }[] = [
@@ -36,12 +39,47 @@ function selectTab(mode: AgentMode): void {
   store.setMode(mode)
 }
 
+const agentReady = computed<boolean>(
+  () =>
+    store.mode === 'chart'
+    && store.canChart
+    && store.pendingPatientChange === null,
+)
+
+const inputDisabled = computed<boolean>(
+  () => !agentReady.value || agentTurn.status.value === 'loading',
+)
+
 function send(): void {
-  if (store.pendingPatientChange !== null) return
+  if (!agentReady.value) return
+  if (agentTurn.status.value === 'loading') return
   const text = draft.value.trim()
   if (text === '') return
+
+  // patient_id from activePatient (the route's :pid). Defensive parse
+  // so a malformed pid surfaces as a typed error instead of a silent
+  // 422 from the BFF route.
+  const pid = Number.parseInt(store.activePatient ?? '', 10)
+  if (Number.isNaN(pid) || pid <= 0) {
+    return
+  }
+
   store.addUserTurn(text)
   draft.value = ''
+
+  void agentTurn
+    .send({
+      message: text,
+      patient_id: pid,
+      session_id: store.currentScopeId,
+    })
+    .then((reply) => {
+      store.addAssistantTurn(reply)
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      store.addAssistantTurn(`Error: ${message}. Please try again.`)
+    })
 }
 </script>
 
@@ -140,19 +178,25 @@ function send(): void {
           v-model="draft"
           type="text"
           class="form-control"
-          placeholder="Ask AgentForge…"
+          :placeholder="
+            agentReady
+              ? agentTurn.status.value === 'loading'
+                ? 'Thinking…'
+                : 'Ask AgentForge…'
+              : 'Open a patient chart to chat with the agent.'
+          "
           data-test="agent-input"
-          :disabled="store.pendingPatientChange !== null"
+          :disabled="inputDisabled"
           @keyup.enter="send"
         />
         <button
           type="button"
           class="btn btn-primary"
           data-test="agent-send"
-          :disabled="store.pendingPatientChange !== null"
+          :disabled="inputDisabled"
           @click="send"
         >
-          Send
+          {{ agentTurn.status.value === 'loading' ? '…' : 'Send' }}
         </button>
       </div>
     </footer>
