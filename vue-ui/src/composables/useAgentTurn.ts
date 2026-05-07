@@ -169,6 +169,13 @@ export function useAgentTurn(): UseAgentTurn {
         body: JSON.stringify(body),
         signal: controller.signal,
       })
+      if (res.status === 401) {
+        // Cookie expired or sidecar dropped the session — bounce the SPA
+        // back through the auth flow. main.ts listens for this and
+        // navigates to /login after re-hydrating.
+        window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+        throw new Error('Your session expired. Please sign in again.')
+      }
       if (!res.ok) {
         throw new Error(
           `Agent request failed (HTTP ${res.status}). Try again in a moment.`,

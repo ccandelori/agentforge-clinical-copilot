@@ -356,6 +356,13 @@ async function fhirFetch<T>(path: string): Promise<T> {
       headers: { Accept: 'application/fhir+json' },
       signal: controller.signal,
     })
+    if (res.status === 401) {
+      // Cookie expired or sidecar dropped the session — bounce the SPA
+      // back through the auth flow. The auth store listens for this and
+      // re-hydrates / redirects to /login.
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+      throw new Error(`FHIR ${path} returned 401`)
+    }
     if (!res.ok) {
       throw new Error(`FHIR ${path} returned ${res.status}`)
     }

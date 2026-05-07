@@ -59,6 +59,9 @@ from agentforge.dashboard_auth.openemr_patient_pid import (
 )
 from agentforge.dashboard_auth.sessions import Session, SessionStore
 from agentforge.gateway.auth_gateway import AuthGateway
+from agentforge.orchestrator import get_turn_citation_index
+from agentforge.verifier.cache import CitationIndex
+from agentforge.verifier.citation import find_citations
 
 
 class _OrchestratorProto:
@@ -89,10 +92,136 @@ class AgentTurnRequest(BaseModel):
     session_id: str | None = None
 
 
+class AgentTurnCitation(BaseModel):
+    """One citation surfaced to the dashboard chat UI.
+
+    Shape matches what the vue-ui ``CitationPill`` / ``CitationsPane``
+    components expect. Sourced by parsing the orchestrator's reply text
+    for the W1 ``[record_type #id]`` grammar via
+    :func:`agentforge.verifier.citation.find_citations`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    source: str
+    excerpt: str
+    date: str
+    kind: str
+    provenance: str | None = None
+
+
 class AgentTurnResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reply: str
+    citations: list[AgentTurnCitation] = Field(default_factory=list)
+
+
+# Map verifier record types → frontend kind enum
+# ('note' | 'lab' | 'med' | 'problem' | 'allergy'). Unknown record
+# types fall back to 'note' so the citation still surfaces as a pill.
+_KIND_BY_RECORD_TYPE: dict[str, str] = {
+    "note": "note",
+    "encounter": "note",
+    "visit": "note",
+    "problem": "problem",
+    "condition": "problem",
+    "diagnosis": "problem",
+    "allergy": "allergy",
+    "med": "med",
+    "medication": "med",
+    "rx": "med",
+    "lab": "lab",
+    "lab_result": "lab",
+    "observation": "lab",
+}
+
+
+_EXCERPT_FIELD_PRIORITY: tuple[str, ...] = (
+    # Notes / encounter narrative
+    "text", "note", "narrative", "summary", "subject", "body", "content",
+    # Problem / allergy / med descriptions
+    "description", "name", "title", "label", "display",
+    # Lab values
+    "value", "result", "result_text",
+    # Generic last-resort
+    "code", "icd10", "rxnorm", "loinc",
+)
+
+_DATE_FIELD_PRIORITY: tuple[str, ...] = (
+    "date", "effective_date", "onset_date", "recorded_date",
+    "performed_date", "issued", "started", "created_at",
+)
+
+# Cap excerpts to bound payload size — full chart notes can be many KB
+# of free text and the chat doesn't need every word. The client clamps
+# its display further (line-clamp-3 by default) and reveals more on the
+# "View source" expand toggle, so 4 KB is plenty of headroom.
+_EXCERPT_MAX_LEN = 4000
+
+
+def _pick_excerpt(record: dict[str, Any], fallback: str) -> str:
+    """Pick the most-likely human-readable text field from a record dict."""
+    for field_name in _EXCERPT_FIELD_PRIORITY:
+        v = record.get(field_name)
+        if isinstance(v, str) and v.strip():
+            text = v.strip()
+            if len(text) > _EXCERPT_MAX_LEN:
+                return text[: _EXCERPT_MAX_LEN - 1].rstrip() + "…"
+            return text
+    return fallback
+
+
+def _pick_date(record: dict[str, Any]) -> str:
+    """Pick the most-likely date field; empty string if none matches."""
+    for field_name in _DATE_FIELD_PRIORITY:
+        v = record.get(field_name)
+        if isinstance(v, str) and v.strip():
+            # Trim time portion for compact pill display.
+            return v.split("T", 1)[0]
+    return ""
+
+
+def _build_citations(reply: str) -> list[AgentTurnCitation]:
+    """Extract inline ``[type #id]`` citations from a reply for the UI.
+
+    Excerpts and dates are resolved against the per-turn
+    :class:`CitationIndex` stashed by the orchestrator — this gives the
+    chat pills the actual record text instead of the raw ``[note #116]``
+    token. When the index is unavailable (e.g. unit-test stub or a turn
+    that didn't go through the verifier), we fall back to the raw token.
+    """
+    index: CitationIndex | None = get_turn_citation_index()
+    out: list[AgentTurnCitation] = []
+    seen: set[str] = set()
+    for c in find_citations(reply):
+        kind = _KIND_BY_RECORD_TYPE.get(c.record_type.lower(), "note")
+        cid = f"{c.record_type}-{c.record_id}"
+        if cid in seen:
+            continue
+        seen.add(cid)
+        record = (
+            index.get(c.record_type, c.record_id) if index is not None else None
+        )
+        source = f"{c.record_type.title()} {c.record_id}"
+        if record is not None:
+            excerpt = _pick_excerpt(record, fallback=c.raw)
+            date = _pick_date(record)
+        else:
+            excerpt = c.raw
+            date = ""
+        out.append(
+            AgentTurnCitation(
+                id=cid,
+                source=source,
+                excerpt=excerpt,
+                date=date,
+                kind=kind,
+                provenance=c.raw,
+            )
+        )
+    return out
 
 
 def _extract_user_uuid(fhir_user: str) -> str | None:
@@ -230,6 +359,9 @@ def make_agent_turn_router(
             body.message,
             session_id=body.session_id,
         )
-        return AgentTurnResponse(reply=reply)
+        return AgentTurnResponse(
+            reply=reply,
+            citations=_build_citations(reply),
+        )
 
     return router

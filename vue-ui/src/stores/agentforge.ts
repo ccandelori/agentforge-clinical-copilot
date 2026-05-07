@@ -229,7 +229,13 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
     }
     conversations.value = [created, ...conversations.value]
     activeConversationId.value = created.id
-    return created
+    // CRITICAL: return the proxy version that Vue's deep reactivity
+    // wrapped when the array was assigned. Returning the local `created`
+    // raw object means subsequent `conv.messages = [...]` mutations
+    // don't propagate through Pinia's reactivity, so the assistant
+    // reply on the very first turn doesn't render until the next
+    // state change forces a re-evaluation.
+    return activeConversation.value ?? created
   }
 
   function newConversation(): void {

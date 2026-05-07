@@ -45,6 +45,7 @@ const grouped = computed<readonly CitationGroup[]>(() => {
 })
 
 const cardRefs = ref<Map<string, HTMLElement>>(new Map())
+const expanded = ref<Set<string>>(new Set<string>())
 
 function setCardRef(id: string, el: unknown): void {
   if (el === null || el === undefined) {
@@ -54,6 +55,20 @@ function setCardRef(id: string, el: unknown): void {
   if (el instanceof HTMLElement) {
     cardRefs.value.set(id, el)
   }
+}
+
+function toggleExpanded(id: string): void {
+  const next = new Set(expanded.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+  }
+  expanded.value = next
+}
+
+function isExpanded(id: string): boolean {
+  return expanded.value.has(id)
 }
 
 function kindLabel(kind: Citation['kind']): string {
@@ -148,19 +163,43 @@ watch(
             </span>
             <span class="text-[11px] text-ink-muted">{{ c.date }}</span>
           </div>
-          <p class="mt-2 text-sm leading-relaxed text-ink">{{ c.excerpt }}</p>
+          <p
+            class="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-ink"
+            :class="isExpanded(c.id) ? '' : 'line-clamp-3'"
+          >{{ c.excerpt }}</p>
           <div class="mt-3 flex justify-end">
             <button
               type="button"
               class="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs font-medium text-ink-muted hover:bg-surface-2 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              title="View source (coming soon)"
+              :title="isExpanded(c.id) ? 'Collapse' : 'View full source'"
+              :aria-expanded="isExpanded(c.id)"
+              @click="toggleExpanded(c.id)"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3" aria-hidden="true">
+              <svg
+                v-if="!isExpanded(c.id)"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="h-3 w-3"
+                aria-hidden="true"
+              >
                 <path d="M14 4h6v6" />
                 <path d="M10 14 20 4" />
                 <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
               </svg>
-              View source
+              <svg
+                v-else
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="h-3 w-3"
+                aria-hidden="true"
+              >
+                <path d="m18 15-6-6-6 6" />
+              </svg>
+              {{ isExpanded(c.id) ? 'Collapse' : 'View source' }}
             </button>
           </div>
         </article>
