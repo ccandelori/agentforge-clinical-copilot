@@ -59,7 +59,7 @@ from agentforge.dashboard_auth.openemr_patient_pid import (
 )
 from agentforge.dashboard_auth.sessions import Session, SessionStore
 from agentforge.gateway.auth_gateway import AuthGateway
-from agentforge.orchestrator import get_turn_citation_index
+from agentforge.orchestrator import get_last_turn_extraction, get_turn_citation_index
 from agentforge.verifier.cache import CitationIndex
 from agentforge.verifier.citation import find_citations
 
@@ -116,6 +116,16 @@ class AgentTurnResponse(BaseModel):
 
     reply: str
     citations: list[AgentTurnCitation] = Field(default_factory=list)
+    # Per-turn structured extraction snapshot from the W2 INTAKE flow
+    # (T38.12). Populated by ``Orchestrator._run_graph_turn`` via the
+    # ``_TURN_EXTRACTION_VAR`` ContextVar; the route reads it through
+    # :func:`get_last_turn_extraction` after ``orchestrator.turn()``
+    # returns. ``None`` for chart-question turns and any path that did
+    # not produce an extraction (evidence-only, W1 fall-through). The
+    # shape is intentionally opaque on the wire — the dashboard drawer
+    # types it client-side and renders an extraction-review panel
+    # below the assistant bubble when non-null.
+    extraction: dict[str, Any] | None = None
 
 
 # Map verifier record types → frontend kind enum
@@ -484,9 +494,14 @@ def make_agent_turn_router(
             body.message,
             session_id=body.session_id,
         )
+        # Read the extraction snapshot AFTER ``turn`` returns — same
+        # ContextVar isolation contract as ``get_turn_citation_index``
+        # (see orchestrator/__init__.py). ``None`` for non-INTAKE turns.
+        extraction = get_last_turn_extraction()
         return AgentTurnResponse(
             reply=reply,
             citations=_build_citations(reply),
+            extraction=extraction,
         )
 
     return router

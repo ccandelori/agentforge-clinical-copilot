@@ -221,7 +221,10 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
     # defaults to [] when the orchestrator reply has no inline [type #id]
     # markers. The test reply is the bare string "ok" so no citations
     # are extracted; assert the exact shape including the empty list.
-    assert resp.json() == {"reply": "ok", "citations": []}
+    # T38.12 adds the `extraction` field (None for chart-question turns
+    # like this one — no INTAKE flow ran, so the orchestrator did not
+    # stash an extraction snapshot).
+    assert resp.json() == {"reply": "ok", "citations": [], "extraction": None}
 
     # Orchestrator received the right ctx — user_id from /me, pid from
     # /patient_pid — both routed through the real AuthGateway.
@@ -232,6 +235,90 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
     assert ctx.role == "Administrators"
     assert orch.captured["user_message"] == "what's the patient's allergies?"
     assert orch.captured["session_id"] == "convo-1"
+
+
+@pytest.mark.asyncio
+async def test_response_surfaces_per_turn_extraction_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T38.12: when the orchestrator stashed an extraction snapshot for
+    the current turn (W2 INTAKE flow), the /turn route surfaces it on
+    ``AgentTurnResponse.extraction`` so the dashboard drawer can render
+    a confirm-able panel below the assistant bubble.
+
+    The orchestrator-side ContextVar plumbing already exists; this test
+    pins the wire shape: ``extraction`` is an opaque dict (or None)
+    forwarded verbatim from ``get_last_turn_extraction``.
+    """
+    fake_extraction: dict[str, Any] = {
+        "document_kind": "lab_report",
+        "fields": {
+            "patient_name": "Jane Doe",
+            "collected_at": "2026-05-01",
+            "tests": [{"name": "HbA1c", "value": "6.7", "units": "%"}],
+        },
+        "confidence": 0.92,
+    }
+
+    monkeypatch.setattr(
+        "agentforge.dashboard_auth.turn_route.get_last_turn_extraction",
+        lambda: fake_extraction,
+    )
+
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 7},
+    )
+    sid = await _seed_session(
+        store,
+        fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/u",
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "intake this PDF", "patient_uuid": "p"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["extraction"] == fake_extraction
+
+
+@pytest.mark.asyncio
+async def test_response_extraction_is_none_when_orchestrator_did_not_stash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T38.12: chart-question turns (no INTAKE flow) leave the
+    extraction ContextVar at its ``None`` default; the route must
+    surface that as ``extraction: null`` rather than omitting the
+    field — vue-ui consumers branch on its presence."""
+    monkeypatch.setattr(
+        "agentforge.dashboard_auth.turn_route.get_last_turn_extraction",
+        lambda: None,
+    )
+
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 7},
+    )
+    sid = await _seed_session(
+        store,
+        fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/u",
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "what's the dx?", "patient_uuid": "p"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "extraction" in body
+    assert body["extraction"] is None
 
 
 @pytest.mark.asyncio
