@@ -44,6 +44,27 @@ describe('<AgentDrawer>', () => {
     expect(wrapper.find('[data-test="agent-drawer-toggle"]').exists()).toBe(true)
   })
 
+  it('does not render the drawer body when closed', () => {
+    // Regression: Bootstrap .d-flex !important overrides Vue's v-show
+    // inline display:none, so the aside has to be removed from the DOM
+    // entirely (v-if), not merely toggled with v-show.
+    const wrapper = mountDrawer()
+    expect(wrapper.find('[data-test="agent-drawer"]').exists()).toBe(false)
+  })
+
+  it('clicking the in-drawer close button collapses the drawer back to the toggle', async () => {
+    const wrapper = mountDrawer()
+    const store = useAgentDrawer()
+    store.openDrawer()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="agent-drawer"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="agent-drawer-close"]').trigger('click')
+    expect(store.open).toBe(false)
+    expect(wrapper.find('[data-test="agent-drawer"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="agent-drawer-toggle"]').exists()).toBe(true)
+  })
+
   it('clicking the toggle opens the drawer', async () => {
     const wrapper = mountDrawer()
     const store = useAgentDrawer()

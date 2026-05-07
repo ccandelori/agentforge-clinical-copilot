@@ -59,7 +59,7 @@ function send(): void {
   </button>
 
   <aside
-    v-show="store.open"
+    v-if="store.open"
     class="agent-drawer shadow-lg bg-white d-flex flex-column"
     role="dialog"
     aria-label="AgentForge drawer"
