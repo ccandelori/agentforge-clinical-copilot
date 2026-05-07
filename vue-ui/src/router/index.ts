@@ -55,7 +55,13 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  // BASE_URL is set from vite's `base` config:
+  //   '/'           in dev (default)
+  //   '/dashboard/' in production (T38.14 cutover — Apache hosts the
+  //                 SPA at /dashboard/ on the same origin as OpenEMR).
+  // Passing it in tells vue-router to strip the prefix from history
+  // URLs so the route table stays prefix-agnostic.
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
   scrollBehavior(_to, _from, saved) {
     return saved ?? { top: 0 }

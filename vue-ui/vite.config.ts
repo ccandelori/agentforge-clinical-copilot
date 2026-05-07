@@ -8,7 +8,14 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const sidecarBase = env.VITE_SIDECAR_BASE ?? 'http://localhost:8000'
 
+  // Production base path — the SPA is served at /dashboard/ behind Apache
+  // on the droplet (T38.14 cutover). In dev the SPA is at the Vite root.
+  // Vite copies this into `import.meta.env.BASE_URL` which the router
+  // passes to `createWebHistory(BASE_URL)` so vue-router strips the prefix.
+  const base = mode === 'production' ? '/dashboard/' : '/'
+
   return {
+    base,
     plugins: [vue()],
     resolve: {
       alias: {
