@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
+import { useRouter } from 'vue-router'
 
 import BaseBadge from '@/components/ui/BaseBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseEmptyState from '@/components/ui/BaseEmptyState.vue'
+import BaseInput from '@/components/ui/BaseInput.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSpinner from '@/components/ui/BaseSpinner.vue'
 import AllergiesCard from '@/components/patients/dashboard/AllergiesCard.vue'
 import EncountersCard from '@/components/patients/dashboard/EncountersCard.vue'
@@ -76,6 +79,55 @@ const chips = computed<readonly Chip[]>(() => {
   if (p.insurance) items.push({ label: 'Insurance', value: p.insurance })
   return items
 })
+
+// ---------------- Header actions ----------------
+const router = useRouter()
+
+function onNewEncounter(): void {
+  if (!patient.value) return
+  // Draft id with `new-` prefix tells EncounterEditor to skip the
+  // FHIR fetch and build an empty encounter from the patient context.
+  const draftId = `new-${Date.now()}`
+  router.push({
+    name: 'encounter',
+    params: { id: draftId },
+    query: { patient: patient.value.id },
+  })
+}
+
+const editOpen = ref<boolean>(false)
+const editForm = ref({
+  firstName: '',
+  lastName: '',
+  phone: '',
+  email: '',
+})
+const editSaved = ref<boolean>(false)
+let editSavedTimer: number | undefined
+
+function onEditOpen(): void {
+  if (!patient.value) return
+  editForm.value = {
+    firstName: patient.value.firstName,
+    lastName: patient.value.lastName,
+    phone: patient.value.phone ?? '',
+    email: patient.value.email ?? '',
+  }
+  editSaved.value = false
+  editOpen.value = true
+}
+
+function onEditSave(): void {
+  // Demographics edits aren't wired to a FHIR PATCH yet — show inline
+  // confirmation and close. Pre-deadline scope; a real PATCH against
+  // /api/fhir/Patient/{id} is the follow-up.
+  editSaved.value = true
+  if (editSavedTimer !== undefined) window.clearTimeout(editSavedTimer)
+  editSavedTimer = window.setTimeout(() => {
+    editOpen.value = false
+    editSaved.value = false
+  }, 1200)
+}
 </script>
 
 <template>
@@ -116,8 +168,8 @@ const chips = computed<readonly Chip[]>(() => {
         :patient="patient"
         :allergy-count="allergies.length"
         :active-problem-count="activeProblemCount"
-        @edit="() => {}"
-        @new-encounter="() => {}"
+        @edit="onEditOpen"
+        @new-encounter="onNewEncounter"
       />
 
       <!-- Quick chips -->
@@ -160,5 +212,56 @@ const chips = computed<readonly Chip[]>(() => {
         </div>
       </div>
     </template>
+
+    <BaseModal v-model:open="editOpen" title="Edit demographics">
+      <form class="grid grid-cols-1 gap-4 sm:grid-cols-2" @submit.prevent="onEditSave">
+        <BaseInput
+          v-model="editForm.firstName"
+          label="First name"
+          autocomplete="given-name"
+        />
+        <BaseInput
+          v-model="editForm.lastName"
+          label="Last name"
+          autocomplete="family-name"
+        />
+        <BaseInput
+          v-model="editForm.phone"
+          label="Phone"
+          type="tel"
+          autocomplete="tel"
+        />
+        <BaseInput
+          v-model="editForm.email"
+          label="Email"
+          type="email"
+          autocomplete="email"
+        />
+        <p class="sm:col-span-2 text-xs text-ink-muted">
+          Demographics edits are local to this preview — a FHIR PATCH back
+          to OpenEMR is a post-deadline follow-up.
+        </p>
+      </form>
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <transition
+            enter-active-class="transition-opacity duration-200"
+            leave-active-class="transition-opacity duration-300"
+            enter-from-class="opacity-0"
+            leave-to-class="opacity-0"
+          >
+            <span v-if="editSaved" class="text-xs text-success-600" role="status">
+              Saved (preview only)
+            </span>
+          </transition>
+          <BaseButton variant="ghost" size="sm" @click="editOpen = false">
+            Cancel
+          </BaseButton>
+          <BaseButton variant="primary" size="sm" @click="onEditSave">
+            Save
+          </BaseButton>
+        </div>
+      </template>
+    </BaseModal>
   </div>
 </template>

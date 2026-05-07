@@ -19,7 +19,7 @@ defineEmits<{
 <template>
   <nav
     aria-label="Encounter sections"
-    class="sticky top-32 flex flex-col gap-0.5 rounded-xl border border-line bg-surface p-2 shadow-card"
+    class="sticky top-36 flex flex-col gap-0.5 rounded-xl border border-line bg-surface p-2 shadow-card"
   >
     <button
       v-for="item in items"

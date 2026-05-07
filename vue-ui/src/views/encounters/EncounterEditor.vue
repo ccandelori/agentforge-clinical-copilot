@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
-  getEncounters,
+  getEncounter,
   getPatient,
   type Encounter,
   type Patient,
@@ -33,6 +33,9 @@ interface Props {
 
 const props = defineProps<Props>()
 const router = useRouter()
+const route = useRoute()
+
+const isDraftEncounter = computed<boolean>(() => props.id.startsWith('new-'))
 
 interface NavItem {
   readonly id: string
@@ -55,12 +58,6 @@ const encounter = ref<Encounter | null>(null)
 const patient = ref<Patient | null>(null)
 const loadError = ref<string | null>(null)
 const loading = ref<boolean>(true)
-
-// Encounter id format from mock: `enc-p-XXXX-NNNN`. Extract patient id.
-function extractPatientId(encounterId: string): string | null {
-  const match = encounterId.match(/^enc-(p-\d{4})-\d+$/)
-  return match ? match[1] ?? null : null
-}
 
 const draftCtx = useEncounterDraft(props.id)
 
@@ -134,29 +131,49 @@ function scrollTo(id: string): void {
 
 // ---------------- Lifecycle ----------------
 onMounted(async () => {
-  const pid = extractPatientId(props.id)
-  if (!pid) {
-    loadError.value = 'Could not parse encounter id.'
-    loading.value = false
-    return
-  }
   try {
-    const [pt, encs] = await Promise.all([getPatient(pid), getEncounters(pid)])
-    if (!pt) {
-      loadError.value = 'Patient not found.'
-      loading.value = false
-      return
-    }
-    patient.value = pt
-    const found = encs.find((e) => e.id === props.id)
-    encounter.value = found ?? {
-      id: props.id,
-      patientId: pid,
-      date: new Date().toISOString(),
-      type: 'Office Visit',
-      providerName: pt.pcp ?? 'Dr. Patel',
-      reason: 'New visit',
-      status: 'in-progress',
+    if (isDraftEncounter.value) {
+      // New encounter — patient comes from ?patient=<uuid> on the route.
+      // No FHIR fetch for the encounter (it doesn't exist yet); the
+      // draft is held in sessionStorage via useEncounterDraft until
+      // Sign & Finalize creates the real resource.
+      const patientUuid = (route.query.patient as string | undefined) ?? ''
+      if (!patientUuid) {
+        loadError.value = 'Missing patient context for new encounter.'
+        loading.value = false
+        return
+      }
+      const pt = await getPatient(patientUuid)
+      if (!pt) {
+        loadError.value = 'Patient not found.'
+        loading.value = false
+        return
+      }
+      patient.value = pt
+      encounter.value = {
+        id: props.id,
+        patientId: pt.id,
+        date: new Date().toISOString(),
+        type: 'Office Visit',
+        providerName: pt.pcp ?? 'Unassigned',
+        reason: 'New encounter',
+        status: 'in-progress',
+      }
+    } else {
+      const enc = await getEncounter(props.id)
+      if (!enc) {
+        loadError.value = 'Encounter not found.'
+        loading.value = false
+        return
+      }
+      encounter.value = enc
+      const pt = enc.patientId ? await getPatient(enc.patientId) : null
+      if (!pt) {
+        loadError.value = 'Patient not found for this encounter.'
+        loading.value = false
+        return
+      }
+      patient.value = pt
     }
   } catch {
     loadError.value = 'Failed to load encounter.'
@@ -293,7 +310,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('subjective', el as Element | null)"
             data-section-id="subjective"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <SubjectiveSection
               :chief-complaint="draftCtx.draft.chiefComplaint"
@@ -307,7 +324,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('objective', el as Element | null)"
             data-section-id="objective"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <ObjectiveSection
               :vitals="draftCtx.draft.vitals"
@@ -327,7 +344,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('assessment', el as Element | null)"
             data-section-id="assessment"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <AssessmentSection
               :problems="draftCtx.draft.problems"
@@ -340,7 +357,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('plan', el as Element | null)"
             data-section-id="plan"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <PlanSection
               :planned-meds="draftCtx.draft.plannedMeds"
@@ -361,7 +378,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('vitals-summary', el as Element | null)"
             data-section-id="vitals-summary"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <BaseCard title="Vitals (summary)">
               <div v-if="vitalsSummary.length === 0" class="text-sm text-ink-muted">
@@ -381,7 +398,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('orders', el as Element | null)"
             data-section-id="orders"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <OrdersSection
               :orders="draftCtx.draft.pendingOrders"
@@ -393,7 +410,7 @@ const vitalsSummary = computed<readonly { label: string; value: string }[]>(() =
           <section
             :ref="(el) => registerSection('attachments', el as Element | null)"
             data-section-id="attachments"
-            class="scroll-mt-32"
+            class="scroll-mt-36"
           >
             <AttachmentsSection
               :attachments="draftCtx.draft.attachments"

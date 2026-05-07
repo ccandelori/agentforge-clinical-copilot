@@ -52,6 +52,25 @@ const statusLabel = computed<string>(() => (props.signedAt ? 'Signed' : 'Draft')
   >
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0 flex-1">
+        <RouterLink
+          :to="{ name: 'patient-dashboard', params: { id: patient.id } }"
+          class="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted transition-colors hover:text-primary-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="h-4 w-4 shrink-0"
+            aria-hidden="true"
+          >
+            <path d="M19 12H5" />
+            <path d="m12 19-7-7 7-7" />
+          </svg>
+          <span>Back to chart</span>
+        </RouterLink>
         <div class="flex flex-wrap items-center gap-2">
           <BaseBadge variant="info">{{ encounter.type }}</BaseBadge>
           <BaseBadge :variant="statusVariant">{{ statusLabel }}</BaseBadge>

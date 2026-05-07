@@ -20,6 +20,14 @@ type SortKey = 'onset' | 'status' | 'description'
 
 const sortKey = ref<SortKey>('onset')
 const expanded = ref<Set<string>>(new Set<string>())
+const showInactive = ref<boolean>(false)
+
+const activeCount = computed<number>(
+  () => props.problems.filter((p) => p.status === 'active').length,
+)
+const inactiveCount = computed<number>(
+  () => props.problems.length - activeCount.value,
+)
 
 function toggle(id: string): void {
   const next = new Set(expanded.value)
@@ -37,8 +45,13 @@ const STATUS_RANK: Readonly<Record<ProblemStatus, number>> = {
   resolved: 2,
 }
 
+const visible = computed<readonly Problem[]>(() => {
+  if (showInactive.value) return props.problems
+  return props.problems.filter((p) => p.status === 'active')
+})
+
 const sorted = computed<readonly Problem[]>(() => {
-  const out = [...props.problems]
+  const out = [...visible.value]
   switch (sortKey.value) {
     case 'onset':
       out.sort((a, b) => b.onsetDate.localeCompare(a.onsetDate))
@@ -77,19 +90,35 @@ function statusVariant(status: ProblemStatus): 'danger' | 'warning' | 'success' 
 </script>
 
 <template>
-  <BaseCard title="Problem list" :padded="false">
+  <BaseCard :padded="false">
+    <template #title>
+      <div class="flex items-center gap-2">
+        <h2 class="text-sm font-semibold tracking-tight">Problem list</h2>
+        <BaseBadge variant="neutral">{{ activeCount }} active</BaseBadge>
+      </div>
+    </template>
     <template #actions>
-      <label class="flex items-center gap-1.5 text-xs text-ink-muted">
-        <span>Sort</span>
-        <select
-          v-model="sortKey"
-          class="rounded-md border border-line bg-surface px-2 py-1 text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/40"
-        >
-          <option value="onset">Onset</option>
-          <option value="status">Status</option>
-          <option value="description">A–Z</option>
-        </select>
-      </label>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 text-xs text-ink-muted">
+          <input
+            v-model="showInactive"
+            type="checkbox"
+            class="h-3.5 w-3.5 rounded border-line text-primary-600 focus:ring-primary-500/40"
+          />
+          Show inactive ({{ inactiveCount }})
+        </label>
+        <label class="flex items-center gap-1.5 text-xs text-ink-muted">
+          <span>Sort</span>
+          <select
+            v-model="sortKey"
+            class="rounded-md border border-line bg-surface px-2 py-1 text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/40"
+          >
+            <option value="onset">Onset</option>
+            <option value="status">Status</option>
+            <option value="description">A–Z</option>
+          </select>
+        </label>
+      </div>
     </template>
 
     <div v-if="loading" class="space-y-2 p-4">
@@ -107,8 +136,12 @@ function statusVariant(status: ProblemStatus): 'danger' | 'warning' | 'success' 
     <BaseEmptyState
       v-else-if="sorted.length === 0"
       icon="✓"
-      title="No problems on file"
-      message="Conditions added to the chart will appear here."
+      title="No active problems"
+      :message="
+        activeCount === 0 && inactiveCount > 0
+          ? 'Toggle Show inactive to see prior conditions.'
+          : 'Conditions added to the chart will appear here.'
+      "
     />
 
     <ul v-else class="divide-y divide-line">

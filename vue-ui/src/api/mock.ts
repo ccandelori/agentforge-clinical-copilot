@@ -949,6 +949,29 @@ export async function getPatient(id: string): Promise<Patient | null> {
 }
 
 /**
+ * GET /api/fhir/Encounter/{id} — single encounter by FHIR id.
+ *
+ * Real FHIR encounter ids are opaque (UUIDs / server-issued), so the editor
+ * can't reverse-engineer the patient from the encounter id alone. This
+ * helper fetches the resource and exposes the projected shape; the caller
+ * extracts the patient id from `encounter.patientId`.
+ */
+export async function getEncounter(id: string): Promise<Encounter | null> {
+  try {
+    const e = await fhirFetch<fhir4.Encounter>(
+      `/api/fhir/Encounter/${encodeURIComponent(id)}`,
+    )
+    if (!isEncounterResource(e)) return null
+    return projectEncounter(e)
+  } catch (caught) {
+    if (caught instanceof Error && /HTTP 404/i.test(caught.message)) {
+      return null
+    }
+    throw caught
+  }
+}
+
+/**
  * GET /api/fhir/Encounter?patient={id} — patient encounters, newest first.
  */
 export async function getEncounters(patientId: string): Promise<readonly Encounter[]> {
@@ -1014,14 +1037,18 @@ export async function getVitals(patientId: string): Promise<readonly Vital[]> {
 }
 
 /**
- * GET /api/fhir/Condition?patient={id}&clinical-status=active — patient
- * problem list. Synthea includes encounter-diagnosis Conditions which mostly
- * pass through unchanged; the dashboard card filters by status downstream.
+ * GET /api/fhir/Condition?patient={id} — patient problem list.
+ *
+ * No `clinical-status` or `category` filter: Synthea-imported Conditions
+ * are categorized as `encounter-diagnosis` (per project_dashboard_data_gaps
+ * memory) and may not carry a clinicalStatus, so any server-side filter
+ * empties the list. The card sorts by status downstream — projectProblem
+ * defaults missing clinicalStatus to 'inactive' so it still ranks lower
+ * than active rows.
  */
 export async function getProblems(patientId: string): Promise<readonly Problem[]> {
   const params = new URLSearchParams({
     patient: patientId,
-    'clinical-status': 'active',
     _count: '50',
   })
   const bundle = await fhirFetch<fhir4.Bundle>(
