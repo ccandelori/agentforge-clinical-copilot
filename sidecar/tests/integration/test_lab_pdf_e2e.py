@@ -24,11 +24,29 @@ real ``DocumentUploadWriter``, real ``VisionExtractor``, and real
 
 from __future__ import annotations
 
+from typing import Any
+
 import fitz  # type: ignore[import-untyped]
+import httpx
+import pytest
 
 from agentforge.tools.attach_and_extract import PdfRenderer
+from agentforge.tools.document_upload import DocumentUploadWriter
 
-from ._lab_e2e_fixtures import build_lab_pdf_bytes
+from ._lab_e2e_fixtures import (
+    CapturingAuditRecorder,
+    build_lab_pdf_bytes,
+)
+
+
+# ---------------------------------------------------------------------------
+# Shared test constants
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_ID = 7777
+_PATIENT_ID = 42
+_PATIENT_UUID = "patient-resource-uuid-test"
+_FAKE_JWT = "header.payload.signature"
 
 
 # ---------------------------------------------------------------------------
@@ -97,3 +115,79 @@ def test_synthetic_lab_pdf_is_parameterizable() -> None:
         document.close()
     assert "5.4" in full_text
     assert "9.2" not in full_text  # default A1c was overridden
+
+
+# ---------------------------------------------------------------------------
+# 28.2 — upload phase (real DocumentUploadWriter, mocked PHP)
+# ---------------------------------------------------------------------------
+
+
+def _make_upload_transport() -> tuple[httpx.MockTransport, dict[str, Any]]:
+    """Build a MockTransport that mimics the OpenEMR upload endpoint.
+
+    Captures the request so we can assert the writer forwarded the
+    multipart body verbatim. Returns ``{"document_id": int}`` to mimic
+    the real PHP response shape. The captured dict is mutated by the
+    handler so the test can read the bytes back after the call.
+    """
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["method"] = request.method
+        captured["authorization"] = request.headers.get("authorization")
+        # request.content is the raw multipart body — we don't parse
+        # it back into fields here; the writer test
+        # (test_tools_document_upload.py) covers that surface.
+        captured["body_len"] = len(request.content)
+        return httpx.Response(200, json={"document_id": _DOCUMENT_ID})
+
+    return httpx.MockTransport(handler), captured
+
+
+@pytest.mark.asyncio
+async def test_upload_phase_returns_document_id_and_records_audit() -> None:
+    """The upload phase produces a numeric document_id and records a
+    ``document_ingest`` audit event with the right structural metadata."""
+    pdf_bytes = build_lab_pdf_bytes()
+    transport, captured = _make_upload_transport()
+    audit = CapturingAuditRecorder()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        writer = DocumentUploadWriter(
+            base_url="https://openemr.test", http_client=client
+        )
+        document_id = await writer.upload(
+            jwt=_FAKE_JWT,
+            patient_uuid=_PATIENT_UUID,
+            filename="lab.pdf",
+            content=pdf_bytes,
+            mimetype="application/pdf",
+            doc_type="lab_pdf",
+        )
+
+    # Real production code path returned a positive integer document_id.
+    assert document_id == _DOCUMENT_ID
+    # The MockTransport saw the request — confirms we exercised the
+    # writer's HTTP path, not a short-circuit.
+    assert captured["method"] == "POST"
+    assert captured["authorization"] == f"Bearer {_FAKE_JWT}"
+    assert captured["body_len"] >= len(pdf_bytes)
+
+    # Audit-event recording is the test's responsibility — the writer
+    # itself doesn't emit; the BFF route would. We simulate that here
+    # so the ordering assertion in 28.5 has both events to compare.
+    audit.record_document_ingest(
+        document_id=document_id,
+        patient_id=_PATIENT_ID,
+        doc_type="lab_pdf",
+        byte_count=len(pdf_bytes),
+    )
+
+    assert audit.event_names == ["document_ingest"]
+    event = audit.events[0] if audit.events else None
+    assert event is not None
+    assert event.payload["document_id"] == _DOCUMENT_ID
+    assert event.payload["patient_id"] == _PATIENT_ID
+    assert event.payload["doc_type"] == "lab_pdf"
+    assert event.payload["byte_count"] == len(pdf_bytes)
