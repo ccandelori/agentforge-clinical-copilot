@@ -27,8 +27,16 @@ set -euo pipefail
 
 # ---------- Config ----------
 
+# Auto-source scripts/.env.local if present (gitignored; for personal
+# DROPLET_HOST + overrides). See scripts/.env.local.example.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$_SCRIPT_DIR/.env.local" ]] && source "$_SCRIPT_DIR/.env.local"
+
 if [[ -z "${DROPLET_HOST:-}" ]]; then
-    echo "DROPLET_HOST is required (e.g. DROPLET_HOST=root@1.2.3.4 $0)" >&2
+    echo "DROPLET_HOST is required." >&2
+    echo "Set it in scripts/.env.local (cp scripts/.env.local.example scripts/.env.local)" >&2
+    echo "or export it inline: DROPLET_HOST=root@1.2.3.4 $0" >&2
     exit 2
 fi
 

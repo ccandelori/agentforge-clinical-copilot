@@ -78,3 +78,6 @@ sites/default/documents/logs_and_misc/methods/sevenb
 # OpenEMR runtime document storage — encrypted patient uploads, not source
 # (numeric per-document directories created by the upload flow)
 sites/default/documents/[0-9]*/
+
+# Local-only deploy/dev config (DROPLET_HOST, etc.) — see scripts/.env.local.example
+scripts/.env.local
