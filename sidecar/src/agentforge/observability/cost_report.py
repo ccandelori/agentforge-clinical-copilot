@@ -113,6 +113,219 @@ def _iter_day_range(start: date, end: date) -> Iterator[date]:
 
 
 # ---------------------------------------------------------------------------
+# Latency percentiles + bottleneck flagging (Task 27.5)
+# ---------------------------------------------------------------------------
+
+# Default bottleneck threshold — a step that consumes more than 40% of
+# the total per-turn time budget is flagged. The exact figure is
+# arguable but matches the W2 latency budget breakdown in
+# ARCHITECTURE.md §4 (no single step should dominate).
+DEFAULT_BOTTLENECK_THRESHOLD: float = 0.40
+
+
+@dataclass(frozen=True)
+class LatencyObservation:
+    """One per-step latency sample.
+
+    ``step`` is the dashboard-side step bucket (``"llm"``, ``"retrieval"``,
+    ``"synthesis"``, etc.) — the same labels the orchestrator's
+    ``record_*`` helpers produce. ``latency_ms`` is wall-clock for the
+    span.
+    """
+
+    step: str
+    latency_ms: int
+
+
+@dataclass(frozen=True)
+class StepLatencySummary:
+    """Per-step latency rollup returned by :func:`aggregate_latencies_by_step`.
+
+    All four fields are derived from the input observation list:
+    ``p50`` and ``p95`` use the linear-interpolation rule (numpy-
+    compatible); ``mean`` is the arithmetic mean; ``count`` is the
+    sample size.
+    """
+
+    p50: float
+    p95: float
+    mean: float
+    count: int
+
+
+def percentile(samples: list[int] | list[float], q: float) -> float:
+    """Return the ``q``-th percentile of ``samples`` via linear interpolation.
+
+    Matches numpy's ``percentile`` with ``method='linear'``: sort,
+    map ``q`` into [0, len-1], take floor + ceiling, lerp by fractional
+    part. Raises on empty input — callers should not summarise zero
+    samples.
+    """
+    if not samples:
+        raise ValueError("cannot compute percentile of empty sample list")
+    sorted_samples = sorted(samples)
+    n = len(sorted_samples)
+    if n == 1:
+        return float(sorted_samples[0])
+
+    rank = (q / 100.0) * (n - 1)
+    lower = int(rank)
+    upper = min(lower + 1, n - 1)
+    frac = rank - lower
+    return float(sorted_samples[lower]) * (1 - frac) + float(sorted_samples[upper]) * frac
+
+
+def aggregate_latencies_by_step(
+    observations: Iterable[LatencyObservation],
+) -> dict[str, StepLatencySummary]:
+    """Group observations by ``step`` and compute the percentile summary.
+
+    Empty input returns an empty dict. Steps with zero samples never
+    enter the result — :func:`percentile` would raise on them anyway.
+    """
+    grouped: dict[str, list[int]] = defaultdict(list)
+    for obs in observations:
+        grouped[obs.step].append(obs.latency_ms)
+
+    summary: dict[str, StepLatencySummary] = {}
+    for step, samples in grouped.items():
+        summary[step] = StepLatencySummary(
+            p50=percentile(samples, 50),
+            p95=percentile(samples, 95),
+            mean=sum(samples) / len(samples),
+            count=len(samples),
+        )
+    return summary
+
+
+def identify_bottleneck_steps(
+    summaries: dict[str, StepLatencySummary],
+    *,
+    threshold: float = DEFAULT_BOTTLENECK_THRESHOLD,
+) -> list[str]:
+    """Return the names of steps whose mean latency exceeds ``threshold``
+    of the total per-turn mean latency.
+
+    Returned in descending order of mean latency so the worst offender
+    appears first. Empty input → empty list. ``threshold`` defaults to
+    :data:`DEFAULT_BOTTLENECK_THRESHOLD` (40%).
+    """
+    if not summaries:
+        return []
+    total_mean = sum(s.mean for s in summaries.values())
+    if total_mean <= 0.0:
+        return []
+
+    flagged = [
+        (name, s.mean)
+        for name, s in summaries.items()
+        if s.mean / total_mean > threshold
+    ]
+    flagged.sort(key=lambda pair: pair[1], reverse=True)
+    return [name for name, _ in flagged]
+
+
+def format_latency_report(
+    summaries: dict[str, StepLatencySummary],
+    *,
+    bottleneck_threshold: float = DEFAULT_BOTTLENECK_THRESHOLD,
+) -> str:
+    """Render the latency table with bottleneck markers.
+
+    Steps are ordered by descending mean so the dominant ones surface
+    first. A row whose mean exceeds ``bottleneck_threshold`` of the
+    total mean is marked ``BOTTLENECK`` so an operator scanning the
+    table can spot it without re-deriving the percentage.
+    """
+    lines = [
+        "Latency by Step",
+        "-" * 60,
+        f"{'step':<20} {'count':>6} {'p50 ms':>10} {'p95 ms':>10} {'mean ms':>10}",
+    ]
+    if not summaries:
+        lines.append("(no observations)")
+        return "\n".join(lines)
+
+    bottleneck_names = set(
+        identify_bottleneck_steps(summaries, threshold=bottleneck_threshold)
+    )
+    by_mean = sorted(summaries.items(), key=lambda pair: pair[1].mean, reverse=True)
+    for name, s in by_mean:
+        marker = "  BOTTLENECK" if name in bottleneck_names else ""
+        lines.append(
+            f"{name:<20} {s.count:>6d} {s.p50:>10.1f} {s.p95:>10.1f} {s.mean:>10.1f}{marker}"
+        )
+    return "\n".join(lines)
+
+
+def fetch_latency_observations(
+    client: Langfuse,
+    *,
+    start: datetime,
+    end: datetime,
+    page_limit: int = 100,
+) -> list[LatencyObservation]:
+    """Pull all observations in ``[start, end]`` and project to
+    ``LatencyObservation`` keyed by step bucket.
+
+    Step assignment uses the observation's ``name`` prefix:
+
+    * ``llm:<model>`` → ``"llm"``.
+    * ``extraction:<tool>`` → ``"extraction"``.
+    * ``tool:<tool>`` → ``"tool"``.
+    * Any other name → the name itself (e.g. ``"verifier"``,
+      ``"planner"``, ``"retrieval_hits"``).
+
+    ``latency_ms`` is read from observation metadata — every
+    ``record_*`` helper this module ships writes it there.
+    Observations missing ``latency_ms`` are skipped (legacy traces
+    that pre-date the metric).
+    """
+    out: list[LatencyObservation] = []
+    cursor: str | None = None
+    while True:
+        response = client.api.observations.get_many(
+            from_start_time=start,
+            to_start_time=end,
+            limit=page_limit,
+            cursor=cursor,
+            fields="core,metadata",
+        )
+        for obs in response.data:
+            metadata = getattr(obs, "metadata", None)
+            if not isinstance(metadata, dict):
+                continue
+            latency = metadata.get("latency_ms")
+            if not isinstance(latency, int | float):
+                continue
+            name = getattr(obs, "name", "") or ""
+            step = _step_from_observation_name(name)
+            out.append(
+                LatencyObservation(step=step, latency_ms=int(latency))
+            )
+
+        cursor = getattr(response.meta, "cursor", None)
+        if not cursor:
+            return out
+
+
+def _step_from_observation_name(name: str) -> str:
+    """Map a Langfuse observation name to a coarse step bucket.
+
+    Names follow ``<bucket>:<detail>`` for the polymorphic spans
+    (``llm:claude-sonnet-4-5``, ``tool:search_notes``,
+    ``extraction:emit_lab_pdf_extraction``); everything else is its
+    own bucket.
+    """
+    if not name:
+        return "unknown"
+    prefix, _, _ = name.partition(":")
+    if prefix and prefix != name:
+        return prefix
+    return name
+
+
+# ---------------------------------------------------------------------------
 # Production spend projection (Task 27.4)
 # ---------------------------------------------------------------------------
 
@@ -358,6 +571,25 @@ def _build_parser() -> argparse.ArgumentParser:
             "absent."
         ),
     )
+    parser.add_argument(
+        "--latency",
+        action="store_true",
+        help=(
+            "After the cost table, emit a per-step p50/p95/mean latency "
+            "summary and flag any step whose mean exceeds the bottleneck "
+            "threshold (default 40%) of the per-turn total."
+        ),
+    )
+    parser.add_argument(
+        "--bottleneck-threshold",
+        type=float,
+        default=DEFAULT_BOTTLENECK_THRESHOLD,
+        help=(
+            "Fraction of total per-turn mean latency above which a step "
+            "is flagged as a bottleneck. Used only when --latency is set. "
+            f"Default: {DEFAULT_BOTTLENECK_THRESHOLD}."
+        ),
+    )
     return parser
 
 
@@ -447,6 +679,34 @@ def main(argv: list[str] | None = None) -> int:
         )
         print()
         print(format_projection_report(proj))
+
+    if args.latency:
+        if not (0.0 < args.bottleneck_threshold <= 1.0):
+            print(
+                "error: --bottleneck-threshold must be in (0, 1]",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            latency_obs = fetch_latency_observations(client, start=start, end=end)
+        except Exception as exc:
+            logger.error(
+                "cost_report: failed to fetch latency observations", exc_info=exc
+            )
+            print(
+                f"error: latency query failed ({type(exc).__name__})",
+                file=sys.stderr,
+            )
+            return 1
+
+        summary = aggregate_latencies_by_step(latency_obs)
+        print()
+        print(
+            format_latency_report(
+                summary,
+                bottleneck_threshold=args.bottleneck_threshold,
+            )
+        )
 
     return 0
 
