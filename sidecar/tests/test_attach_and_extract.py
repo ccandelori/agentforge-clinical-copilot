@@ -441,6 +441,37 @@ async def test_extractor_rejects_empty_pages_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_extractor_attaches_cost_usd_via_vision_pricing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 27.1: VisionExtractor surfaces ``cost_usd`` on the result.
+
+    The cost is computed from the Anthropic-reported ``usage.input_tokens``
+    (which already includes image tokens) and ``usage.output_tokens``
+    against the configured vision model's row in PRICING. Pinning the
+    droplet's dated alias (``claude-haiku-4-5-20251001``) verifies the
+    dated-alias resolver path.
+    """
+    monkeypatch.setenv("ANTHROPIC_VISION_MODEL", "claude-haiku-4-5-20251001")
+    payload = _valid_extraction_payload()
+    response = _make_anthropic_response(payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(contract=LAB_CONTRACT, client=client)
+    result = await extractor.extract(
+        pages=_rendered_pages(),
+        document_id=42,
+        patient_id=7,
+    )
+
+    # Anthropic usage on the stub response: 1234 input + 456 output.
+    # Haiku 4.5: input $0.80/M, output $4/M.
+    # Cost = 1234 * 0.80e-6 + 456 * 4e-6 = 0.0009872 + 0.001824 = 0.0028112.
+    assert result.cost_usd == pytest.approx(0.0028112, rel=1e-9)
+
+
+@pytest.mark.asyncio
 async def test_extractor_propagates_inverted_bbox_validation_error() -> None:
     """The schema-level inverted-bbox check (the P2 fix landed in MR
     !11) must propagate — a model emitting x1 <= x0 should fail

@@ -60,6 +60,7 @@ from anthropic.types import (
 )
 from pydantic import BaseModel, ValidationError
 
+from agentforge.observability.cost import calculate_cost
 from agentforge.schemas.intake import IntakeFormExtraction
 from agentforge.schemas.lab import LabPdfExtraction
 
@@ -466,15 +467,24 @@ class VisionExtractionResult[T: BaseModel]:
     """The validated extraction plus the raw model metadata.
 
     ``input_tokens`` and ``output_tokens`` come from the Anthropic
-    response; production observability (Task 14) will route these to
+    response; production observability (Task 14) routes these to
     Langfuse alongside a redacted prompt summary. We surface them
     here so the caller can log without re-parsing the SDK response.
+
+    ``cost_usd`` is the closed-form vision-call cost computed via
+    :func:`agentforge.observability.cost.calculate_cost` against the
+    Anthropic-reported tokens. Anthropic's billing already converts
+    image pixel area into the input-token count it returns, so we use
+    the standard text-rate path on the reported total — no double-
+    counting. ``None`` when the model isn't in the pricing table
+    (mirrors :func:`calculate_cost`'s soft-fail contract).
     """
 
     extraction: T
     model: str
     input_tokens: int
     output_tokens: int
+    cost_usd: float | None
 
 
 class VisionExtractor[T: BaseModel]:
@@ -577,11 +587,21 @@ class VisionExtractor[T: BaseModel]:
             raise
 
         usage = response.usage
+        input_tokens = int(usage.input_tokens)
+        output_tokens = int(usage.output_tokens)
+        # Anthropic's reported input_tokens already incorporates the
+        # vision pricing rule (image pixel area → tokens), so the same
+        # closed-form ``calculate_cost`` works for vision calls without
+        # double-counting. ``calculate_vision_cost`` is reserved for
+        # pre-call projections from page dimensions where we don't yet
+        # have an Anthropic Usage object.
+        cost = calculate_cost(self._model, input_tokens, output_tokens)
         return VisionExtractionResult(
             extraction=extraction,
             model=self._model,
-            input_tokens=int(usage.input_tokens),
-            output_tokens=int(usage.output_tokens),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost if cost > 0.0 else None,
         )
 
     def _first_tool_use(self, response: Message) -> ToolUseBlock | None:
