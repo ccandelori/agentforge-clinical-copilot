@@ -6342,7 +6342,7 @@
           "9",
           "10"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6408,7 +6408,7 @@
         "complexity": 6,
         "recommendedSubtasks": 0,
         "expansionPrompt": "Create evidence_retriever_node() function for LangGraph that accepts state with user query, instantiates EvidenceRetriever with loaded corpus, runs pipeline (BM25 top25 + Dense top25 → RRF merge top30 → Reranker top5), attaches Citation(source_type=GUIDELINE) to each result, returns evidence_chunks in state. Log retrieval_hits to Langfuse trace. Select reranker based on COHERE_API_KEY env var presence.",
-        "updatedAt": "2026-05-08T17:28:10.559Z"
+        "updatedAt": "2026-05-08T22:45:38.444Z"
       },
       {
         "id": "16",
@@ -6422,7 +6422,7 @@
           "3",
           "4"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6489,7 +6489,7 @@
         "complexity": 6,
         "recommendedSubtasks": 5,
         "expansionPrompt": "Break down into: 1) Create sidecar/tests/eval/cases/week2/ directory structure by category, 2) Define YAML schema with id/category/input/expected_behavior/expected_citations/rubric_expectations, 3) Author 12 extraction cases (lab-cbc-normal, lab-cmp-with-flag, intake-clean, intake-bbox-degraded-scan, etc.), 4) Author 10 evidence-retrieval cases + 10 citation cases + 8 refusal cases + 10 missing-data cases, 5) Create YAML schema validator script and validate all 50 cases",
-        "updatedAt": "2026-05-08T17:28:11.817Z"
+        "updatedAt": "2026-05-08T22:45:39.809Z"
       },
       {
         "id": "17",
@@ -6824,7 +6824,7 @@
           "9",
           "11"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6889,7 +6889,7 @@
         "complexity": 4,
         "recommendedSubtasks": 0,
         "expansionPrompt": "Update sidecar/Dockerfile to add RUN stage after dependencies install that downloads all-MiniLM-L6-v2 (~90MB) and bge-reranker-base (~280MB) to sentence-transformers cache. Set TRANSFORMERS_CACHE and SENTENCE_TRANSFORMERS_HOME env vars. Verify models load from cache at container start with no network request.",
-        "updatedAt": "2026-05-08T17:28:13.066Z"
+        "updatedAt": "2026-05-08T22:45:41.255Z"
       },
       {
         "id": "22",
@@ -8276,9 +8276,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T22:34:28.330Z",
+      "lastModified": "2026-05-08T22:45:41.256Z",
       "taskCount": 39,
-      "completedCount": 29,
+      "completedCount": 32,
       "tags": [
         "week2"
       ]
