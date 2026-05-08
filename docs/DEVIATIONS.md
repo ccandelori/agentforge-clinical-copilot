@@ -12,6 +12,65 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Production W2 SupervisorAdapter ships; measured baseline regen still deferred
+
+**Plan:** Task 18.4 logged a deviation that the W2 eval gate ships with
+a stub `baselines/week2.json` (all categories pinned at 1.0). Closing
+that loop required (a) a production `SupervisorAdapter` shaped like
+the runner's `Callable[[EvalCase], SupervisorOutput]` seam and (b) a
+human running the regen against real Anthropic + retrieval to overwrite
+the stub with measured rates.
+
+**What shipped:**
+
+- `sidecar/src/agentforge/eval/supervisor_adapter.py` — production
+  callable that drives `build_graph().ainvoke()` and shapes the result
+  into `SupervisorOutput` (response, sources, citation payload + tuple,
+  route-decision logs).
+- `sidecar/src/agentforge/eval/filename_resolver.py` — parses document
+  filenames out of case query prose, resolves on-disk fixtures under
+  `week2/example-documents/`, returns rendered pages.
+- `sidecar/src/agentforge/eval/regenerate_baseline.py` — manual CLI:
+  `uv run python -m agentforge.eval.regenerate_baseline --output ...`.
+
+**What's still deferred:**
+
+The CLI's real-LLM wiring branch (`_build_real_supervisor_and_harness`)
+raises `NotImplementedError`. A human running the regen edits that
+function to construct the deps tree their run needs (or pass `--mock`
+for a smoke check). Importing `agentforge.main.create_app` at the
+regen module level would pull FastAPI, Redis, and the OpenEMR HTTP
+stack into the pytest collection surface, which is a larger blast
+radius than the manual-edit approach justifies.
+
+**Adapter output shaping notes (seam observations):**
+
+- `structured_citation_payload` is a single Citation as a dict —
+  picked from the first available source (extraction, then retrieval,
+  then a synthetic fallback that satisfies the schema). The W2
+  programmatic schema check needs *one* well-formed payload; the
+  `structured_citations` tuple carries everything.
+- Logs are reconstructed from the graph's terminal `AgentState`
+  (route_decision, route_reason, iteration, last_node, plus
+  worker-evidence markers). Streaming-quality per-handoff timing
+  needs a real Langfuse trace handle and would read
+  `trace.route_decisions` instead — out of scope for the current
+  deferred-baseline use case.
+- The W2 graph's `intake_extractor_node` short-circuits when
+  `pdf_pages` is empty; the resolver mirrors the production /turn
+  route's PNG-rejection posture by returning empty pages for non-PDFs.
+  This is honest about the production surface — PNG cases land on the
+  evidence/synthesize path, and the eval reflects that.
+
+**What we learned:** The runner's `Callable` seam was already the
+right abstraction — production wiring slots in cleanly without
+modifying `runner_w2.SupervisorOutput` or `harness_w2.evaluate()`.
+The deferred-wiring trade in the regen CLI keeps the test surface
+deterministic + token-free; the manual edit step is acceptable for a
+once-per-meaningful-change measurement.
+
+---
+
 ## 2026-05-08 — Task 22 GH-Actions mirror: `github-script@v8` + workflow_dispatch trigger
 
 **Plan:** Task 22 brief specified `actions/github-script@v7` (or
