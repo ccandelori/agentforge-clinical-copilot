@@ -1,6 +1,26 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
+import {
+  useDocumentUpload,
+  type DocumentType,
+} from '@/composables/useDocumentUpload'
+
+/**
+ * Filename → BFF doc_type heuristic.
+ *
+ * The BFF route's `_ALLOWED_DOC_TYPES` is currently `{lab_pdf,
+ * intake_form}`. The picker in the composer is doc-type-agnostic, so
+ * we sniff the filename for lab markers; everything else falls back to
+ * intake_form (the demo's primary path). This is a deliberate
+ * shortcut — a future iteration will surface a doc-type select next
+ * to the attach button.
+ */
+const _LAB_FILENAME_PATTERN = /\b(lab|panel|cbc|cmp|lipid|hba1c|results?)\b/i
+function inferDocType(filename: string): DocumentType {
+  return _LAB_FILENAME_PATTERN.test(filename) ? 'lab_pdf' : 'intake_form'
+}
 import { useAgentForgeStore, type ChatMessage } from '@/stores/agentforge'
 
 import AgentMessage from './AgentMessage.vue'
@@ -10,11 +30,34 @@ const emit = defineEmits<{
 }>()
 
 const store = useAgentForgeStore()
+const route = useRoute()
+const { uploadDocument, isUploading } = useDocumentUpload()
 
 const draft = ref<string>('')
 const composerEl = ref<HTMLTextAreaElement | null>(null)
 const scrollEl = ref<HTMLDivElement | null>(null)
+const fileInputEl = ref<HTMLInputElement | null>(null)
+const uploadError = ref<string | null>(null)
 const autoScrollPaused = ref<boolean>(false)
+
+/**
+ * Patient UUID for the upload route. Mirrors the store's ``currentPatientUuid``
+ * — the upload route requires a patient context so the BFF can scope the
+ * attachment to the right chart. When we're not on a patient page the
+ * attach button is disabled (the file picker never opens).
+ */
+const patientUuid = computed<string | null>(() => {
+  if (route.name !== 'patient-dashboard') return null
+  const id = route.params['id']
+  if (typeof id !== 'string' || id.length === 0) return null
+  return id
+})
+
+const canAttach = computed<boolean>(
+  () => patientUuid.value !== null && !store.isSending && !isUploading.value,
+)
+
+const pendingAttachment = computed(() => store.pendingAttachment)
 
 const SUGGESTION_CHIPS: readonly string[] = [
   'Summarize last visit',
@@ -103,6 +146,42 @@ function pickSuggestion(s: string): void {
 function onCitationClick(id: string): void {
   emit('citation-click', id)
 }
+
+function onAttachClick(): void {
+  if (!canAttach.value) return
+  uploadError.value = null
+  fileInputEl.value?.click()
+}
+
+async function onFileSelected(ev: Event): Promise<void> {
+  const target = ev.target as HTMLInputElement | null
+  if (target === null) return
+  const file = target.files?.[0] ?? null
+  // Reset the input synchronously so the same file picked twice in a
+  // row still fires another ``change`` event.
+  target.value = ''
+  if (file === null) return
+  const uuid = patientUuid.value
+  if (uuid === null) {
+    uploadError.value = 'Open a patient chart before attaching a file.'
+    return
+  }
+  try {
+    const docType = inferDocType(file.name)
+    const { document_id } = await uploadDocument(file, uuid, docType)
+    store.setPendingAttachment({ documentId: document_id, filename: file.name })
+    uploadError.value = null
+  } catch (caught) {
+    uploadError.value
+      = caught instanceof Error && caught.message.length > 0
+        ? caught.message
+        : 'Upload failed. Try again.'
+  }
+}
+
+function removePendingAttachment(): void {
+  store.clearPendingAttachment()
+}
 </script>
 
 <template>
@@ -171,16 +250,65 @@ function onCitationClick(id: string): void {
     </div>
 
     <div class="shrink-0 border-t border-line bg-surface p-3">
+      <!-- Pending attachment chip + upload error live above the
+        composer so they don't get lost in the textarea grow zone. -->
+      <div
+        v-if="pendingAttachment !== null"
+        class="mb-2 flex items-center gap-2 rounded-lg border border-primary-300 bg-primary-50 px-2 py-1 text-xs text-primary-800 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-200"
+        data-test="pending-attachment"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+          <path d="M21 12.5 12.5 21a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 1 1-3-3L15 8.5" />
+        </svg>
+        <span class="truncate">{{ pendingAttachment.filename }}</span>
+        <button
+          type="button"
+          class="ml-auto rounded p-0.5 text-current hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-primary-800"
+          aria-label="Remove attachment"
+          @click="removePendingAttachment"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3 w-3" aria-hidden="true">
+            <path d="M6 6l12 12M6 18 18 6" />
+          </svg>
+        </button>
+      </div>
+      <div
+        v-if="uploadError !== null"
+        class="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+        role="alert"
+        data-test="upload-error"
+      >
+        {{ uploadError }}
+      </div>
+
       <div
         class="flex items-end gap-2 rounded-xl border border-line bg-surface-2 px-2 py-1.5 focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-500/30"
       >
+        <input
+          ref="fileInputEl"
+          type="file"
+          accept=".pdf,application/pdf"
+          class="sr-only"
+          aria-hidden="true"
+          tabindex="-1"
+          data-test="file-input"
+          @change="onFileSelected"
+        >
         <button
           type="button"
-          class="shrink-0 rounded-md p-1.5 text-ink-muted hover:bg-surface hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          aria-label="Attach file"
-          title="Attach file (coming soon)"
+          class="shrink-0 rounded-md p-1.5 text-ink-muted transition-colors hover:bg-surface hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
+          :aria-label="patientUuid === null ? 'Attach file (open a patient chart first)' : 'Attach file'"
+          :title="patientUuid === null ? 'Open a patient chart to attach a file' : 'Attach a PDF'"
+          :disabled="!canAttach"
+          data-test="attach-button"
+          @click="onAttachClick"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+          <span
+            v-if="isUploading"
+            class="block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+            aria-hidden="true"
+          />
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
             <path d="M21 12.5 12.5 21a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 1 1-3-3L15 8.5" />
           </svg>
         </button>

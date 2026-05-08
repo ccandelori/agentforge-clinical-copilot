@@ -29,7 +29,9 @@ const STORAGE_KEY = 'agentforge-conversations'
 
 export type MessageRole = 'user' | 'assistant'
 
-export type { Citation } from '@/composables/useAgentTurn'
+export type { Citation, IntakeExtraction } from '@/composables/useAgentTurn'
+
+import type { IntakeExtraction } from '@/composables/useAgentTurn'
 
 export interface ChatMessage {
   readonly id: string
@@ -37,6 +39,12 @@ export interface ChatMessage {
   readonly text: string
   readonly createdAt: string
   readonly citations?: readonly Citation[]
+  /**
+   * Structured intake-form extraction snapshot the sidecar attaches when
+   * the turn included a scanned document. Drives the
+   * <ExtractionPanel> rendered below the assistant bubble.
+   */
+  readonly extraction?: IntakeExtraction
   /**
    * Set when the assistant turn failed (network error, timeout, non-2xx
    * from the sidecar). The chat pane styles error bubbles distinctly
@@ -150,6 +158,16 @@ function readPersisted(): PersistedShape | null {
 const ERROR_FALLBACK_TEXT
   = 'I couldn’t reach the agent. Check your connection and try again.'
 
+/**
+ * In-memory state for an attachment the clinician has uploaded but not
+ * yet sent with a chat message. Held in component-light store state
+ * (no persistence — by design, per the no-PHI-in-storage rule).
+ */
+export interface PendingAttachment {
+  readonly documentId: string
+  readonly filename: string
+}
+
 export const useAgentForgeStore = defineStore('agentforge', () => {
   const conversations = ref<Conversation[]>([])
   const activeConversationId = ref<string | null>(null)
@@ -160,6 +178,13 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
    */
   const isSending = ref<boolean>(false)
   const hydrated = ref<boolean>(false)
+  /**
+   * The most-recent successful upload, waiting to ride the next chat
+   * turn. Cleared as soon as ``sendMessage`` puts the id on the wire,
+   * so a follow-up message doesn't re-attach the same document. Never
+   * persisted — this is transient session state by design.
+   */
+  const pendingAttachment = ref<PendingAttachment | null>(null)
 
   // useRoute() is safe in setup-store callbacks because the store is
   // instantiated lazily by Pinia — by the time a component calls
@@ -293,6 +318,14 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
     }
     persist()
 
+    // Snapshot + clear the pending attachment up front. ``document_id``
+    // rides exactly one turn; clearing it before the (async) network
+    // round-trip avoids any chance of a follow-up ``sendMessage`` (the
+    // user re-typing while we're in-flight is gated by ``isSending``,
+    // but defence-in-depth) re-attaching the same upload.
+    const attachmentForTurn = pendingAttachment.value
+    pendingAttachment.value = null
+
     isSending.value = true
     try {
       const result = await agent.send({
@@ -301,6 +334,9 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
           ? { patient_uuid: currentPatientUuid() as string }
           : {}),
         session_id: conv.id,
+        ...(attachmentForTurn !== null
+          ? { document_id: attachmentForTurn.documentId }
+          : {}),
       })
       const assistantMsg: ChatMessage = {
         id: makeId('m'),
@@ -309,6 +345,9 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
         createdAt: nowIso(),
         ...(result.citations.length > 0
           ? { citations: result.citations }
+          : {}),
+        ...(result.extraction !== undefined
+          ? { extraction: result.extraction }
           : {}),
       }
       conv.messages = [...conv.messages, assistantMsg]
@@ -331,6 +370,14 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
     }
   }
 
+  function setPendingAttachment(attachment: PendingAttachment): void {
+    pendingAttachment.value = attachment
+  }
+
+  function clearPendingAttachment(): void {
+    pendingAttachment.value = null
+  }
+
   return {
     conversations,
     sortedConversations,
@@ -338,9 +385,12 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
     activeConversation,
     messages,
     isSending,
+    pendingAttachment,
     hydrate,
     newConversation,
     selectConversation,
     sendMessage,
+    setPendingAttachment,
+    clearPendingAttachment,
   }
 })

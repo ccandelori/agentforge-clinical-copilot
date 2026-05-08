@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     vllm_base_url: str = ""
+    # Optional model override. Empty string falls back to the provider
+    # client's bundled default (see ``agentforge.llm.claude.DEFAULT_MODEL``).
+    # Set to ``claude-haiku-4-5-20251001`` for ~3× faster turn responses
+    # on chart Q&A; the synthesizer is citation-grounded so quality
+    # regression is bounded.
+    claude_model: str = ""
 
     # OpenEMR integration boundary (HTTP only — never direct MariaDB; see §1)
     openemr_base_url: str = "http://localhost:80"

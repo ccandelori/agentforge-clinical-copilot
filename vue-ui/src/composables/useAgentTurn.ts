@@ -1,5 +1,10 @@
 import { ref, type Ref } from 'vue'
 
+import {
+  parseIntakeExtraction,
+  type IntakeExtraction,
+} from './parseIntakeExtraction'
+
 // Wave 3 wiring: replaces vue-ui's canned typewriter with the real BFF
 // `/api/agent/turn` round-trip. The sidecar owns identity, JWT minting,
 // and `RequestContext` construction; this composable only shapes the
@@ -69,6 +74,17 @@ export interface AgentTurnRequest {
    */
   patient_uuid?: string
   session_id?: string
+  /**
+   * Optional OpenEMR ``documents.id`` (as a string) for a PDF the
+   * clinician just attached via the chat composer's file picker. The
+   * sidecar's W2 graph picks this up and routes the turn through the
+   * vision-extractor node before answering. ``document_id`` rides one
+   * turn — callers clear their pending state immediately after passing
+   * it in so a follow-up chat message doesn't re-attach the same
+   * upload. See ``useDocumentUpload`` for the upload flow that produces
+   * this id.
+   */
+  document_id?: string
 }
 
 /**
@@ -80,11 +96,20 @@ export interface AgentTurnRequest {
 export interface AgentTurnResult {
   readonly reply: string
   readonly citations: readonly Citation[]
+  /**
+   * Structured intake extraction surfaced when the turn included a
+   * scanned form. Null when the turn was a chart Q&A (no document
+   * attached) or when the W2 graph chose not to extract.
+   */
+  readonly extraction?: IntakeExtraction
 }
+
+export type { IntakeExtraction } from './parseIntakeExtraction'
 
 interface AgentTurnResponseBody {
   reply: string
   citations?: unknown
+  extraction?: unknown
 }
 
 const ALLOWED_KINDS: ReadonlySet<CitationKind> = new Set<CitationKind>([
@@ -95,7 +120,12 @@ const ALLOWED_KINDS: ReadonlySet<CitationKind> = new Set<CitationKind>([
   'allergy',
 ])
 
-const REQUEST_TIMEOUT_MS = 30_000
+// 120s accommodates the W2 document-extraction path (PDF render →
+// VLM page-by-page → verifier → synthesizer) which can take 30–60s
+// on first cold call. Chart-Q&A turns finish in <10s — no penalty.
+// A future iteration should switch to SSE so timeout is a soft
+// upper bound, not a hard wall.
+const REQUEST_TIMEOUT_MS = 120_000
 
 function parseCitation(raw: unknown): Citation | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -151,6 +181,9 @@ export function useAgentTurn(): UseAgentTurn {
     if (req.session_id !== undefined) {
       body.session_id = req.session_id
     }
+    if (req.document_id !== undefined) {
+      body.document_id = req.document_id
+    }
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => {
@@ -185,13 +218,18 @@ export function useAgentTurn(): UseAgentTurn {
         throw new Error('Agent response was malformed.')
       }
       const citations = parseCitations(parsed.citations)
+      const extraction = parseIntakeExtraction(parsed.extraction)
       status.value = 'success'
-      return { reply: parsed.reply, citations }
+      return {
+        reply: parsed.reply,
+        citations,
+        ...(extraction !== null ? { extraction } : {}),
+      }
     } catch (caught) {
       let friendly: Error
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         friendly = new Error(
-          'Agent request timed out after 30 seconds. Please try again.',
+          'Agent request timed out after 2 minutes. Please try again.',
         )
       } else if (caught instanceof Error) {
         friendly = caught

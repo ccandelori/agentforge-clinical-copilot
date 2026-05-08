@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import type { ChatMessage, Citation } from '@/stores/agentforge'
+import type { ChatMessage, Citation, IntakeExtraction } from '@/stores/agentforge'
 
 import CitationPill from './CitationPill.vue'
+import ExtractionPanel from './ExtractionPanel.vue'
 
 interface Props {
   message: ChatMessage
@@ -23,6 +24,10 @@ const isError = computed<boolean>(() => props.message.error === true)
 
 const citations = computed<readonly Citation[]>(() => {
   return props.message.citations ?? []
+})
+
+const extraction = computed<IntakeExtraction | null>(() => {
+  return props.message.extraction ?? null
 })
 
 const bubbleClass = computed<string>(() => {
@@ -87,6 +92,10 @@ function onCitationClick(id: string): void {
           :index="idx"
           @select="onCitationClick"
         />
+      </div>
+
+      <div v-if="!isUser && extraction !== null" class="w-full max-w-md">
+        <ExtractionPanel :extraction="extraction" />
       </div>
 
       <div

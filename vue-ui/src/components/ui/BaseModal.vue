@@ -1,16 +1,27 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
 
+type ModalSize = 'sm' | 'md' | 'lg' | 'xl'
+
 interface Props {
   open: boolean
   title?: string
   closeOnBackdrop?: boolean
+  size?: ModalSize
 }
 
 const props = withDefaults(defineProps<Props>(), {
   title: '',
   closeOnBackdrop: true,
+  size: 'md',
 })
+
+const sizeClass: Record<ModalSize, string> = {
+  sm: 'max-w-sm',
+  md: 'max-w-lg',
+  lg: 'max-w-3xl',
+  xl: 'max-w-5xl',
+}
 
 const emit = defineEmits<{
   (e: 'update:open', v: boolean): void
@@ -52,7 +63,8 @@ watch(
         @click="closeOnBackdrop ? close() : null"
       />
       <div
-        class="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card-lg"
+        class="relative z-10 flex max-h-[85vh] w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card-lg"
+        :class="sizeClass[props.size]"
       >
         <header
           v-if="title || $slots.title"

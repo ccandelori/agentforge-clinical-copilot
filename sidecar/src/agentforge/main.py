@@ -462,7 +462,10 @@ def create_app(
     )
 
     auth_gateway = AuthGateway(jwt_secret=settings.jwt_secret, redis_client=redis_client)
-    llm = llm_client or ClaudeClient(api_key=settings.anthropic_api_key)
+    llm = llm_client or ClaudeClient(
+        api_key=settings.anthropic_api_key,
+        **({"model": settings.claude_model} if settings.claude_model else {}),
+    )
     demographics = demographics_fetcher or DemographicsFetcher(
         base_url=settings.openemr_base_url,
     )
@@ -672,12 +675,19 @@ def create_app(
     # client; otherwise the legacy /turn surface is the only path
     # into the orchestrator.
     if dashboard_me_http is not None:
+        from agentforge.dashboard_auth.document_route import (
+            make_agent_document_router,
+        )
         from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
         from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
         from agentforge.dashboard_auth.openemr_patient_pid import (
             OpenEMRPatientPidFetcher,
         )
         from agentforge.dashboard_auth.turn_route import make_agent_turn_router
+        from agentforge.dashboard_auth.upload_route import (
+            make_agent_upload_router,
+        )
+        from agentforge.tools.document_upload import DocumentUploadWriter
 
         class _SystemClock:
             def now(self) -> datetime:
@@ -712,6 +722,50 @@ def create_app(
                 jwt_minter=jwt_minter,
                 auth_gateway=auth_gateway,
                 orchestrator=orchestrator,
+                # T38.15: when a request body carries ``document_id``,
+                # the route fetches bytes via this fetcher and renders
+                # them via this renderer before forwarding to the
+                # orchestrator. Reuses the same singletons the legacy
+                # /turn route uses (constructed earlier in create_app).
+                document_bytes_fetcher=document_bytes_fetcher_instance,
+                pdf_renderer=pdf_renderer_instance,
+            )
+        )
+
+        # Document-upload route (T38.15). Same auth pipeline as /turn;
+        # adds DocumentUploadWriter for the BFF → OpenEMR bridge. The
+        # writer reuses the dashboard httpx client (same cert posture
+        # as the /me + /patient_pid lookups) so production deployments
+        # don't need a second TLS-trust configuration.
+        document_upload_writer = DocumentUploadWriter(
+            base_url=settings.openemr_base_url,
+            http_client=dashboard_me_http,
+        )
+        app.include_router(
+            make_agent_upload_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                document_upload_writer=document_upload_writer,
+            )
+        )
+        # Document-fetch BFF route (T38.16). Same auth pipeline as
+        # /api/agent/turn — vue-ui's <DocumentViewer> calls this to
+        # load a stored PDF/image when a citation pill points at a
+        # document. Reuses the process-wide ``DocumentBytesFetcher``
+        # already constructed for the legacy /turn document path.
+        app.include_router(
+            make_agent_document_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                document_bytes_fetcher=document_bytes_fetcher_instance,
             )
         )
 
