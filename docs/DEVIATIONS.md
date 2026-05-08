@@ -446,6 +446,55 @@ not reliable proxies for on-disk weight size.
 
 ---
 
+## 2026-05-08 — Task 26 cache headers landed on the AgentForge internal route, not the legacy controller
+
+**Plan:** Task 26 ("Add HTTP Cache Headers to OpenEMR Document Route")
+listed three candidate routes — the `agent_panel.js` URL pattern at
+`/controller.php?document&retrieve&...&as_file=false`, the sidecar BFF
+at `/api/agent/document/{id}`, and the AgentForge module's own
+document endpoint. The brief told us not to touch the legacy core
+route or the sidecar, and to preserve `Content-Disposition: inline`.
+
+**Deviation:** Headers were added to
+`InternalDocumentBytesController::show()` (the JWT-scoped OpenEMR-side
+route at `/agentforge/internal/get_document_bytes`), which the
+sidecar BFF chains to. Two preservation criteria from the brief did
+not apply:
+
+* **`Content-Disposition: inline` was never emitted by this
+  controller.** That header is emitted by the legacy
+  `C_Document::retrieve_action` and (for the citation overlay path)
+  by the sidecar BFF, neither of which we touched. There was nothing
+  to preserve on the modified route.
+* **The previous policy was `no-store, no-cache, must-revalidate,
+  private`** — written when the only consumer was the sidecar's
+  vision tool (one-document-per-call, no benefit from caching). The
+  citation-overlay use case post-dates that decision; switching to
+  `max-age=300, private, must-revalidate` opens a 5-minute private
+  cache window that never reaches a shared cache. The PHI-safety
+  guarantee (`private`) is preserved.
+
+**Why:** The brief's "find the exact route" grep (`as_file`,
+`retrieve`, `Content-Disposition: inline`) returned only the
+`agent_panel.js` URL builder — i.e. the legacy core route. The AgentForge
+module never owned a Content-Disposition-bearing surface. The
+internal JWT-scoped endpoint is the closest the module has to a
+"document-bytes serving route" and it's the one the citation overlay
+chains through (Vue → BFF → InternalDocumentBytesController), so the
+latency win lands at the same layer the brief had in mind.
+
+**What we learned:** When a task brief says "the route used by X" and
+the grep shows X actually points at a route in the out-of-scope set,
+the route to modify is the next layer down the chain that *we own*.
+Worth documenting the chain explicitly in the controller docblock so
+the next agent doesn't re-do this discovery.
+
+**Artifacts:** commits `cf77fbb1f` (red) and `4a9f3e51b` (green);
+[`InternalDocumentBytesController.php`](../interface/modules/custom_modules/oe-module-agentforge/src/Controllers/InternalDocumentBytesController.php);
+[`InternalDocumentBytesControllerTest.php`](../tests/Tests/Isolated/Modules/AgentForge/InternalDocumentBytesControllerTest.php).
+
+---
+
 ## 2026-04-30 — Dropped `langchain` from sidecar dependencies
 
 **Plan:** Taskmaster Task 5.1 (`pyproject.toml`) listed both `langgraph` and

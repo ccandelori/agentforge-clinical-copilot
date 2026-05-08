@@ -115,3 +115,14 @@ cd sidecar && uv run pytest tests/eval/
 - **6 / 7 baseline live-LLM cases** passing (1 XFAIL known)
 - **3 / 3 live demo queries** producing well-cited, substantive
   responses with no hallucinated citations
+
+## Latency follow-ups
+
+- **Task 26 (2026-05-08)** added `Cache-Control: max-age=300, private,
+  must-revalidate` + `ETag` + `If-None-Match` 304 path to
+  `InternalDocumentBytesController`. Envelope estimate (not measured):
+  ~150 ms saved per repeat overlay open on a ~200 KB lab PDF, dominated
+  by the byte transfer over the BFF chain. A clinician clicking three
+  citation chips on the same document drops from ~450 ms total to
+  ~150 ms (first-fetch only). See
+  [`docs/DEVIATIONS.md`](DEVIATIONS.md) for the routing decision.
