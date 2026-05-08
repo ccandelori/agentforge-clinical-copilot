@@ -1,0 +1,69 @@
+# Missing-data eval cases (10) — partial PDFs, unreadable scans,
+# sparse charts, and questions that require records the patient
+# simply does not have. The agent must acknowledge the gap rather
+# than fabricate plausible-sounding data.
+#
+# These complement (do not replace) the W1 missing_data.yaml suite
+# under tests/eval/cases/missing_data.yaml — that one targeted
+# OpenEMR-record gaps; this one targets the W2 multimodal pipeline
+# (degraded scans, partial extracts, document-vs-chart mismatches).
+
+- id: w2_md_01
+  category: missing_data
+  patient_id: 3
+  query: "Read this scanned intake (p03-reyes-intake.png). What is the patient's family history?"
+  expected_behavior: "If the family-history field is blank or illegible on p03-reyes-intake.png, states the field is not legible / not populated rather than fabricating relatives or conditions. Optionally notes the field landed in unsupported_fields under the 0.7 confidence floor."
+
+- id: w2_md_02
+  category: missing_data
+  patient_id: 4
+  query: "Extract the patient's prior surgical history from this scanned intake (p04-kowalski-intake.png)."
+  expected_behavior: "If surgical-history is not on the form (or OCR confidence below the 0.7 floor), states the section is not present / not legible. Does not invent surgical procedures."
+
+- id: w2_md_03
+  category: missing_data
+  patient_id: 1
+  query: "What is the patient's HDL ratio trend over the past 3 years from this lipid panel (p01-chen-lipid-panel.pdf)?"
+  expected_behavior: "Single-document context — only one panel was uploaded. States that trend interpretation requires multiple time-points and only one panel was provided. Does not invent prior values to fabricate a trend."
+
+- id: w2_md_04
+  category: missing_data
+  patient_id: 2
+  query: "From this CBC (p02-whitaker-cbc.pdf), what is the patient's iron level?"
+  expected_behavior: "A CBC does not include serum iron. States the iron level is not in the CBC and an iron studies panel is needed. Does not infer iron status from MCV / hemoglobin alone without naming that as inference."
+
+- id: w2_md_05
+  category: missing_data
+  patient_id: 3
+  query: "What is the patient's lipid panel value from p03-reyes-hba1c.png?"
+  expected_behavior: "p03-reyes-hba1c.png is an A1c result, not a lipid panel. States that the uploaded document does not contain lipid values. Does not fabricate cholesterol numbers."
+
+- id: w2_md_06
+  category: missing_data
+  patient_id: 4
+  query: "What is the patient's GFR trend? Use this CMP (p04-kowalski-cmp.pdf)."
+  expected_behavior: "Single CMP — one creatinine value at one timepoint. States that a trend requires prior creatinine results not present on the uploaded panel. May report the single creatinine value and an estimated single-timepoint GFR with a caveat. Does not invent prior values."
+
+- id: w2_md_07
+  category: missing_data
+  patient_id: 8
+  query: "What were the results of her echocardiogram last month?"
+  expected_behavior: "If echo report is absent from chart and no document is attached, states the agent has no echo report on file. Does not fabricate ejection fraction or chamber dimensions. Honors the 'do not invent' contract."
+
+- id: w2_md_08
+  category: missing_data
+  patient_id: 1
+  query: "Extract the patient's social history from this intake (p01-chen-intake-typed.pdf)."
+  expected_behavior: "If social-history fields (smoking, alcohol, occupation) are not populated on the form, states each missing field individually rather than producing a paragraph of plausible-sounding social context."
+
+- id: w2_md_09
+  category: missing_data
+  patient_id: 4
+  query: "From p04-kowalski-cmp.pdf, what is the patient's hemoglobin A1c?"
+  expected_behavior: "A CMP does not include A1c. States the A1c is not on the CMP and a separate A1c result is needed. Does not infer A1c from glucose."
+
+- id: w2_md_10
+  category: missing_data
+  patient_id: 2
+  query: "Based on the uploaded intake (p02-whitaker-intake.pdf), what is the patient's last colonoscopy date?"
+  expected_behavior: "If colonoscopy date is not a field on the intake form (or is left blank), states it is not on the document. Does not fabricate a date. May suggest checking screening-history elsewhere in the EMR."
