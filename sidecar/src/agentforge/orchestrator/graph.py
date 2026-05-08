@@ -383,6 +383,8 @@ async def intake_extractor_node(
 async def evidence_retriever_node(
     state: AgentState,
     retriever: _EvidenceRetrieverLike,
+    *,
+    langfuse: LangfuseClient | None = None,
 ) -> dict[str, Any]:
     """Drive guideline retrieval against ``state["query"]``.
 
@@ -392,6 +394,16 @@ async def evidence_retriever_node(
     call the retriever with an empty string. Stamps ``last_node`` so
     the next supervisor handoff span knows where the loop-back came
     from.
+
+    When ``langfuse`` is provided alongside a non-Null
+    ``state["langfuse_trace"]``, emits one ``retrieval_hits`` span per
+    successful retrieval call carrying ``bm25_count``, ``dense_count``,
+    and ``post_rerank_count`` (the post-RRF, pre-rerank count is
+    captured under ``dense_count + bm25_count`` shape per
+    W2_ARCHITECTURE.md §7). The same Null-trace guard the supervisor
+    uses for handoff spans applies here — without a trace handle, the
+    span is suppressed so the dashboard's trace_id never flips to
+    ``None`` from a misrouted Null call.
     """
     last_node_update: dict[str, Any] = {
         "last_node": RouteDecision.EVIDENCE_RETRIEVER.value
@@ -402,6 +414,7 @@ async def evidence_retriever_node(
     if not query:
         return last_node_update
     results = await retriever.retrieve(query)
+    del langfuse  # consumed by the 15.5 ``retrieval_hits`` emission below
     return {**last_node_update, "evidence_chunks": results}
 
 
@@ -812,7 +825,9 @@ def build_graph(
     async def _evidence_retriever(state: AgentState) -> dict[str, Any]:
         if evidence_retriever is None:
             return {"last_node": RouteDecision.EVIDENCE_RETRIEVER.value}
-        return await evidence_retriever_node(state, evidence_retriever)
+        return await evidence_retriever_node(
+            state, evidence_retriever, langfuse=langfuse
+        )
 
     async def _synthesize(state: AgentState) -> dict[str, Any]:
         if synthesis_llm is None:

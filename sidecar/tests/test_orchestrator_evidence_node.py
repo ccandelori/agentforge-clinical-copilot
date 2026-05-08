@@ -150,3 +150,54 @@ class TestEvidenceNodeCitationContract:
         update = await evidence_retriever_node(state, retriever)
 
         assert update["last_node"] == RouteDecision.EVIDENCE_RETRIEVER.value
+
+
+# ---------------------------------------------------------------------------
+# 15.2 — node signature accepts an optional langfuse client + trace
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceNodeSignature:
+    """The node's keyword-only ``langfuse`` parameter is the seam for
+    Task 15.5's ``retrieval_hits`` span. Pinning the signature here so
+    later changes to the span payload don't accidentally make
+    ``langfuse`` positional or required.
+
+    No-op when ``langfuse`` is None (the production NullLangfuseClient
+    path is wired this way) or when the trace handle is absent — the
+    node still returns the same chunks, the only difference is whether
+    a span is emitted. The span payload itself is asserted in the 15.5
+    suite below.
+    """
+
+    async def test_node_accepts_langfuse_keyword_and_runs_without_trace(
+        self,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        retriever = _StubRetriever([_retrieval_result()])
+        langfuse = MagicMock()
+
+        state = _starter_state(query="anything")
+        # langfuse_trace stays None — the node must not call the
+        # client when there's no trace to attach a span to.
+        update = await evidence_retriever_node(
+            state, retriever, langfuse=langfuse
+        )
+
+        assert update["evidence_chunks"]
+        # Symmetric with the supervisor's handoff-span guard: with no
+        # trace, no span is emitted (otherwise the Null client gets a
+        # fake trace and the dashboard's trace_id stays None).
+        assert not langfuse.method_calls
+
+    async def test_node_no_ops_langfuse_when_client_is_none(self) -> None:
+        # Default: callers who haven't wired langfuse keep the previous
+        # behavior — the node's ``langfuse`` kwarg defaults to None and
+        # the function executes without the optional client.
+        retriever = _StubRetriever([_retrieval_result()])
+
+        state = _starter_state(query="anything")
+        update = await evidence_retriever_node(state, retriever, langfuse=None)
+
+        assert update["evidence_chunks"]
