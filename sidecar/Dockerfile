@@ -94,6 +94,13 @@ COPY --from=builder --chown=agentforge:agentforge /app/config /app/config
 COPY --from=builder --chown=agentforge:agentforge /app/prompts /app/prompts
 # Guideline corpus (W2 RAG). See the builder-stage COPY above.
 COPY --from=builder --chown=agentforge:agentforge /app/data /app/data
+# Pre-baked HuggingFace model cache (Task 21). The builder downloads
+# all-MiniLM-L6-v2 + bge-reranker-base safetensors into /opt/hf-cache;
+# we relocate them into the agentforge user's home so the runtime user
+# (uid 1000) can read them and the HF env vars (set below) point here.
+# Without this layer the first request blocks on a ~370 MB download
+# from huggingface.co.
+COPY --from=builder --chown=agentforge:agentforge /opt/hf-cache /home/agentforge/.cache/huggingface
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
