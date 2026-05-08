@@ -12,6 +12,41 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Sidecar image delta is ~1.2 GB, not the spec's ~370 MB
+
+**Plan:** Taskmaster Task 21 set the image-size target at 300-450 MB
+delta, with the breakdown `all-MiniLM-L6-v2 ~90 MB` + `bge-reranker-base
+~280 MB`.
+
+**Deviation:** Actual delta from pre-baked HF cache is ~1.2 GB
+(MiniLM 88 MB, bge-reranker-base 1.1 GB).
+
+**Why:** `BAAI/bge-reranker-base` is a roberta-base derivative with
+~280 M parameters. The "280" in the task spec appears to have been
+copied from the parameter count and treated as a megabyte estimate;
+the actual fp32 weights weigh ~1.1 GB on disk regardless of format
+(safetensors and pytorch_model.bin are both that size). We already
+restricted the snapshot_download to safetensors only via
+`allow_patterns`, which avoided fetching the 1.1 GB legacy
+pytorch_model.bin alongside; but the safetensors file *itself* is
+1.1 GB, so the cache layer can't get smaller without changing models.
+
+We did not switch models — `cross_encoder.py` references
+`BAAI/bge-reranker-base` directly and changing it would silently
+shift evaluation results. The Cohere reranker remains the
+network-gated alternative for environments where image size is a
+hard constraint.
+
+**What we learned:** Verify model sizes against the actual repo
+(`HfApi().list_repo_files` + size lookup) before pinning Dockerfile
+acceptance criteria. "X-base" model names and parameter counts are
+not reliable proxies for on-disk weight size.
+
+**Artifacts:** Task 21 commits — see `sidecar/Dockerfile` and
+`sidecar/scripts/verify_model_cache.py`.
+
+---
+
 ## 2026-04-30 — Dropped `langchain` from sidecar dependencies
 
 **Plan:** Taskmaster Task 5.1 (`pyproject.toml`) listed both `langgraph` and

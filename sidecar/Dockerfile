@@ -17,6 +17,9 @@ WORKDIR /app
 # layer caches when source changes but deps don't.
 COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
+# Only the cache-verification helper goes into the builder; the rest
+# of scripts/ is dev tooling that never needs to ship in any stage.
+COPY scripts/verify_model_cache.py ./scripts/verify_model_cache.py
 # Sensitivity policy YAML lives at /app/config/sensitivity_policy.yaml
 # in production — Settings.sensitivity_policy_path resolves there via
 # Path(__file__).resolve().parents[2]. Without this layer the YAML is
@@ -49,6 +52,33 @@ ENV UV_LINK_MODE=copy \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# Pre-bake HuggingFace model weights into a staging cache so the
+# production image starts without any network model download. The
+# sentence-transformers DenseRetriever (rag/dense.py) defaults to
+# all-MiniLM-L6-v2 — ~90 MB; without this layer the first request
+# blocks on a 90 MB download from huggingface.co.
+ENV HF_HOME=/opt/hf-cache \
+    TRANSFORMERS_CACHE=/opt/hf-cache/hub \
+    SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache/sentence-transformers
+RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+# CrossEncoderReranker (rag/cross_encoder.py) defaults to
+# BAAI/bge-reranker-base — ~1.1 GB safetensors (the model is
+# roberta-base scale, ~280 M params at fp32). Pre-baked here so the
+# reranker initializes from disk on first request instead of pulling
+# from HF. Cohere reranker stays optional (env-gated) and is
+# intentionally NOT baked.
+#
+# allow_patterns excludes the duplicate pytorch_model.bin (also
+# ~1.1 GB) — the safetensors weight file plus tokenizer/config is the
+# modern path and what transformers prefers when both are present.
+# See docs/DEVIATIONS.md (2026-05-08) for size-target reconciliation.
+RUN /app/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-base', cache_dir='/opt/hf-cache/sentence-transformers', allow_patterns=['*.json','*.txt','tokenizer*','*.safetensors'])"
+# Build-time gate: load both models with HF_HUB_OFFLINE=1 so a missing
+# or corrupt cache fails the build instead of the first production
+# request. Runs in the builder stage so the script never ships in the
+# production image.
+RUN /app/.venv/bin/python /app/scripts/verify_model_cache.py
+
 # ---------- Production stage ----------
 FROM python:${PYTHON_VERSION} AS production
 
@@ -74,11 +104,21 @@ COPY --from=builder --chown=agentforge:agentforge /app/config /app/config
 COPY --from=builder --chown=agentforge:agentforge /app/prompts /app/prompts
 # Guideline corpus (W2 RAG). See the builder-stage COPY above.
 COPY --from=builder --chown=agentforge:agentforge /app/data /app/data
+# Pre-baked HuggingFace model cache (Task 21). The builder downloads
+# all-MiniLM-L6-v2 + bge-reranker-base safetensors into /opt/hf-cache;
+# we relocate them into the agentforge user's home so the runtime user
+# (uid 1000) can read them and the HF env vars (set below) point here.
+# Without this layer the first request blocks on a ~1.2 GB download
+# from huggingface.co (88 MB MiniLM + 1.1 GB bge-reranker safetensors).
+COPY --from=builder --chown=agentforge:agentforge /opt/hf-cache /home/agentforge/.cache/huggingface
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DASHBOARD_DIST_DIR=/app/dashboard/dist
+    DASHBOARD_DIST_DIR=/app/dashboard/dist \
+    HF_HOME=/home/agentforge/.cache/huggingface \
+    TRANSFORMERS_CACHE=/home/agentforge/.cache/huggingface/hub \
+    SENTENCE_TRANSFORMERS_HOME=/home/agentforge/.cache/huggingface/sentence-transformers
 
 # Dashboard SPA mount point (T38.14, recon §8 Plan A step 2). The
 # Vue dashboard's `npm run build` output is bind-mounted here at
