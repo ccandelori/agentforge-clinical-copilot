@@ -98,3 +98,53 @@ sidecar-regression-locks:
     # Dedicated job: surfaces W1 lock regressions prominently in the CI summary
     # rather than buried in the 774-test sweep above.
     - uv run pytest tests/eval/regression_locks.py -v
+
+# ============================================================================
+# Agent eval gate (Task 20).
+#
+# Runs the W2 eval gate's CI entry point on every MR. Defaults are
+# fully mocked — no Anthropic / judge spend per MR. The supervisor +
+# judge are AsyncMocks inside scripts/run_eval_gate.sh; real-LLM mode
+# is reserved for the manual baseline-regen path (a follow-up that
+# needs the production Supervisor adapter, out of scope for Task 20).
+#
+# Image rationale: the mock path never loads the HF model weights, so
+# the pre-baked sidecar image (Task 21) buys nothing here — we reuse
+# the same python:3.12-slim base as sidecar-pytest. When the real-LLM
+# manual job lands, it will swap in the pre-baked image (TBD registry
+# path; see docs/DEVIATIONS.md 2026-05-08 entry).
+#
+# Artifacts: var/eval_gate_results.json + var/eval_gate_report.md.
+# The markdown report is paste-ready for an MR comment; Task 20.3
+# wires the actual posting via `glab mr note`.
+#
+# allow_failure is intentionally absent — the gate blocks merge on
+# any violation. Override with a manual job click if the verdict
+# warrants override (rare; a real regression should be fixed, not
+# dismissed).
+# ============================================================================
+agent-eval:
+  extends: .python_base
+  stage: test
+  rules:
+    # Trigger on merge requests + on pushes to the main branch (so
+    # protected-branch state stays green). Other branches don't run
+    # the gate to keep CI bills bounded.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    # `.python_base` already cd's into sidecar/ in before_script and
+    # ran `uv sync --frozen`. The wrapper itself cd's to its own
+    # SIDECAR_DIR so it works whether invoked from sidecar/ or the
+    # repo root — keeping this command flat means Task 22's GitHub
+    # Actions mirror is a near-identical one-line copy.
+    - ./scripts/run_eval_gate.sh
+  artifacts:
+    when: always
+    # Artifact paths are evaluated relative to $CI_PROJECT_DIR, *not*
+    # the script cwd — `.python_base` cd's into sidecar/ for `uv sync`
+    # but artifacts always look from the repo root.
+    paths:
+      - sidecar/var/eval_gate_results.json
+      - sidecar/var/eval_gate_report.md
+    expire_in: 30 days
