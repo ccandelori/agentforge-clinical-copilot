@@ -19,6 +19,7 @@
   patient_id: 8
   query: "Give me a chart overview for this patient with citations."
   expected_behavior: "Every clinical claim (active problem, current med, allergy, recent vital) carries an OPENEMR_RECORD Citation. No GUIDELINE citations attached to chart-resident facts. Demographics statements that do not constitute clinical claims may be uncited."
+  tags: [eval_smoke]
 
 - id: w2_cit_02
   category: citations
@@ -49,6 +50,7 @@
   patient_id: 8
   query: "What is the recommended A1c target for this patient?"
   expected_behavior: "Generic recommendation portion cites GUIDELINE chunk diabetes-ada-standards-glycemic-targets::a1c-goal-for-most-nonpregnant-adults::0. Patient-specific individualization (age, comorbidities, life expectancy) cites OPENEMR_RECORD. Source types match the source kind on every claim."
+  tags: [eval_smoke]
 
 - id: w2_cit_07
   category: citations

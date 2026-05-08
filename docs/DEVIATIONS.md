@@ -108,6 +108,43 @@ artifact.
 
 ---
 
+## 2026-05-08 — Eval-case YAML schema gains an optional `tags` field (Task 23)
+
+**Plan:** Task 23 ("Pre-commit hook for eval smoke test") asked for a
+mechanism to mark a 10-case representative subset so
+`uv run pytest -m eval_smoke` finds them. The brief offered two seams:
+either annotate via the YAML loader (a `tags: [eval_smoke]` field on
+the case) or wrap the runner invocation with `pytest.mark.eval_smoke`
+at the test level — pick whichever fits the existing harness.
+
+**Deviation:** Picked the YAML route. Added an optional `tags:
+list[str]` field to the case schema, plumbed it through
+`tests/eval/yaml_cases.py` into `EvalCase.tags: tuple[str, ...]`, and
+tagged 10 of the 50 W2 cases (two per category) with `eval_smoke`.
+The smoke test in `sidecar/tests/eval/gate/test_eval_smoke.py` filters
+on the tag at collection time and parametrizes one case per test.
+
+**Why:** The runner-level wrap option requires the smoke test to
+hard-code which case ids belong in the subset, drifting away from the
+case files as a single source of truth. Per-case YAML tagging keeps the
+selection visible at the case site; the selector tests in
+`tests/eval/test_yaml_cases.py::TestTagsRoundTrip` enforce the
+"exactly 10, two per category, all five W2 categories" invariants so
+re-balancing the set can't silently break the budget guarantees.
+
+**What we learned:** The `tags` field is generic — not eval-smoke-only.
+A future "regression-locks" or "p0-only" subset can reuse the same
+seam without another schema change. The cost was small (one optional
+key, defaults to `()`, round-trips cleanly through PyYAML); the
+invariant tests were what made the change durable, not the field.
+
+**Artifacts:** branch `feat/task-23-pre-commit-eval-smoke` commits
+`f1b52e6d6` (schema + tagging + selector tests),
+`10a3a1972` (smoke test module),
+`904d8ae6e` (pre-commit hook).
+
+---
+
 ## 2026-05-08 — Task 18 W2 eval-gate ships with a stub baseline + a SupervisorOutput adapter
 
 **Plan:** Task 18 ("Eval Gate with Baseline and Thresholds") asked

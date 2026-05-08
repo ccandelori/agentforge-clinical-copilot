@@ -143,6 +143,22 @@ repos:
     files: ^(composer\.json|.*\.php)$
     pass_filenames: false
 
+  - id: agentforge-eval-smoke
+    name: AgentForge eval smoke (10 W2 cases, mocked LLM, <30s)
+    # Runs the pre-commit eval-smoke subset (Task 23). The 10 cases are
+    # tagged ``eval_smoke`` in sidecar/tests/eval/cases/week2/*.yaml; the
+    # supervisor + LLM judge are mocked, so the hook spends no Anthropic
+    # tokens and finishes in well under a second on warm caches.
+    #
+    # Skip path (e.g. uv unavailable on the workstation):
+    #     SKIP=agentforge-eval-smoke git commit ...
+    # Or the git-native escape hatch:
+    #     git commit --no-verify ...
+    entry: bash -c 'cd sidecar && uv run pytest -m eval_smoke -q'
+    language: system
+    files: ^sidecar/(src|tests|pyproject\.toml)
+    pass_filenames: false
+
   - id: conventional-commits
     name: Conventional Commits
     entry: bash -c 'composer conventional-commits:check -- "$(<"$1")"' --

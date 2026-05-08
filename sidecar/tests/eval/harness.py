@@ -81,6 +81,10 @@ class EvalCase:
     expected_terms: tuple[str, ...] = ()
     forbidden_terms: tuple[str, ...] = ()
     grounding_check: Callable[[str], bool] | None = None
+    # Free-form selector tags (e.g. ``"eval_smoke"`` for the pre-commit
+    # 10-case subset). Test runners filter by tag membership; the harness
+    # itself is tag-agnostic.
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

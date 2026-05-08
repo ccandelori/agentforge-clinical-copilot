@@ -196,3 +196,60 @@ class TestGroundingCheckAbsent:
             assert case.grounding_check is None, (
                 f"Case {case.id!r} unexpectedly has grounding_check set"
             )
+
+
+# ---------------------------------------------------------------------------
+# 7. tags field round-trips through YAML — used by the pre-commit eval-smoke
+#    hook (Task 23) to select a 10-case representative subset
+# ---------------------------------------------------------------------------
+
+
+class TestTagsRoundTrip:
+    @pytest.mark.parametrize("filename", CASE_FILES)
+    def test_tags_default_to_empty_tuple_when_absent(self, filename: str) -> None:
+        """Cases without an explicit ``tags:`` key get an empty tags tuple."""
+        for case in _load(filename):
+            # If the YAML omits tags, the loader should default to ().
+            assert isinstance(case.tags, tuple), (
+                f"Case {case.id!r} in {filename} has non-tuple tags: "
+                f"{type(case.tags).__name__}"
+            )
+
+    def test_w1_cases_carry_no_eval_smoke_tags(self) -> None:
+        """Smoke selection lives entirely in the W2 suite — keep W1 untagged.
+
+        Task 23 acceptance: the pre-commit smoke suite is sourced from the
+        50 W2 cases (``tests/eval/cases/week2/``), not the W1 set. This
+        test fences off accidental drift.
+        """
+        all_w1 = [c for f in CASE_FILES for c in _load(f)]
+        tagged = [c.id for c in all_w1 if "eval_smoke" in c.tags]
+        assert tagged == [], (
+            f"W1 cases should carry no eval_smoke tags; found: {tagged}"
+        )
+
+    def test_exactly_ten_w2_cases_tagged_eval_smoke(self) -> None:
+        """The pre-commit smoke suite must be exactly 10 W2 cases (Task 23)."""
+        from tests.eval.gate.runner_w2 import load_week2_cases
+
+        smoke = [c for c in load_week2_cases() if "eval_smoke" in c.tags]
+        assert len(smoke) == 10, (
+            f"Expected 10 eval_smoke-tagged W2 cases, found {len(smoke)}: "
+            f"{[c.id for c in smoke]}"
+        )
+
+    def test_w2_smoke_selection_is_two_per_category(self) -> None:
+        """Each of the five W2 categories contributes exactly two smoke cases."""
+        from collections import Counter
+
+        from tests.eval.gate.runner_w2 import load_week2_cases
+
+        smoke = [c for c in load_week2_cases() if "eval_smoke" in c.tags]
+        per_cat = Counter(c.category for c in smoke)
+        assert all(count == 2 for count in per_cat.values()), (
+            f"eval_smoke distribution is not 2 per category: {per_cat}"
+        )
+        assert len(per_cat) == 5, (
+            f"eval_smoke must cover all 5 W2 categories, got {len(per_cat)}: "
+            f"{sorted(c.value for c in per_cat)}"
+        )

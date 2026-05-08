@@ -25,6 +25,7 @@
   patient_id: 1
   query: "Extract the intake form fields for this patient (p01-chen-intake-typed.pdf)."
   expected_behavior: "Returns demographics (name Chen, DOB), chief complaint, allergies, current medications from p01-chen-intake-typed.pdf with INTAKE_FORM citations. Each citation has a high-confidence PageBBox (>=0.7). No fields fabricated when the form leaves them blank."
+  tags: [eval_smoke]
 
 - id: w2_ext_02
   category: extraction
@@ -55,6 +56,7 @@
   patient_id: 3
   query: "Read the A1c value from this patient's lab (p03-reyes-hba1c.png)."
   expected_behavior: "Returns the A1c percentage as a typed numeric field with units (%) and the reference range. Reports collection date if visible. LAB_PDF citation with bbox locating the A1c result. The extractor does not invent eAG conversions beyond what's printed."
+  tags: [eval_smoke]
 
 - id: w2_ext_07
   category: extraction
