@@ -12,6 +12,67 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Task 18 W2 eval-gate ships with a stub baseline + a SupervisorOutput adapter
+
+**Plan:** Task 18 ("Eval Gate with Baseline and Thresholds") asked
+for a runner that loads the 50 W2 cases, dispatches them through the
+supervisor graph, scores them with `EvalHarnessW2`, and compares
+against a pinned `baselines/week2.json`. The brief noted the W2
+yaml-cases loader doesn't carry `sources` or
+`structured_citation_payload`, and explicitly allowed shipping with a
+stub baseline.
+
+**Deviation 1 — `SupervisorOutput` adapter rather than extending the
+case loader.** `EvalHarnessW2.evaluate()` needs `response`, `sources`,
+`structured_citation_payload`, `structured_citations`, and `logs`. The
+W2 yaml-cases loader produces only `id` / `category` / `patient_id` /
+`query` / `expected_behavior`. Two viable shapes:
+
+  (a) extend `tests/eval/yaml_cases.py` to carry the harness-input
+      fields, edit all five W2 yaml files to populate them, and update
+      `scripts/validate_eval_cases.py`; or
+  (b) take a `Supervisor: Callable[[EvalCase], SupervisorOutput]` in
+      the runner so tests / production callers fabricate / derive the
+      harness inputs.
+
+I shipped (b). Reason: the harness inputs are *runtime* outputs of the
+supervisor graph (the response the agent produced, the trace logs, the
+structured citation it emitted), not authoring metadata the test
+author writes by hand. Encoding them in YAML would require either
+fixing the agent's expected output per case (overconstrains the eval)
+or duplicating the supervisor's response shape into YAML (chases the
+real implementation). The callable seam keeps the case schema lean
+and lets the production adapter live alongside the LangGraph wiring,
+not inside the case-author's mental model.
+
+**Deviation 2 — initial `baselines/week2.json` is a stub at 1.0.**
+The brief allowed either a stub baseline or a measured one from a
+deterministic-mock run, "honest about the state". I shipped a stub
+because:
+
+  * No production `Supervisor` adapter exists yet — building one is
+    out of scope for Task 18 (it touches `agentforge.orchestrator.graph`
+    + the production gateway plumbing).
+  * A "measured" baseline from the existing test-mock supervisor would
+    encode the mock's behaviour, not the real agent's — worse than a
+    stub because it looks measured but isn't.
+  * The 1.0 stub gives the gate's threshold + regression arithmetic an
+    honest reference point until the human regenerates it from a real
+    end-to-end run. The `_meta.status` field + rationale block in the
+    JSON file makes the stub status discoverable.
+
+The next step (out of Task 18 scope, ticketed for follow-up): wire a
+`SupervisorOutput` adapter on top of `build_graph()` and run the suite
+once. Replace the stub with the resulting per-category rates.
+
+**What we learned:** When the brief frames "stub vs measured" as a
+choice and the runtime the measurement would be against doesn't exist
+yet, the stub is the only honest path. Encoding that explicitly via
+`_meta.status` keeps the next person from confusing the stub for a
+measurement.
+
+---
+
 ## 2026-05-08 — Task 27.2 fold-in: `record_extraction_confidence` only
 
 **Plan:** Task 27.2 originally called for adding both

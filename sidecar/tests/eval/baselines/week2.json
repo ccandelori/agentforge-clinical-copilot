@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "status": "stub",
+    "task": "18.4",
+    "rationale": "Initial stub baseline pinned at 1.0 across all five W2 case categories. The runner's production-supervisor adapter is out of scope for Task 18 (the runner takes a callable; tests supply a mock). Generating a 'real' baseline requires (a) wiring the LangGraph supervisor into a SupervisorOutput-shaped adapter and (b) burning real Anthropic + judge-LLM spend across all 50 cases. Both belong to a follow-up regen run by a human; the gate logic ships with a measurable floor in the meantime so threshold + regression arithmetic can be exercised against an honest reference. Once the human runs the suite end-to-end, this file gets overwritten with measured rates and _meta.status flips to 'measured'.",
+    "regenerated_by": "TBD — human-driven first run",
+    "next_steps": "After 18.4 lands, wire a production SupervisorOutput adapter on top of agentforge.orchestrator.graph.build_graph() and run scripts/run_eval_gate.py once. Replace this file with the resulting per-category rates."
+  },
+  "extraction": 1.0,
+  "evidence_retrieval": 1.0,
+  "citations": 1.0,
+  "refusal": 1.0,
+  "missing_data": 1.0
+}

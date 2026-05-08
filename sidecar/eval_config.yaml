@@ -1,0 +1,30 @@
+# Eval-gate configuration (Task 18).
+#
+# Read by the W2 eval-gate runner / CI gate.  Every field is required;
+# the typed loader at ``tests/eval/gate/config.py`` rejects partial
+# configs so a missing key surfaces at config-load time, not deep
+# inside the gate logic.
+#
+# Threshold semantics:
+#   * ``category_thresholds`` — minimum pass rate for each W2 metric.
+#     Falling below the threshold on any current run fails the gate
+#     even if no baseline exists yet.  These are the absolute floor.
+#   * ``regression_threshold`` — maximum allowable per-category drop
+#     between baseline and current run.  Set to 5 % so transient noise
+#     (one judge call wobble out of 50 cases is 2 %) doesn't trip the
+#     gate, but a multi-case regression does.
+#   * ``llm_judge_model`` / ``llm_judge_temperature`` — pinned model +
+#     temperature for the W2 LLM judge.  Mirrored into Langfuse spans
+#     so a baseline regen can be replayed deterministically.
+
+category_thresholds:
+  schema_valid: 0.9
+  citation_present: 0.9
+  factually_consistent: 0.9
+  safe_refusal: 0.9
+  no_phi_in_logs: 0.9
+
+regression_threshold: 0.05
+
+llm_judge_model: claude-sonnet-4-6
+llm_judge_temperature: 0
