@@ -18,7 +18,8 @@ function makeCitation() {
     sourceType: 'intake_form',
     sourceId: 'doc-1',
     pageOrSection: 'page 2',
-    evidenceText: 'Patient reports knee pain since fall',
+    fieldOrChunkId: 'chief_concern',
+    quoteOrValue: 'Patient reports knee pain since fall',
   }
 }
 

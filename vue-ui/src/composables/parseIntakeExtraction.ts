@@ -18,12 +18,21 @@ export interface IntakeExtractionCitation {
   readonly sourceType: string
   readonly sourceId: string
   readonly pageOrSection: string
-  readonly evidenceText: string
+  /**
+   * Stable handle for the extraction field or retrieval chunk this
+   * citation references — used by the verifier and (later) by an
+   * inline highlight pill in the panel.
+   */
+  readonly fieldOrChunkId: string
+  /** The literal extracted value or quoted text the claim grounds. */
+  readonly quoteOrValue: string
   /**
    * Normalized 0..1 bounding box on a 1-indexed PDF page. Present on
    * scanned-source citations (`source_type` of `lab_pdf` or
-   * `intake_form`); absent on `openemr_record` and `guideline`
-   * citations (which don't have geometry by design).
+   * `intake_form`) — schema enforces non-null + bbox_confidence >= 0.7
+   * server-side, so receipt of a scanned-source citation guarantees a
+   * bbox is here. Absent on `openemr_record` and `guideline` citations
+   * (no geometry by design).
    */
   readonly pageBbox?: PageBBox
 }
@@ -127,12 +136,14 @@ function parseCitation(v: unknown): IntakeExtractionCitation | null {
   const sourceType = parseString(v.source_type)
   const sourceId = parseString(v.source_id)
   const pageOrSection = parseString(v.page_or_section)
-  const evidenceText = parseString(v.evidence_text)
+  const fieldOrChunkId = parseString(v.field_or_chunk_id)
+  const quoteOrValue = parseString(v.quote_or_value)
   if (
     sourceType === undefined
     || sourceId === undefined
     || pageOrSection === undefined
-    || evidenceText === undefined
+    || fieldOrChunkId === undefined
+    || quoteOrValue === undefined
   ) {
     return null
   }
@@ -141,7 +152,8 @@ function parseCitation(v: unknown): IntakeExtractionCitation | null {
     sourceType,
     sourceId,
     pageOrSection,
-    evidenceText,
+    fieldOrChunkId,
+    quoteOrValue,
     ...(pageBbox !== undefined ? { pageBbox } : {}),
   }
 }

@@ -17,7 +17,8 @@ const VALID_CITATION = {
   source_type: 'intake_form',
   source_id: 'doc-123',
   page_or_section: 'page 2',
-  evidence_text: 'Chief concern: knee pain',
+  field_or_chunk_id: 'chief_concern',
+  quote_or_value: 'Chief concern: knee pain',
 }
 
 describe('parseIntakeExtraction', () => {
@@ -78,9 +79,10 @@ describe('parseIntakeExtraction', () => {
     const out = parseIntakeExtraction(raw) as IntakeExtraction
     expect(out.chiefConcern).toBe('Persistent knee pain after a fall')
     expect(out.chiefConcernCitation?.sourceId).toBe('doc-123')
-    expect(out.chiefConcernCitation?.evidenceText).toBe(
+    expect(out.chiefConcernCitation?.quoteOrValue).toBe(
       'Chief concern: knee pain',
     )
+    expect(out.chiefConcernCitation?.fieldOrChunkId).toBe('chief_concern')
   })
 
   it('parses a medication entry with optional dose/frequency missing', () => {

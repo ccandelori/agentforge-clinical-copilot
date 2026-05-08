@@ -137,7 +137,7 @@ const hasUnsupported = computed<boolean>(
         v-if="extraction.chiefConcernCitation"
         class="mt-1 text-[11px] italic text-ink-muted"
       >
-        “{{ extraction.chiefConcernCitation.evidenceText }}”
+        “{{ extraction.chiefConcernCitation.quoteOrValue }}”
         <span class="not-italic">— {{ extraction.chiefConcernCitation.pageOrSection }}</span>
       </p>
     </div>
