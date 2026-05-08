@@ -12,6 +12,41 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Task 20 `agent-eval` job uses python:3.12-slim, not the pre-baked sidecar image
+
+**Plan:** Task 20 ("Implement GitLab CI Eval Job") asked for the new
+`agent-eval` job to use the pre-baked sidecar Docker image (Task 21)
+so it doesn't pay the ~1.2 GB HF-model download on every CI run.
+
+**Deviation:** the job ships on `python:3.12-slim` (via the existing
+`.python_base` template), same as `sidecar-pytest`, with `uv sync
+--frozen`. The pre-baked image is not used.
+
+**Why:** the CI gate runs with a *mocked* supervisor + *mocked* LLM
+judge. The mock supervisor never invokes the LangGraph DAG, so the
+HF model weights baked into the production image (all-MiniLM-L6-v2,
+bge-reranker-base) are never loaded. Burning a ~1.2 GB image pull on
+every CI run for code paths that aren't exercised is the worst of
+both worlds.
+
+**What's pending:** when the production Supervisor adapter lands —
+the same follow-up that flips `tests/eval/baselines/week2.json` from
+stub to measured — a separate manual / scheduled CI job will exercise
+the gate against the real graph + real judge. *That* job will use the
+pre-baked image. Open question: registry path for the image (the
+deploy script currently builds it locally on the developer's
+workstation; there's no published image on a registry yet). Tracking
+as a follow-up; not blocking Task 20.
+
+**MR comment posting:** uses curl + the GitLab REST API rather than
+installing `glab` into `python:3.12-slim`. Auth precedence is
+`GLAB_TOKEN` → `CI_JOB_TOKEN` → no-op. Operator must set `GLAB_TOKEN`
+as a masked CI/CD variable for comments to appear; without it the
+job still passes / fails correctly but the report only ships as an
+artifact.
+
+---
+
 ## 2026-05-08 — Task 18 W2 eval-gate ships with a stub baseline + a SupervisorOutput adapter
 
 **Plan:** Task 18 ("Eval Gate with Baseline and Thresholds") asked
