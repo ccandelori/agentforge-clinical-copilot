@@ -1,7 +1,22 @@
 # CI eval gate (`agent-eval`)
 
-The `agent-eval` job in `.gitlab-ci.yml` runs the W2 eval gate on every MR
-and on every push to the default branch. A failing gate blocks merge.
+The eval gate runs on every change to the codebase, in two CI systems:
+
+- **GitLab MRs** — `agent-eval` job in `.gitlab-ci.yml` (canonical; see
+  Task 20).
+- **GitHub PRs** — `agent-eval` workflow in
+  `.github/workflows/agent-eval.yml` (mirror; see Task 22). Triggers on
+  every `pull_request` event regardless of base branch, plus
+  `workflow_dispatch` for manual reruns from the Actions UI.
+
+A failing gate blocks merge in either system.
+
+**Both gates produce identical verdicts on the same commit** because
+they invoke the same `sidecar/scripts/run_eval_gate.sh` driven by the
+same `sidecar/eval_config.yaml`. There is no per-CI configuration. If
+the GitLab and GitHub verdicts ever diverge, the divergence is a bug
+in the surrounding CI machinery (image, env, dependency pinning), not
+in the gate logic.
 
 ## What it runs
 
@@ -78,8 +93,9 @@ Same exit codes as in CI.
 | `EVAL_GATE_REPORT`    | Where to write the markdown report (default: `sidecar/var/eval_gate_report.md`) |
 | `EVAL_GATE_BASELINE`  | Override baseline JSON (default: pinned `tests/eval/baselines/week2.json`) |
 | `EVAL_GATE_CONFIG`    | Override `eval_config.yaml` path (default: pinned)            |
-| `GLAB_TOKEN`          | Project / group access token with `api` scope; enables MR comment posting in CI |
-| `CI_JOB_TOKEN`        | Fallback for MR-note posting when the instance allows it      |
+| `GLAB_TOKEN`          | GitLab project / group access token with `api` scope; enables MR comment posting on GitLab |
+| `CI_JOB_TOKEN`        | GitLab fallback for MR-note posting when the instance allows it |
+| `GITHUB_TOKEN`        | Auto-injected by GitHub Actions; used by the GitHub mirror to post the PR comment |
 
 CLI flags on `run_eval_gate.sh` pass straight through to
 `python -m tests.eval.gate.cli`:
@@ -111,9 +127,49 @@ provide no value here. When the real-LLM manual job lands, it will use
 the pre-baked image — registry path is a pending decision (see
 `docs/DEVIATIONS.md`).
 
-## Mirror at GitHub Actions
+## GitHub Actions mirror
 
-Task 22 will mirror this into `.github/workflows/`. The mirror is
-intentionally trivial: same `./scripts/run_eval_gate.sh`, same exit
-codes, same artifact paths. Only the comment-posting step differs (`gh
-pr comment` instead of the GitLab notes API).
+Why two gates? The Gauntlet cohort hosts on GitLab, but this repo is
+also published as a public mirror at
+`github.com/ccandelori/agentforge-clinical-copilot`. The mirror's PR
+flow needs the same regression gate so external collaborators see the
+same verdict GitLab MRs do.
+
+The mirror lives at `.github/workflows/agent-eval.yml`. It is
+deliberately a near-line-for-line equivalent of the GitLab job:
+
+| Concern              | GitLab `agent-eval`                                | GitHub `agent-eval`                                                          |
+|----------------------|----------------------------------------------------|------------------------------------------------------------------------------|
+| Trigger              | `merge_request_event` + default-branch push        | `pull_request` (any branch) + `workflow_dispatch`                            |
+| Image                | `python:3.12-slim` (`.python_base`)                | `python:3.12-slim` (job `container.image`)                                   |
+| Bootstrap            | `pip install uv && cd sidecar && uv sync --frozen` | Same, split across `Install uv` + `Sync sidecar dependencies` steps          |
+| Gate command         | `./scripts/run_eval_gate.sh`                       | `./sidecar/scripts/run_eval_gate.sh` (same script — different cwd)           |
+| Artifacts            | `sidecar/var/eval_gate_results.json` + report      | Same paths, uploaded via `actions/upload-artifact@v7` (`if: always()`)       |
+| Comment poster       | `curl` → GitLab `notes` API (after_script)         | `actions/github-script@v8` → `issues.createComment` (uses `GITHUB_TOKEN`)    |
+| Block-on-failure     | `allow_failure: false` (explicit)                  | Workflow exit status governs the required-status-check on the GH repo       |
+
+The shared `sidecar/scripts/run_eval_gate.sh` is the only place the
+gate logic lives — neither workflow inlines a copy.
+
+### Manual triggers
+
+- **Open a PR** in the GitHub mirror — the workflow runs automatically.
+- **Workflow dispatch** — go to the repo's Actions tab → `agent-eval`
+  workflow → "Run workflow" button. Useful for verifying a baseline
+  regen on the default branch without opening a no-op PR.
+
+### Required status check
+
+To enforce block-on-merge on the GitHub mirror, configure the repo's
+branch protection rule for `main` to require the `agent-eval / agent-eval`
+status check before merging. The workflow's exit status is the contract;
+GitHub's branch-protection setting is what enforces it.
+
+### Token permissions
+
+The workflow declares only the minimum scopes:
+
+- `contents: read` — `actions/checkout`
+- `pull-requests: write` — `actions/github-script` posting the report
+  as a PR comment (uses the auto-injected `GITHUB_TOKEN`; no PAT
+  required)

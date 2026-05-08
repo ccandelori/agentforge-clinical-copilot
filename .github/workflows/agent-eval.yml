@@ -1,0 +1,120 @@
+# ============================================================================
+# .github/workflows/agent-eval.yml — AgentForge W2 eval-gate (Task 22)
+# ============================================================================
+#
+# Mirror of the GitLab `agent-eval` job in `.gitlab-ci.yml`. Both gates
+# invoke the same shared entry point — `sidecar/scripts/run_eval_gate.sh`
+# — driven by the same `sidecar/eval_config.yaml`, so the two pipelines
+# produce identical verdicts on the same commit.
+#
+# Why two gates? GitLab is the canonical host for the Gauntlet cohort,
+# but this repo is also published as a public mirror at
+# github.com/ccandelori/agentforge-clinical-copilot. The mirror's PR
+# flow needs the same regression gate so external collaborators see
+# the same verdict GitLab MRs do.
+#
+# Image rationale: `python:3.12-slim` (matches `.gitlab-ci.yml`'s
+# `.python_base`). The mock supervisor inside `tests/eval/gate/cli.py`
+# never loads HF model weights, so the pre-baked sidecar image (Task
+# 21) buys nothing here. When a real-LLM manual job lands it'll swap
+# in the pre-baked image — see docs/DEVIATIONS.md for the registry
+# decision.
+#
+# Block-on-failure: this workflow's exit status drives the required-
+# status-check that the GitHub repo configures on the `main` branch.
+# A failing gate must be fixed (or the baseline / threshold updated
+# with rationale) — there is no skip flag.
+# ============================================================================
+
+name: agent-eval
+
+on:
+  pull_request:
+  # `workflow_dispatch` lets a maintainer rerun the gate manually from
+  # the Actions UI without opening a PR — useful for verifying a
+  # baseline regen on the default branch.
+  workflow_dispatch:
+
+# Token scopes:
+#   contents: read   — needed for actions/checkout
+#   pull-requests: write — needed by actions/github-script to post the
+#                          markdown report as a PR comment
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  agent-eval:
+    name: agent-eval
+    runs-on: ubuntu-latest
+    # Same image the GitLab `.python_base` uses. Keeping the container
+    # explicit rather than using runs-on's default means image drift
+    # between the two CI systems can't change verdict-level behaviour.
+    container:
+      image: python:3.12-slim
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Install uv
+      # uv ships as a PyPI wheel — same bootstrap as `.gitlab-ci.yml`'s
+      # `.python_base` (avoids apt-get for parity).
+      run: pip install --quiet --root-user-action=ignore uv
+
+    - name: Sync sidecar dependencies
+      working-directory: sidecar
+      run: uv sync --frozen
+
+    - name: Run eval gate
+      # Identical invocation to the GitLab `agent-eval` job. The script
+      # cd's into sidecar/ itself, so calling it from the repo root
+      # (which is the default working-directory here) is fine.
+      run: ./sidecar/scripts/run_eval_gate.sh
+
+    - name: Upload artifacts
+      # `if: always()` mirrors GitLab's `artifacts.when: always` —
+      # surface the JSON + markdown even when the gate fails so
+      # reviewers can read the diff without rerunning locally.
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: eval-gate-${{ github.run_id }}
+        path: |
+          sidecar/var/eval_gate_results.json
+          sidecar/var/eval_gate_report.md
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Post PR comment
+      # Only on pull_request events (no MR/PR target on
+      # workflow_dispatch). Runs even on gate failure so the verdict
+      # is visible inline.
+      if: always() && github.event_name == 'pull_request'
+      uses: actions/github-script@v8
+      env:
+        REPORT_PATH: sidecar/var/eval_gate_report.md
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const path = process.env.REPORT_PATH;
+          if (!fs.existsSync(path)) {
+            core.info(`No report at ${path}; skipping comment.`);
+            return;
+          }
+          const body = fs.readFileSync(path, 'utf8');
+          if (!body.trim()) {
+            core.info('Report is empty; skipping comment.');
+            return;
+          }
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body,
+          });
