@@ -6661,7 +6661,7 @@
         "dependencies": [
           "18"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6669,9 +6669,10 @@
             "description": "Create sidecar/tests/eval/test_gate_blocks_regression.py with boilerplate including gate_validation pytest marker and proper imports from existing eval infrastructure",
             "dependencies": [],
             "details": "Create the new test file at sidecar/tests/eval/test_gate_blocks_regression.py. Import EvalRunner, EvalHarness, and baseline case infrastructure from tests.eval. Add pytestmark = pytest.mark.gate_validation to exclude from normal CI runs. Update pyproject.toml to add the gate_validation marker to the markers list with description 'gate validation tests that inject regressions to prove the gate catches them (deselected by default)'. Add 'not gate_validation' to the default addopts filter.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Verify test file can be discovered by pytest but is skipped by default when running normal test suite. Run pytest --collect-only to confirm marker is recognized.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-08T19:03:45.181Z"
           },
           {
             "id": 2,
@@ -6681,9 +6682,10 @@
               1
             ],
             "details": "Create a pytest fixture that wraps LabsFetcher.fetch() using unittest.mock.patch or monkeypatch. The wrapper should call the original fetch, then modify the result by finding any A1c (HbA1c, Hemoglobin A1c) test result and replacing its value with '15.5%'. If no A1c exists, append a fabricated LabResultItem with test_name='Hemoglobin A1c', value='15.5', units='%', abnormal='yes'. Store original value for assertion. Use the existing LabResultItem schema from agentforge.tools.labs.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Unit test the injection function in isolation: given a LabsPayload with A1c=8.2%, verify output has A1c=15.5%. Test both modification of existing and insertion of new lab value cases.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-08T19:03:50.852Z"
           },
           {
             "id": 3,
@@ -6694,9 +6696,10 @@
               2
             ],
             "details": "Build test function that: (1) loads ALL_CASES from tests.eval.baseline.cases, (2) applies the lab injection monkey-patch fixture, (3) runs each case through the eval harness using the same pattern as test_baseline.py (authenticated_client, patient_context_factory), (4) collects EvalResults for each case with grading via the existing grader infrastructure, (5) tracks pass/fail counts per category including factually_consistent. Use the existing test_baseline.py pattern for 503 skip handling and timeout configuration.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run the test locally (with -m gate_validation) and verify all cases execute. Check that the patched orchestrator receives the fabricated lab value by logging or asserting on intermediate tool_results.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-08T19:03:52.158Z"
           },
           {
             "id": 4,
@@ -6706,9 +6709,10 @@
               3
             ],
             "details": "After running the 50-case suite with injection: (1) compute factually_consistent pass rate from results, (2) compare against known baseline pass rate (either hardcoded from baselines/week2.json or computed from a clean run), (3) assert the difference exceeds 5% (i.e., the gate detected the regression), (4) if regression is <5% the test FAILS because the gate didn't catch the fabrication. Include assertion message explaining: 'Gate self-test expects >5% regression in factually_consistent when fabricated lab is injected; if this passes, the gate failed to detect the regression.'",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "The test itself is the validation: passing means the gate works (detected >5% regression), failing means the gate missed the fabricated data. Document expected outcome clearly in test docstring.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-08T19:03:53.448Z"
           },
           {
             "id": 5,
@@ -6719,15 +6723,16 @@
               4
             ],
             "details": "Add a docstring to test_gate_blocks_regression.py explaining: (1) purpose of the gate self-test, (2) command to run: 'uv run pytest -m gate_validation -v' or 'cd sidecar && uv run pytest tests/eval/test_gate_blocks_regression.py -v', (3) expected outcome: test PASSES when gate catches the fabrication (pass rate drops >5%), (4) what it means if test FAILS (gate is broken). Add note that this test is excluded from normal CI and should only be run manually to validate gate behavior. Clarify that the injected cases should NOT be added to the golden set.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Review docstring clarity by reading it without context. Verify the documented command actually runs the test when executed.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-08T19:03:54.739Z"
           }
         ],
         "complexity": 5,
         "recommendedSubtasks": 0,
         "expansionPrompt": "Create sidecar/tests/eval/test_gate_blocks_regression.py that monkey-patches intake-extractor worker to inject fabricated lab value (e.g., A1c 15.5% when actual is 8.2%), runs full 50-case suite against patched agent, asserts factually_consistent pass rate drops >5%, verifies build would fail under gate conditions. Add pytest marker 'gate_validation' for exclusion from normal CI.",
-        "updatedAt": "2026-05-08T18:52:48.930Z"
+        "updatedAt": "2026-05-08T19:03:54.739Z"
       },
       {
         "id": "20",
@@ -8264,9 +8269,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T18:52:51.522Z",
+      "lastModified": "2026-05-08T19:03:54.740Z",
       "taskCount": 39,
-      "completedCount": 20,
+      "completedCount": 21,
       "tags": [
         "week2"
       ]
