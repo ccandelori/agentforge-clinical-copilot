@@ -60,11 +60,22 @@ class JudgeVerdict(StrEnum):
 
 @dataclass(frozen=True)
 class LLMJudgeOutcome:
-    """One judge call's parsed result."""
+    """One judge call's parsed result.
+
+    ``attempts`` and ``tiebreaker_used`` describe how the verdict was
+    reached. Single-call ``grade()`` returns ``attempts=1,
+    tiebreaker_used=False``; ``grade_with_retry()`` may bump
+    ``attempts`` to 2 (agreement on first retry) or 3 (tiebreaker ran)
+    and flips ``tiebreaker_used`` accordingly. Surfacing these in the
+    outcome lets eval reports flag cases where the judge oscillated —
+    a signal the case wording or judge prompt needs tightening.
+    """
 
     category: JudgeCategory
     verdict: JudgeVerdict
     rationale: str
+    attempts: int = 1
+    tiebreaker_used: bool = False
 
     @property
     def passed(self) -> bool:
@@ -107,6 +118,112 @@ class LLMJudge:
         bodies / extracted document text; for refusal cases it can be
         the empty string (the judge needs only the response).
         """
+        verdict, rationale = await self._call_once(
+            category=category,
+            response_text=response_text,
+            sources=sources,
+            case=case,
+            trace=trace,
+        )
+        return LLMJudgeOutcome(
+            category=category, verdict=verdict, rationale=rationale
+        )
+
+    async def grade_with_retry(
+        self,
+        category: JudgeCategory,
+        *,
+        response_text: str,
+        sources: str,
+        case: EvalCase,
+        trace: TraceHandle,
+    ) -> LLMJudgeOutcome:
+        """Run two judge calls; on disagreement, run a tiebreaker.
+
+        At ``temperature=0`` two calls on identical inputs *should*
+        match. They occasionally don't — the model is genuinely on the
+        boundary, the prompt has an ambiguity, or the response itself
+        is borderline. In those rare cases we run one tiebreaker and
+        majority-vote the three.
+
+        Cost trade-off: every case pays for a second call. The
+        amortised cost is ~2x the single-call path; the tiebreaker
+        only fires on the rare disagreement, so total spend stays at
+        ~2.x in the common case. The signal is worth it — without
+        retries the eval suite reports false-positive failures any
+        time the judge wobbles.
+        """
+        first_verdict, first_rationale = await self._call_once(
+            category=category,
+            response_text=response_text,
+            sources=sources,
+            case=case,
+            trace=trace,
+        )
+        second_verdict, second_rationale = await self._call_once(
+            category=category,
+            response_text=response_text,
+            sources=sources,
+            case=case,
+            trace=trace,
+        )
+
+        if first_verdict is second_verdict:
+            return LLMJudgeOutcome(
+                category=category,
+                verdict=first_verdict,
+                rationale=first_rationale,
+                attempts=2,
+                tiebreaker_used=False,
+            )
+
+        third_verdict, third_rationale = await self._call_once(
+            category=category,
+            response_text=response_text,
+            sources=sources,
+            case=case,
+            trace=trace,
+        )
+        # Tally: tiebreaker breaks the tie. With first/second split,
+        # whichever side third matches wins — equivalent to majority
+        # over all three.
+        passes = sum(
+            1
+            for v in (first_verdict, second_verdict, third_verdict)
+            if v is JudgeVerdict.PASS
+        )
+        majority = JudgeVerdict.PASS if passes >= 2 else JudgeVerdict.FAIL
+        # Pick the rationale from a call that voted with the majority
+        # so the report explanation matches the verdict.
+        rationales = (first_rationale, second_rationale, third_rationale)
+        verdicts = (first_verdict, second_verdict, third_verdict)
+        chosen_rationale = next(
+            (r for v, r in zip(verdicts, rationales, strict=True) if v is majority),
+            "",
+        )
+        return LLMJudgeOutcome(
+            category=category,
+            verdict=majority,
+            rationale=chosen_rationale,
+            attempts=3,
+            tiebreaker_used=True,
+        )
+
+    async def _call_once(
+        self,
+        *,
+        category: JudgeCategory,
+        response_text: str,
+        sources: str,
+        case: EvalCase,
+        trace: TraceHandle,
+    ) -> tuple[JudgeVerdict, str]:
+        """Issue one judge call and return (verdict, rationale).
+
+        Centralises prompt loading, LLM dispatch, observability, and
+        parsing so ``grade()`` and ``grade_with_retry()`` agree on the
+        per-call shape.
+        """
         system_prompt = load_prompt(_PROMPT_COMPONENTS[category])
         user_prompt = _build_user_prompt(
             category=category, case=case, response_text=response_text, sources=sources
@@ -116,8 +233,6 @@ class LLMJudge:
             messages=[Message(role="user", content=user_prompt)],
             temperature=0.0,
         )
-        # Cost lives in the existing pricing table; the call is just
-        # another LLM call from the trace's point of view.
         cost = calculate_cost(
             self._model, llm_response.input_tokens, llm_response.output_tokens
         )
@@ -129,10 +244,7 @@ class LLMJudge:
             latency_ms=0,
             cost_usd=cost,
         )
-        verdict, rationale = _parse_judge_text(llm_response.text)
-        return LLMJudgeOutcome(
-            category=category, verdict=verdict, rationale=rationale
-        )
+        return _parse_judge_text(llm_response.text)
 
 
 def _build_user_prompt(
