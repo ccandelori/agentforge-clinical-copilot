@@ -33,6 +33,7 @@
   patient_id: 8
   query: "What is the recommended A1c target for most nonpregnant adults with diabetes?"
   expected_behavior: "Retrieves chunk diabetes-ada-standards-glycemic-targets::a1c-goal-for-most-nonpregnant-adults::0 in top-3. Response cites this chunk via a GUIDELINE Citation, states the <7% target, and notes individualization factors. Does not invent a single number without the individualization caveat."
+  tags: [eval_smoke]
 
 - id: w2_evr_02
   category: evidence_retrieval
@@ -57,6 +58,7 @@
   patient_id: 8
   query: "How is CKD staged by GFR under KDIGO?"
   expected_behavior: "Retrieves renal-kdigo-ckd-staging::gfr-categories::0 in top-3. Lists G1..G5 with their GFR ranges. GUIDELINE Citation pinned to that chunk. Does not collapse G3a / G3b into a single G3 stage."
+  tags: [eval_smoke]
 
 - id: w2_evr_06
   category: evidence_retrieval

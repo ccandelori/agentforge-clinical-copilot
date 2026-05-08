@@ -60,6 +60,17 @@ def load_yaml_cases(path: str | pathlib.Path) -> list[EvalCase]:
                 f"Unknown EvalCategory value {category_str!r}. "
                 f"Valid values: {sorted(_CATEGORY_BY_VALUE)}"
             )
+        # Optional ``tags:`` list — used by test selectors (e.g. the
+        # pre-commit eval-smoke hook filters on ``"eval_smoke"``). Absent
+        # tags collapse to an empty tuple so downstream code never sees
+        # ``None``.
+        raw_tags = entry.get("tags") or ()
+        if not isinstance(raw_tags, list | tuple):
+            raise ValueError(
+                f"Case {entry.get('id')!r}: 'tags' must be a list, "
+                f"got {type(raw_tags).__name__}"
+            )
+        tags = tuple(str(t) for t in raw_tags)
         cases.append(
             EvalCase(
                 id=entry["id"],
@@ -68,6 +79,7 @@ def load_yaml_cases(path: str | pathlib.Path) -> list[EvalCase]:
                 query=entry["query"],
                 expected_behavior=entry["expected_behavior"],
                 grounding_check=None,
+                tags=tags,
             )
         )
     return cases
