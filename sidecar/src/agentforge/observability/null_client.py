@@ -14,18 +14,33 @@ real Langfuse instance.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from agentforge.observability.hmac_hash import pseudonymize
-from agentforge.observability.protocols import TraceHandle
+from agentforge.observability.protocols import RouteDecisionRecord, TraceHandle
 
 
-@dataclass(frozen=True)
+@dataclass
 class _NullTraceHandle:
+    """Null-implementation handle.
+
+    Carries the same ``route_decisions`` list and ``eval_outcome`` field
+    as the real handle so call sites can mutate them unconditionally
+    without an ``isinstance`` guard. ``trace_id`` is always ``None`` —
+    the Null path doesn't talk to Langfuse, so there's no SDK
+    identifier to surface.
+    """
+
     trace_id: str | None = None
+    route_decisions: list[RouteDecisionRecord] = field(default_factory=list)
+    eval_outcome: str | None = None
 
 
+# Module-level sentinel kept for legacy call sites that pre-existed the
+# per-turn accumulator. Per-turn accumulation requires a fresh handle
+# each call, so ``trace_turn`` no longer returns this constant — see
+# :meth:`NullLangfuseClient.trace_turn`.
 _NULL_TRACE: TraceHandle = _NullTraceHandle()
 
 
@@ -53,7 +68,9 @@ class NullLangfuseClient:
         role: str | None,
     ) -> TraceHandle:
         del user_id, patient_id, breakglass_flag, role
-        return _NULL_TRACE
+        # Per-turn fresh handle — Task 27.3's accumulator semantics
+        # require that ``route_decisions`` not bleed across turns.
+        return _NullTraceHandle()
 
     def record_tool_call(
         self,
@@ -212,6 +229,30 @@ class NullLangfuseClient:
         unsupported_fields_count: int,
     ) -> None:
         del trace, confidence, unsupported_fields_count
+
+    def record_route_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        decision: str,
+        reason: str,
+        from_node: str,
+        to_node: str,
+        iteration: int,
+    ) -> None:
+        # Even the Null implementation must accumulate — eval harnesses
+        # running without Langfuse still rely on ``trace.route_decisions``
+        # to assert the routing path.
+        if isinstance(trace, _NullTraceHandle):
+            trace.route_decisions.append(
+                RouteDecisionRecord(
+                    decision=decision,
+                    reason=reason,
+                    from_node=from_node,
+                    to_node=to_node,
+                    iteration=iteration,
+                )
+            )
 
     def flush(self) -> None:
         return None

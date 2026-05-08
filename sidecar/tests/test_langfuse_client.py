@@ -539,6 +539,132 @@ def test_record_verifier_decision_emits_evaluator_span_with_counts() -> None:
     assert md["by_category"] == {"fabricated_id": 1, "value_mismatch": 1}
 
 
+# ---------- record_route_decision (Task 27.3) ----------
+
+
+def test_record_route_decision_emits_span_with_routing_metadata() -> None:
+    """Task 27.3: ``record_route_decision`` mirrors the per-turn handoff
+    record but additionally appends to ``trace.route_decisions`` so the
+    eval harness can observe the full routing trail without re-walking
+    Langfuse spans.
+    """
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_route_decision(
+        handle,
+        decision="evidence-retriever",
+        reason="evidence query awaits retrieval",
+        from_node="start",
+        to_node="evidence-retriever",
+        iteration=1,
+    )
+
+    parent_span.start_observation.assert_called_once()
+    kwargs = parent_span.start_observation.call_args.kwargs
+    assert kwargs["name"] == "route_decision:start->evidence-retriever"
+    assert kwargs["as_type"] == "span"
+    md = kwargs["metadata"]
+    assert md["decision"] == "evidence-retriever"
+    assert md["reason"] == "evidence query awaits retrieval"
+    assert md["from_node"] == "start"
+    assert md["to_node"] == "evidence-retriever"
+    assert md["iteration"] == 1
+
+
+def test_record_route_decision_appends_across_iterations() -> None:
+    """The trace handle's ``route_decisions`` list must accumulate
+    across multiple supervisor iterations — never overwrite.
+    """
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+
+    client.record_route_decision(
+        handle,
+        decision="intake-extractor",
+        reason="intake PDF awaits extraction",
+        from_node="start",
+        to_node="intake-extractor",
+        iteration=1,
+    )
+    client.record_route_decision(
+        handle,
+        decision="evidence-retriever",
+        reason="evidence query awaits retrieval",
+        from_node="intake-extractor",
+        to_node="evidence-retriever",
+        iteration=2,
+    )
+    client.record_route_decision(
+        handle,
+        decision="synthesize",
+        reason="all W2 workers complete for admit_synthesis",
+        from_node="evidence-retriever",
+        to_node="synthesize",
+        iteration=3,
+    )
+
+    decisions = handle.route_decisions
+    assert len(decisions) == 3
+    assert [d.decision for d in decisions] == [
+        "intake-extractor",
+        "evidence-retriever",
+        "synthesize",
+    ]
+    assert [d.iteration for d in decisions] == [1, 2, 3]
+
+
+def test_record_route_decision_is_noop_for_null_handle() -> None:
+    from agentforge.observability.null_client import _NULL_TRACE
+
+    client, sdk = _build_client()
+    client.record_route_decision(
+        _NULL_TRACE,
+        decision="synthesize",
+        reason="test",
+        from_node="start",
+        to_node="synthesize",
+        iteration=1,
+    )
+    sdk.start_observation.return_value.start_observation.assert_not_called()
+
+
+def test_trace_handle_carries_eval_outcome_field() -> None:
+    """Task 27.3: ``TraceHandle`` exposes an ``eval_outcome`` field for
+    eval-suite runs to stamp the case-level pass/fail verdict on the
+    trace alongside the routing trail.
+    """
+    client, sdk = _build_client()
+    del sdk
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+
+    # Default: eval_outcome unset.
+    assert handle.eval_outcome is None
+
+    handle.eval_outcome = "pass"
+    assert handle.eval_outcome == "pass"
+
+
+def test_null_trace_handle_supports_route_decisions_and_eval_outcome() -> None:
+    """The Null client's handle must expose the same ``route_decisions``
+    + ``eval_outcome`` fields as the real handle so call sites can mutate
+    them unconditionally without an ``isinstance`` guard.
+    """
+    null = NullLangfuseClient()
+    handle = null.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+
+    # Per-handle list — calling ``trace_turn`` again returns a fresh list
+    # so multiple turns don't share routing trail.
+    assert handle.route_decisions == []
+    handle2 = null.trace_turn(user_id=2, patient_id=3, breakglass_flag=False, role=None)
+    assert handle2.route_decisions is not handle.route_decisions
+
+    # eval_outcome is mutable on the Null handle too.
+    handle.eval_outcome = "fail"
+    assert handle.eval_outcome == "fail"
+
+
 # ---------- shutdown ----------
 
 

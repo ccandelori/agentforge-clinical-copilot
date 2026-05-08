@@ -17,11 +17,11 @@ Boundary discipline (ARCHITECTURE.md S7.3):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from agentforge.observability.hmac_hash import pseudonymize
-from agentforge.observability.protocols import TraceHandle
+from agentforge.observability.protocols import RouteDecisionRecord, TraceHandle
 
 if TYPE_CHECKING:
     # Imported only for type checking so the Null path can run even when
@@ -29,17 +29,29 @@ if TYPE_CHECKING:
     from langfuse import Langfuse
 
 
-@dataclass(frozen=True)
+@dataclass
 class _LangfuseTraceHandle:
     """Concrete :class:`TraceHandle` carrying the Langfuse root span.
 
     The ``span`` attribute holds the SDK's root observation object. The
     Protocol accessor ``trace_id`` exposes the Langfuse trace identifier
     so callers can correlate logs without reaching into the SDK type.
+
+    Per-turn accumulators (Task 27.3):
+
+    * ``route_decisions`` — append-only routing trail populated by
+      :meth:`AgentLangfuse.record_route_decision`. The list is mutated
+      in place; the dataclass is no longer frozen because eval harnesses
+      need to stamp ``eval_outcome`` after the turn completes.
+    * ``eval_outcome`` — the eval-run verdict for this trace
+      (``"pass"`` / ``"fail"`` / ``"refused"`` / ...). ``None`` for
+      production turns.
     """
 
     trace_id: str | None
     span: Any  # langfuse._client.span.LangfuseSpan; opaque to callers
+    route_decisions: list[RouteDecisionRecord] = field(default_factory=list)
+    eval_outcome: str | None = None
 
 
 class AgentLangfuse:
@@ -443,6 +455,52 @@ class AgentLangfuse:
             metadata={
                 "stale_labs_count": stale_labs_count,
                 "conflict_count": conflict_count,
+            },
+        )
+        span.end()
+
+    def record_route_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        decision: str,
+        reason: str,
+        from_node: str,
+        to_node: str,
+        iteration: int,
+    ) -> None:
+        """Emit a routing-trail span and append the decision to the
+        per-turn handle's ``route_decisions`` list.
+
+        Distinct from :meth:`record_handoff_span` — see the Protocol
+        docstring for the accumulation contract. Span emission still
+        respects the null-handle short-circuit so foreign handles
+        don't reach the SDK.
+        """
+        if isinstance(trace, _LangfuseTraceHandle):
+            trace.route_decisions.append(
+                RouteDecisionRecord(
+                    decision=decision,
+                    reason=reason,
+                    from_node=from_node,
+                    to_node=to_node,
+                    iteration=iteration,
+                )
+            )
+
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name=f"route_decision:{from_node}->{to_node}",
+            as_type="span",
+            metadata={
+                "decision": decision,
+                "reason": reason,
+                "from_node": from_node,
+                "to_node": to_node,
+                "iteration": iteration,
             },
         )
         span.end()
