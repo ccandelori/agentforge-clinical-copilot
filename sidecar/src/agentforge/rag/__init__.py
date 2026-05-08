@@ -40,6 +40,7 @@ from agentforge.rag.dense import DenseRetriever, Encoder, SentenceTransformerEnc
 from agentforge.rag.evidence_retriever import EvidenceRetriever, RetrievalConfig
 from agentforge.rag.loader import load_corpus
 from agentforge.rag.reranker import PassthroughReranker, Reranker
+from agentforge.rag.reranker_factory import select_reranker
 from agentforge.rag.rrf import RRFMerger
 from agentforge.rag.types import GuidelineChunk, RetrievalResult
 
@@ -60,4 +61,5 @@ __all__ = [
     "SentenceTransformerCrossEncoder",
     "SentenceTransformerEncoder",
     "load_corpus",
+    "select_reranker",
 ]

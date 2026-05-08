@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     # intake-extraction turns even on a deployment without a corpus.
     evidence_retriever_enabled: bool = False
 
+    # Optional Cohere rerank API key. When set, ``_build_evidence_retriever``
+    # selects :class:`agentforge.rag.cohere_rerank.CohereReranker` instead
+    # of the local :class:`CrossEncoderReranker`. Empty string (the
+    # default) keeps the local cross-encoder path so deployments without
+    # a Cohere account never call out. See ``rag/reranker_factory.py``
+    # for the selection logic.
+    cohere_api_key: str = ""
+
     # Streaming verifier on the user-visible reply (Task 28). On by
     # default — the verify-before-emit gate shipped in week1-gaps #13,
     # so every assistant sentence is now gated against the per-turn

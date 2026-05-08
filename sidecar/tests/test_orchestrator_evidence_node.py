@@ -201,3 +201,114 @@ class TestEvidenceNodeSignature:
         update = await evidence_retriever_node(state, retriever, langfuse=None)
 
         assert update["evidence_chunks"]
+
+
+# ---------------------------------------------------------------------------
+# 15.3 — reranker selection: COHERE_API_KEY → Cohere, else CrossEncoder,
+# explicit force_passthrough → PassthroughReranker for ablation runs.
+# ---------------------------------------------------------------------------
+
+
+class TestSelectReranker:
+    """The orchestrator's reranker is picked at app-construction time
+    based on environment + ablation flags.
+
+    Three branches, no auto-fallback to Passthrough:
+
+    * ``cohere_api_key`` set → ``CohereReranker``. This is the
+      production deployment shape when the operator pays for Cohere.
+    * ``cohere_api_key`` empty/None → ``CrossEncoderReranker`` over
+      bge-reranker-base. The local default; no per-request cost.
+    * ``force_passthrough=True`` → ``PassthroughReranker`` regardless
+      of the API key. Used by the eval suite's ablation runs that
+      isolate the rerank contribution from the rest of the pipeline.
+
+    Construction failures (e.g. cohere SDK missing) propagate as
+    ``ValueError`` from the underlying class — the factory does not
+    swallow them. A misconfigured deployment that sets
+    ``COHERE_API_KEY`` without installing the SDK should fail loud at
+    startup, not silently fall back to a different reranker without
+    the operator's knowledge.
+    """
+
+    def test_cohere_key_selects_cohere_reranker(self) -> None:
+        from agentforge.rag.reranker_factory import select_reranker
+
+        # CohereReranker.__init__ tries to import the cohere SDK; we
+        # supply a stub via the ``cohere_factory`` injection point so
+        # the test stays free of the optional dependency.
+        constructed: list[str] = []
+
+        class _StubCohereReranker:
+            def __init__(self, api_key: str) -> None:
+                constructed.append(api_key)
+
+            async def rerank(
+                self, query: str, candidates: object, *, top_k: int
+            ) -> list[object]:
+                del query, candidates, top_k
+                return []
+
+        reranker = select_reranker(
+            cohere_api_key="ck-test",
+            cohere_factory=_StubCohereReranker,
+        )
+
+        assert isinstance(reranker, _StubCohereReranker)
+        assert constructed == ["ck-test"]
+
+    def test_no_cohere_key_selects_cross_encoder_reranker(self) -> None:
+        from agentforge.rag.cross_encoder import CrossEncoderReranker
+        from agentforge.rag.reranker_factory import select_reranker
+
+        # CrossEncoderReranker takes a CrossEncoder Protocol instance,
+        # not the SDK class — we pass a tiny stub so the test doesn't
+        # download bge-reranker-base.
+        class _StubCrossEncoder:
+            def predict(self, pairs: object) -> list[float]:
+                del pairs
+                return []
+
+        reranker = select_reranker(
+            cohere_api_key=None,
+            cross_encoder=_StubCrossEncoder(),
+        )
+
+        assert isinstance(reranker, CrossEncoderReranker)
+
+    def test_empty_cohere_key_treated_as_no_key(self) -> None:
+        # Operators occasionally export an empty COHERE_API_KEY when
+        # cycling secrets — that should pick CrossEncoder, not raise
+        # CohereReranker's "non-empty api_key" guard at startup.
+        from agentforge.rag.cross_encoder import CrossEncoderReranker
+        from agentforge.rag.reranker_factory import select_reranker
+
+        class _StubCrossEncoder:
+            def predict(self, pairs: object) -> list[float]:
+                del pairs
+                return []
+
+        reranker = select_reranker(
+            cohere_api_key="",
+            cross_encoder=_StubCrossEncoder(),
+        )
+
+        assert isinstance(reranker, CrossEncoderReranker)
+
+    def test_force_passthrough_overrides_both_branches(self) -> None:
+        from agentforge.rag.reranker import PassthroughReranker
+        from agentforge.rag.reranker_factory import select_reranker
+
+        class _StubCohereReranker:
+            def __init__(self, api_key: str) -> None:
+                raise AssertionError(
+                    "Cohere should not be constructed under force_passthrough"
+                )
+
+        reranker = select_reranker(
+            cohere_api_key="ck-test",
+            cohere_factory=_StubCohereReranker,
+            force_passthrough=True,
+        )
+
+        assert isinstance(reranker, PassthroughReranker)
