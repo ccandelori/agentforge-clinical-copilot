@@ -17,6 +17,9 @@ WORKDIR /app
 # layer caches when source changes but deps don't.
 COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
+# Only the cache-verification helper goes into the builder; the rest
+# of scripts/ is dev tooling that never needs to ship in any stage.
+COPY scripts/verify_model_cache.py ./scripts/verify_model_cache.py
 # Sensitivity policy YAML lives at /app/config/sensitivity_policy.yaml
 # in production — Settings.sensitivity_policy_path resolves there via
 # Path(__file__).resolve().parents[2]. Without this layer the YAML is
@@ -68,6 +71,11 @@ RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransfor
 # safetensors weight file plus tokenizer/config is the modern path and
 # what transformers prefers when both are present.
 RUN /app/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-base', cache_dir='/opt/hf-cache/sentence-transformers', allow_patterns=['*.json','*.txt','tokenizer*','*.safetensors'])"
+# Build-time gate: load both models with HF_HUB_OFFLINE=1 so a missing
+# or corrupt cache fails the build instead of the first production
+# request. Runs in the builder stage so the script never ships in the
+# production image.
+RUN /app/.venv/bin/python /app/scripts/verify_model_cache.py
 
 # ---------- Production stage ----------
 FROM python:${PYTHON_VERSION} AS production
