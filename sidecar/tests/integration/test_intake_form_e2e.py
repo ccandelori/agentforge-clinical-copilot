@@ -735,3 +735,142 @@ async def test_persist_phase_creates_questionnaire_response_with_no_clinical_wri
         f"The W2 invariant forbids any clinical-table write on the "
         f"intake path."
     )
+
+
+# ---------------------------------------------------------------------------
+# Subtask 29.5 — Audit ordering across the full flow + cleanup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_full_e2e_flow_audit_order_and_cleanup() -> None:
+    """Subtask 29.5 — the complete pipeline (upload → extract → persist)
+    fires audits in the correct order:
+
+        agentforge.document_ingest → agentforge.questionnaire_persist
+
+    And the cleanup phase removes the QR row + the captured upload
+    record. Cleanup is exercised here so a future contributor sees
+    that intake artifacts ARE meant to be deletable in the test
+    environment — that matters when you wire up an integration suite
+    that runs against a real DB and needs to reset between tests.
+
+    The "no clinical-table writes" invariant is re-asserted at this
+    level too — across the whole flow, captured URLs must consist
+    only of the upload + QR-persist endpoints.
+    """
+    audit_log: list[dict[str, Any]] = []
+    db = _MockClinicalDatabase()
+    baseline = db.baseline_clinical_counts()
+
+    # ---- Phase 1: Upload ----
+    app, writer, store = _build_upload_app(audit_log=audit_log)
+    sid = await _seed_session(store)
+    pdf_bytes = build_intake_pdf_bytes()
+
+    with TestClient(app) as client:
+        client.cookies.set(_SESSION_COOKIE, sid)
+        upload_response = client.post(
+            "/api/agent/upload",
+            data={
+                "patient_uuid": _PATIENT_UUID,
+                "doc_type": "intake_form",
+            },
+            files={
+                "file": (
+                    "intake.pdf",
+                    io.BytesIO(pdf_bytes),
+                    "application/pdf",
+                ),
+            },
+        )
+    assert upload_response.status_code == 200
+    document_id = upload_response.json()["document_id"]
+
+    # ---- Phase 2: Extract ----
+    pages = PdfRenderer(dpi=72).render_pages(pdf_bytes)
+    canned_payload = canned_intake_extraction(
+        document_id=document_id,
+        patient_id=_PATIENT_PID,
+    )
+    anthropic_client = AsyncMock()
+    anthropic_client.messages.create = AsyncMock(
+        return_value=_make_anthropic_response(
+            canned_payload, INTAKE_CONTRACT.tool_name
+        )
+    )
+    extractor = VisionExtractor(
+        contract=INTAKE_CONTRACT, client=anthropic_client
+    )
+    result = await extractor.extract(
+        pages=pages,
+        document_id=document_id,
+        patient_id=_PATIENT_PID,
+    )
+    extraction = result.extraction
+
+    # ---- Phase 3: Persist ----
+    captured_urls: list[str] = []
+
+    def php_handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(request.url.path)
+        if request.url.path != _PERSIST_QR_PATH:
+            return httpx.Response(404, json={"error": "forbidden path"})
+        import json as _json
+
+        body = _json.loads(request.content.decode("utf-8"))
+        qr_id = db.insert_questionnaire_response({
+            "document_id": body.get("document_id"),
+            "patient_id": body.get("patient_id"),
+        })
+        audit_log.append({
+            "event": "agentforge.questionnaire_persist",
+            "document_id": body.get("document_id"),
+            "questionnaire_response_id": qr_id,
+        })
+        return httpx.Response(
+            200, json={"questionnaire_response_id": qr_id}
+        )
+
+    transport = httpx.MockTransport(php_handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        persist_client = _PersistQuestionnaireResponseClient(
+            http_client=http, base_url=_OPENEMR_BASE
+        )
+        qr_id = await persist_client.persist(
+            jwt="full-flow-jwt",
+            extraction=extraction,
+        )
+
+    # ---- Audit ordering: ingest must precede persist ----
+    audit_events = [event["event"] for event in audit_log]
+    assert audit_events == [
+        "agentforge.document_ingest",
+        "agentforge.questionnaire_persist",
+    ], (
+        f"Audit events out of order or missing. Expected "
+        f"[document_ingest, questionnaire_persist]; got {audit_events!r}."
+    )
+
+    # The two audit events agree on document_id — a regression where
+    # the persist endpoint operates on a different doc id than the
+    # one we uploaded would surface here.
+    assert audit_log[0]["document_id"] == document_id
+    assert audit_log[1]["document_id"] == document_id
+
+    # ---- The W2 invariant, re-asserted at flow level ----
+    assert captured_urls == [_PERSIST_QR_PATH]
+    assert db.clinical_table_rows == baseline
+
+    # The QR row exists.
+    assert len(db.questionnaire_responses) == 1
+    assert db.questionnaire_responses[0]["document_id"] == document_id
+
+    # ---- Cleanup ----
+    db.delete_questionnaire_response(qr_id)
+    assert db.questionnaire_responses == []
+    # The recorded upload + audit log are owned by the test, not the
+    # production code; we drop them on the floor as the test exits.
+    audit_log.clear()
+    writer.captured.clear()
+    assert audit_log == []
