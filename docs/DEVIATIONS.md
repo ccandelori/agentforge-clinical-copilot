@@ -12,6 +12,59 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — W2 LLM judge ships as a parallel surface, not a mutation of W1 grader
+
+**Plan:** Task 17 ("LLM-as-judge evaluation layer") asked for an
+LLM-as-judge layer plus programmatic checks, plumbed into the
+`EvalHarness`. The brief enumerated two judge categories
+(`factually_consistent`, `safe_refusal`) and three programmatic checks
+(`schema_valid`, `citation_present`, `no_phi_in_logs`).
+
+**Deviation 1 — co-existing W2 harness instead of mutating W1.** The
+existing `tests.eval.harness.EvalHarness` is a *grounding*-shaped
+checker (citation index, behavior callable) that the 1147 W1 tests
+consume. Rather than reshape its API to accept an LLM judge — which
+would have meant either changing every existing call site or adding a
+flagged-second-mode — I shipped a new `EvalHarnessW2` in
+`tests/eval/harness_w2.py` that runs programmatic checks first, then
+the LLM judge. The W1 contract is untouched; W2 cases consume the new
+surface explicitly. Same pattern as the existing `LLMJudgeGrader` /
+new `LLMJudge` split.
+
+**Deviation 2 — W2 judge is a new class, not an extension.** The
+existing `LLMJudgeGrader` (week1-gaps Task 18) emits a 1-5 score with
+consensus voting. The W2 contract is binary PASS/FAIL with two
+category-specific prompts. Rather than overload one class with two
+incompatible verdict shapes, I shipped `LLMJudge` alongside it. Both
+graders co-exist; future work can deprecate W1 once the team is
+confident the binary contract is enough.
+
+**Deviation 3 — judge prompts live in `prompts/v1/`, not under
+`tests/eval/judges/week2/`.** The task brief explicitly anticipated
+this: "If you put prompts under `sidecar/tests/eval/judges/`, log a
+deviation in `docs/DEVIATIONS.md` justifying why." I followed the
+existing prompt-library convention (`prompts/v1/<component>.md` pinned
+in `version.json`), so this is the *non*-deviation path the brief
+recommended. The prompts are loaded via the same
+`agentforge.prompts.load_prompt()` function the planner and synthesizer
+prompts use — text-reviewable diffs, hot rollback by `version.json`
+flip, and one less prompt-loading code path to maintain.
+
+**Why:** All three decisions trade slightly more surface area for zero
+risk to the W1 baseline. With the W2 deadline 36 hours out, that's
+the right side of the trade. The split surfaces (`EvalHarness` /
+`EvalHarnessW2`, `LLMJudgeGrader` / `LLMJudge`) cost nothing at
+runtime — tests pick which one they consume — and let us calibrate
+the W2 layer on the 50 W2 cases without spooking the W1 regression
+suite.
+
+**What we learned:** When the brief prescribes a path that fits the
+codebase's seams, follow it; when it would force a load-bearing rewrite
+of a stable surface, ship the new surface alongside the old one and
+flag the migration as future work.
+
+---
+
 ## 2026-05-08 — Evidence-retriever node consumes `retrieve_with_stats`, not `retrieve`
 
 **Plan:** Task 15.5 calls for emitting a Langfuse `retrieval_hits` span
