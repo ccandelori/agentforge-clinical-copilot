@@ -2,7 +2,44 @@
 
 ## Executive summary
 
-_TODO (31.1 outline)._
+The W2 evaluation **infrastructure is complete and the gate is
+proven correct, but no measured run against the real agent has
+happened yet.** The headline:
+
+- 50 golden cases live under
+  [`sidecar/tests/eval/cases/week2/`](../sidecar/tests/eval/cases/week2/),
+  distributed 12 / 10 / 10 / 8 / 10 across `extraction` /
+  `evidence_retrieval` / `citations` / `refusal` / `missing_data`.
+- Two-stage harness (`EvalHarnessW2`): three programmatic checks
+  (`schema_valid`, `citation_present`, `no_phi_in_logs`) gate a
+  binary LLM judge (`factually_consistent`, `safe_refusal`) at
+  `temperature=0` with retry-and-tiebreaker on disagreement.
+- The gate's threshold-and-regression arithmetic is empirically
+  verified by the Task 19 self-test
+  ([`test_gate_blocks_regression.py`](../sidecar/tests/eval/gate/test_gate_blocks_regression.py)):
+  a deliberately-regressed adapter that strips citations off a
+  fabricated `A1c = 15.5%` claim drops the `citations` pass rate
+  from 1.0 → 0.6, and the gate returns `verdict.passed is False`
+  with the expected violation kinds.
+- The pinned baseline at
+  [`sidecar/tests/eval/baselines/week2.json`](../sidecar/tests/eval/baselines/week2.json)
+  is a **stub** with all five categories at 1.0 and
+  `_meta.status: "stub"`. The production `Supervisor` adapter that
+  bridges the LangGraph orchestrator to the runner's
+  `Callable[[EvalCase], SupervisorOutput]` seam **does not exist
+  yet** — that is why no real measured baseline exists. The CLI
+  entry point at
+  [`sidecar/tests/eval/gate/cli.py`](../sidecar/tests/eval/gate/cli.py)
+  intentionally has no real-LLM mode.
+- Per-category pass rates against the real agent are
+  **deferred to the first measured run.** A projected cost for that
+  run, derived from `cost.py`'s closed-form pricing, is **≈ $0.87**
+  (≤ $2 worst case).
+
+What ships today is a measurable floor that lets the gate's
+threshold + regression arithmetic be exercised against an honest
+reference. What does not ship is a graded report card on the agent
+itself.
 
 ## Methodology
 
@@ -253,8 +290,117 @@ arithmetic is what's being checked, not real model behavior.
 
 ## Open follow-ups
 
-_TODO (31.4)._
+The infrastructure is in place; these are the loose ends a human will
+need to close before the report can carry measured numbers.
+
+1. **Production `Supervisor` adapter.** Wire a callable on top of
+   `agentforge.orchestrator.graph.build_graph()` that returns a
+   `SupervisorOutput` per `EvalCase` (the dataclass at
+   [`tests/eval/gate/runner_w2.py`](../sidecar/tests/eval/gate/runner_w2.py)).
+   This is the missing seam between the LangGraph orchestrator and
+   the W2 runner. Until it exists, every gate run is mocked.
+2. **Real-baseline regeneration.** Once the adapter exists, run
+   `./scripts/run_eval_gate.sh` end-to-end against a real Anthropic
+   key and replace
+   [`sidecar/tests/eval/baselines/week2.json`](../sidecar/tests/eval/baselines/week2.json)
+   with the resulting per-category rates. Flip
+   `_meta.status` from `"stub"` to `"measured"` and record the
+   regen run's Langfuse trace id in `_meta.regenerated_by`.
+3. **Judge routing for `extraction` and `missing_data`.** The W2
+   harness's `_JUDGE_BY_CATEGORY` dict
+   ([`tests/eval/harness_w2.py`](../sidecar/tests/eval/harness_w2.py)
+   line 46) currently routes only `HALLUCINATION` and `REFUSAL`
+   cases to a judge. With zero `HALLUCINATION` cases in the W2
+   suite, only the 8 `refusal` cases ever invoke the judge. A
+   "well-cited but factually wrong" extraction can therefore slip
+   past the programmatic layer. Adding `EXTRACTION` and
+   `MISSING_DATA` to the routing dict (with appropriate prompt
+   components in `prompts/v1/`) closes that gap.
+4. **`GLAB_TOKEN` masked CI variable.** The MR-comment poster in the
+   `agent-eval` GitLab job (line 178 of
+   [`.gitlab-ci.yml`](../.gitlab-ci.yml)) reads `GLAB_TOKEN` first
+   and falls back to `CI_JOB_TOKEN`. `GLAB_TOKEN` is the
+   recommended path because `CI_JOB_TOKEN` cannot post comments
+   from forked-MR pipelines. The variable still needs to be created
+   as a masked + protected project / group access token with `api`
+   scope. Until then, MRs from forks get no diff-report comment
+   (the job still runs and fails appropriately on regressions).
 
 ## Artifacts
 
-_TODO (31.4)._
+Canonical paths for everything cited in this report.
+
+### Configuration
+
+- [`sidecar/eval_config.yaml`](../sidecar/eval_config.yaml) —
+  thresholds, regression band, pinned judge model + temperature.
+
+### Cases + baseline
+
+- [`sidecar/tests/eval/cases/week2/`](../sidecar/tests/eval/cases/week2/)
+  — 50 golden YAML cases across 5 files.
+- [`sidecar/tests/eval/baselines/week2.json`](../sidecar/tests/eval/baselines/week2.json)
+  — pinned stub baseline (`_meta.status: "stub"`).
+- [`week2/example-documents/`](../week2/example-documents/) — intake
+  forms + lab PDFs the case YAMLs reference.
+
+### Runner + gate
+
+- [`sidecar/tests/eval/gate/runner_w2.py`](../sidecar/tests/eval/gate/runner_w2.py)
+  — `load_week2_cases`, `run_week2_suite`, `SupervisorOutput`.
+- [`sidecar/tests/eval/gate/scoring.py`](../sidecar/tests/eval/gate/scoring.py)
+  — `summarize_by_category`.
+- [`sidecar/tests/eval/gate/gate.py`](../sidecar/tests/eval/gate/gate.py)
+  — `evaluate_gate`, `GateVerdict`, `ViolationKind`.
+- [`sidecar/tests/eval/gate/cli.py`](../sidecar/tests/eval/gate/cli.py)
+  — `run_gate_cli` entry point used by CI.
+- [`sidecar/tests/eval/gate/diff_report.py`](../sidecar/tests/eval/gate/diff_report.py)
+  — markdown diff reporter for MR comments.
+- [`sidecar/scripts/run_eval_gate.sh`](../sidecar/scripts/run_eval_gate.sh)
+  — shell wrapper around the CLI.
+
+### Harness + graders
+
+- [`sidecar/tests/eval/harness_w2.py`](../sidecar/tests/eval/harness_w2.py)
+  — `EvalHarnessW2`, `_JUDGE_BY_CATEGORY`.
+- [`sidecar/tests/eval/graders/programmatic.py`](../sidecar/tests/eval/graders/programmatic.py)
+  — `check_schema_valid`, `check_citation_present`,
+  `check_no_phi_in_logs`, `ProgrammaticChecks`.
+- [`sidecar/tests/eval/graders/llm_judge_w2.py`](../sidecar/tests/eval/graders/llm_judge_w2.py)
+  — `LLMJudge`, `JudgeCategory`, `grade_with_retry`.
+- [`prompts/v1/judge_factually_consistent.md`](../prompts/v1/judge_factually_consistent.md)
+- [`prompts/v1/judge_safe_refusal.md`](../prompts/v1/judge_safe_refusal.md)
+
+### Tests that prove the gate works
+
+- [`sidecar/tests/eval/gate/test_gate_blocks_regression.py`](../sidecar/tests/eval/gate/test_gate_blocks_regression.py)
+  — Task 19 end-to-end self-test (`gate_validation` marker).
+- [`sidecar/tests/eval/gate/test_gate.py`](../sidecar/tests/eval/gate/test_gate.py)
+  — gate-arithmetic unit tests.
+- [`sidecar/tests/eval/gate/test_eval_smoke.py`](../sidecar/tests/eval/gate/test_eval_smoke.py)
+  — pre-commit smoke (10 cases, mocked stack).
+
+### Observability
+
+- [`sidecar/src/agentforge/observability/cost.py`](../sidecar/src/agentforge/observability/cost.py)
+  — `PRICING`, `calculate_cost`, `calculate_vision_cost`,
+  `estimate_image_tokens`.
+
+### CI + ops
+
+- [`.gitlab-ci.yml`](../.gitlab-ci.yml) — `agent-eval` job (lines
+  126+).
+- [`docs/agents/ci-eval.md`](agents/ci-eval.md) — CI eval-gate
+  runbook (`GLAB_TOKEN` setup, expected exit codes, artifacts).
+- [`docs/agents/pre-commit-eval-smoke.md`](agents/pre-commit-eval-smoke.md)
+  — pre-commit hook ops guide.
+- [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) —
+  `agentforge-eval-smoke` hook entry.
+
+### Companion docs
+
+- [`docs/eval-report-2026-05-03.md`](eval-report-2026-05-03.md) —
+  W1 framework smoke report (5 categories, 12 cases, all passing on
+  the framework run).
+- [`docs/eval-summary-2026-05-03.md`](eval-summary-2026-05-03.md) —
+  W1 companion summary (live-stack baseline + framework + demo).
