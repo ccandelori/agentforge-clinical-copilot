@@ -49,6 +49,16 @@ ENV UV_LINK_MODE=copy \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# Pre-bake HuggingFace model weights into a staging cache so the
+# production image starts without any network model download. The
+# sentence-transformers DenseRetriever (rag/dense.py) defaults to
+# all-MiniLM-L6-v2 — ~90 MB; without this layer the first request
+# blocks on a 90 MB download from huggingface.co.
+ENV HF_HOME=/opt/hf-cache \
+    TRANSFORMERS_CACHE=/opt/hf-cache/hub \
+    SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache/sentence-transformers
+RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
 # ---------- Production stage ----------
 FROM python:${PYTHON_VERSION} AS production
 
