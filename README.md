@@ -1,81 +1,135 @@
 # AgentForge — Clinical Co-Pilot for OpenEMR
 
-A chart-aware AI agent embedded in [OpenEMR](https://open-emr.org) as a
-custom module, with orchestration and LLM calls delegated to a Python
-sidecar. Built for the user story in [USERS.md](USERS.md): a hospitalist
-needs to walk into a 2 AM admit knowing what matters about a patient she
-has never met, without reading 14 months of notes herself. Every claim
-the agent surfaces traces back to a specific record in this patient's
-chart; out-of-context launches are refused; cross-patient references
-are caught before they reach the screen.
+A chart-aware AI agent embedded in [OpenEMR](https://open-emr.org) with a
+modern Vue 3 patient dashboard and a multimodal evidence pipeline that
+turns scanned intake forms into structured chart data — with every
+extracted field grounded to a pixel-coordinate citation on the source
+PDF.
+
+Built across two waves:
+
+- **Week 1 — Chart Q&A.** Verify-before-emit synthesis over the patient's
+  chart (problems, meds, labs, vitals, allergies, immunizations,
+  procedures, notes). Every assistant claim traces back to a specific
+  record; out-of-context launches are refused; cross-patient leakage is
+  caught before it reaches the screen.
+- **Week 2 — Multimodal evidence + dashboard rewrite.** Upload a PDF
+  intake form or lab result; the orchestrator renders pages, runs a
+  vision extractor, enforces a bbox-confidence floor (≥ 0.7) on every
+  scanned-source citation, and surfaces the structured extraction inline
+  in a "View source" overlay back over the original document. The legacy
+  PHP-rendered patient summary is replaced by a Vue 3 SPA served from
+  the sidecar at the same origin.
 
 ## Live demo
 
 | URL | Notes |
 | --- | --- |
-| [`https://143.244.157.90:9300/dashboard`](https://143.244.157.90:9300/) | OpenEMR over HTTPS — **self-signed cert**, browser will warn (click through) |
+| [`https://143.244.157.90:9300/dashboard/`](https://143.244.157.90:9300/dashboard/) | Vue 3 patient dashboard with embedded AgentForge drawer — **self-signed cert**, browser will warn (click through) |
 
-Login: `admin` / `pass`. Recommended demo patient: **Eula Crist** (a
-complex chronic patient with CKD stage 3, hypertension, hyperlipidemia,
-multiple medications, and recent labs). Open her chart, find the
-"AgentForge" panel in the patient summary, and ask:
+Login: `admin` / `pass`.
 
-- *"Give me a chart overview."* — exercises the admit-synthesis path.
-- *"Is it safe to start her on ibuprofen?"* — exercises the
-  contraindication path against her CKD.
-- *"What's changed in the last 90 days?"* — exercises the delta path.
+**Try the W2 intake-extraction loop:**
+
+1. Pick **Margaret Chen** (`MRN-2026-04481`) from the patient list.
+2. Open the AgentForge drawer (right edge), click the paperclip in the
+   composer, attach `week2/example-documents/intake-forms/p01-chen-intake-typed.pdf`.
+3. Send "Extract this intake form."
+4. The chat reply summarises the form; the `<ExtractionPanel>` below
+   renders the structured fields (chief concern, demographics,
+   medications, allergies, family history, unsupported_fields).
+5. Click **"View source (N)"** — a modal opens with the PDF rendered and
+   blue rectangles overlaid where each field came from.
+
+**Try the W1 chart-Q&A loop** on the same patient:
+
+- *"Give me a chart overview."*
+- *"Is it safe to start her on ibuprofen?"*
+- *"What's changed in the last 90 days?"*
+
+Three other personas (Whitaker / Reyes / Kowalski) are also seeded for
+the additional intake forms in `week2/example-documents/intake-forms/`.
 
 ## Architecture in five lines
 
-1. **OpenEMR custom module** (`interface/modules/custom_modules/oe-module-agentforge/`) renders the chat panel inside the patient summary and mints a per-turn JWT scoped to the open patient.
-2. **Python sidecar** (`sidecar/`, FastAPI + LangGraph) receives the JWT, fans out to a typed tool catalog (problems, medications, labs, vitals, allergies, immunizations, procedures, notes, search, encounters, demographics) in parallel, then streams the synthesized response back over SSE.
-3. **Verify-before-emit**: every assistant sentence is gated against the per-turn citation cache before reaching the wire — ungrounded claims are replaced with a refusal marker, never streamed and rewritten. Citations carry `[type #id]` markers parseable back to a row in OpenEMR.
-4. **Session memory** (Redis) supports multi-turn conversation; **Langfuse** captures non-PHI traces with HMAC-pseudonymized IDs; **sensitivity policy** gates record visibility before tool dispatch; **per-turn cost** rides back on the `X-Agent-Cost-USD` response header.
-5. **Eval suite** runs the real orchestrator against twelve YAML failure-mode cases (happy-path, missing-data, ambiguous, unauthorized, hallucination) with deterministic + LLM-judge graders — see the most recent [`docs/eval-report-2026-05-03.md`](docs/eval-report-2026-05-03.md).
+1. **Vue 3 SPA** (`vue-ui/`) is the patient dashboard. Auth via OAuth2
+   against OpenEMR's authorization server, brokered by a BFF cookie
+   issued at the dashboard origin; FHIR data fetches and agent turns
+   ride that cookie. The AgentForge drawer is a top-level slide-out.
+2. **Python sidecar** (`sidecar/`, FastAPI + LangGraph) terminates BFF
+   auth, mints per-turn JWTs scoped to the open patient, runs the
+   orchestrator, fans out to a typed tool catalog in parallel, and
+   streams the synthesized response.
+3. **Multimodal extraction.** When a turn carries `document_id`, the
+   orchestrator fetches bytes via a JWT-authed PHP internal endpoint
+   (`internal/get_document_bytes.php`), renders pages with PyMuPDF, and
+   routes through a forced-tool-call vision extractor whose output
+   schema requires every scanned-source citation to carry a
+   `PageBBox` with `bbox_confidence ≥ 0.7`.
+4. **Verify-before-emit.** Every assistant claim is gated against the
+   per-turn citation cache; ungrounded claims are replaced with a
+   refusal marker. Citations carry `[type #id]` markers parseable back
+   to a row in OpenEMR.
+5. **Operational glue.** Session memory in Redis; Langfuse traces
+   carrying HMAC-pseudonymised IDs (no PHI); per-turn cost on the
+   `X-Agent-Cost-USD` response header; sensitivity policy gates record
+   visibility before tool dispatch.
 
 Read deeper:
 
-- [`AUDIT.md`](AUDIT.md) — OpenEMR codebase audit and the gaps this project closes.
-- [`USERS.md`](USERS.md) — User research, persona (Dr. Aisha Patel), use cases, success metrics.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — Six load-bearing decisions, three explicit tradeoffs, full system design.
-- [`DEPLOY.md`](DEPLOY.md) — Pre-deploy gates, deploy steps, rollback plan, post-deploy validation.
-- [`docs/eval-summary-2026-05-03.md`](docs/eval-summary-2026-05-03.md) — Eval narrative across baseline (6/7 live LLM pass), YAML failure-mode cases, and live demo session.
-- [`docs/cost-analysis-2026-05-03.md`](docs/cost-analysis-2026-05-03.md) — Per-turn cost (~$0.03), daily/monthly projections, ROI sketch.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — W1 system design, six load-bearing decisions, three explicit tradeoffs.
+- [`W2_ARCHITECTURE.md`](W2_ARCHITECTURE.md) — W2 multimodal evidence agent, intake contract, verifier floor.
+- [`W2_DEFENSE.md`](W2_DEFENSE.md) — W2 architecture summary and defense.
+- [`PATIENT_DASHBOARD_MIGRATION.md`](PATIENT_DASHBOARD_MIGRATION.md) — Why Vue 3 (vs React / Angular / Svelte / Qwik / HTMX), tradeoffs accepted.
+- [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) — Running log of decisions that diverged from the planning artifacts, with rationale.
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records (auth bridging, etc.).
+- [`USERS.md`](USERS.md) — Personas, use cases, success metrics.
 
 ## 60-second local quickstart
 
 ```bash
-# 1. Clone and bring up OpenEMR + MySQL stack (5-10 min on first run)
-git clone <this-repo> openemr && cd openemr
+# 1. Bring up OpenEMR + MySQL stack (5-10 min on first run)
 cd docker/development-easy && docker compose up --detach --wait
 
-# 2. Bring up the sidecar
-cd ../agent && docker compose up --build --detach
+# 2. Run the sidecar (host-mode; needs uv + an Anthropic API key)
+cd sidecar && uv sync && uv run uvicorn agentforge.main:app --reload
 
-# 3. Open the app, log in, pick a patient
-open http://localhost:8300/      # admin / pass
+# 3. Run the dashboard dev server (Vite proxies /api/* and /auth/* to the sidecar)
+cd vue-ui && npm install && npm run dev
+
+# 4. Open the SPA
+open http://localhost:5173/      # admin / pass
 ```
 
-The AgentForge panel appears in the patient summary view. See
-[`docker/agent/README.md`](docker/agent/README.md) for the
-host-script alternative (`./sidecar/scripts/sidecar.sh start`),
-environment variables, and Anthropic API key configuration.
+The AgentForge drawer is the right-edge slide-out. Set
+`ANTHROPIC_API_KEY` in `sidecar/.env`; see
+[`sidecar/.env.example`](sidecar/.env.example) for the full env surface
+(JWT secret, Redis URL, OAuth client config, etc.).
 
-For full developer setup including PHPUnit, Jest, PHPStan, prek
-hooks, and the eval suite, see [`CLAUDE.md`](CLAUDE.md) and
+For the production deploy path (DigitalOcean droplet, OAuth client
+registration, Apache reverse proxy, sidecar container with
+`--env-file`), see [`scripts/deploy-droplet.sh`](scripts/deploy-droplet.sh)
+and the operational notes in [`docs/NEXT-SESSION.md`](docs/NEXT-SESSION.md).
+
+For full developer setup (PHPUnit, Vitest, PHPStan level 10, prek
+hooks, eval suite), see [`CLAUDE.md`](CLAUDE.md) and
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## What's in the repository
 
 ```
+vue-ui/                                 # Vue 3 patient dashboard SPA + AgentForge drawer
+sidecar/                                # Python sidecar: orchestrator, tools, vision extractor, BFF auth
 interface/modules/custom_modules/
-  oe-module-agentforge/      # PHP module: panel, JWT mint, proxy controller
-sidecar/                     # Python sidecar: orchestrator, tools, verifier, eval
-prompts/                     # Versioned prompt library (synthesizer, planner)
-docker/agent/                # Sidecar dev compose stack
-docker/development-easy/     # OpenEMR dev stack (upstream)
-docs/                        # ADRs, deployment notes, eval reports, deviations
-.taskmaster/                 # TaskMaster roadmap (master + week1-gaps tags)
+  oe-module-agentforge/                 # PHP module: JWT mint, internal endpoints (doc bytes, doc upload), record fetchers
+prompts/                                # Versioned prompt library (synthesizer, planner, intake/lab vision)
+docker/agent/                           # Sidecar dev compose stack
+docker/development-easy/                # OpenEMR dev stack (upstream, augmented)
+docker/openemr-proxy/                   # Apache reverse-proxy config for the production cutover
+scripts/                                # Deploy + demo seed scripts (deploy-droplet.sh, seed-demo-patients.php)
+docs/                                   # ADRs, deployment notes, eval reports, deviations
+.taskmaster/                            # TaskMaster roadmap (week1, week2, etc.)
+week2/example-documents/                # Fabricated W2 corpus (intake forms, lab results, referrals, HL7)
 ```
 
 ## About this fork
