@@ -462,7 +462,10 @@ def create_app(
     )
 
     auth_gateway = AuthGateway(jwt_secret=settings.jwt_secret, redis_client=redis_client)
-    llm = llm_client or ClaudeClient(api_key=settings.anthropic_api_key)
+    llm = llm_client or ClaudeClient(
+        api_key=settings.anthropic_api_key,
+        **({"model": settings.claude_model} if settings.claude_model else {}),
+    )
     demographics = demographics_fetcher or DemographicsFetcher(
         base_url=settings.openemr_base_url,
     )
