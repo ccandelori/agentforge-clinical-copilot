@@ -45,6 +45,7 @@ from unittest.mock import AsyncMock
 import fitz  # type: ignore[import-untyped]
 import httpx
 import pytest
+from anthropic.types import Message
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -55,9 +56,16 @@ from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
 from agentforge.dashboard_auth.openemr_patient_pid import OpenEMRPatientPidFetcher
 from agentforge.dashboard_auth.upload_route import make_agent_upload_router
 from agentforge.gateway.auth_gateway import AuthGateway
+from agentforge.schemas.intake import IntakeFormExtraction
+from agentforge.tools.attach_and_extract import (
+    INTAKE_CONTRACT,
+    PdfRenderer,
+    VisionExtractor,
+)
 from tests.integration._intake_e2e_fixtures import (
     PINNED_INTAKE_CONTENT,
     build_intake_pdf_bytes,
+    canned_intake_extraction,
 )
 
 # ---------------------------------------------------------------------------
@@ -371,3 +379,107 @@ async def test_upload_phase_returns_document_id_and_emits_document_ingest_audit(
     assert ingest_event["event"] == "agentforge.document_ingest"
     assert ingest_event["document_id"] == _DOCUMENT_ID
     assert ingest_event["doc_type"] == "intake_form"
+
+
+# ---------------------------------------------------------------------------
+# Subtask 29.3 — Extraction phase (mocked Anthropic)
+# ---------------------------------------------------------------------------
+
+
+def _make_anthropic_response(
+    tool_input: dict[str, Any], tool_name: str
+) -> Message:
+    """Build a fake anthropic.types.Message that simulates a vision
+    tool-use response.
+
+    Matches ``test_attach_and_extract._make_anthropic_response``'s
+    shape — kept inline rather than imported because the integration
+    test deliberately doesn't reach back into the unit-test module.
+    """
+    return Message.model_validate({
+        "id": "msg_e2e_intake_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5-20250929",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_e2e_intake_1",
+                "name": tool_name,
+                "input": tool_input,
+            }
+        ],
+        "stop_reason": "tool_use",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": 1500,
+            "output_tokens": 300,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard",
+            "server_tool_use": None,
+        },
+    })
+
+
+@pytest.mark.asyncio
+async def test_extraction_phase_validates_canned_intake_form_extraction() -> None:
+    """Subtask 29.3: the canned Anthropic response validates as
+    :class:`IntakeFormExtraction`. The full vision pipeline (render →
+    extract) consumes the test PDF bytes and emits a typed extraction
+    we can persist downstream.
+
+    The Pydantic validation step is the load-bearing assertion: every
+    citation in the canned payload must clear the 0.7 bbox-confidence
+    floor, and every list entry must carry one. If the canned fixture
+    drifts away from the contract (e.g. a citation drops below 0.7),
+    Pydantic refuses the payload and the e2e test fails with a
+    pointed error rather than silently passing through bad data.
+    """
+    pdf_bytes = build_intake_pdf_bytes()
+    pages = PdfRenderer(dpi=72).render_pages(pdf_bytes)
+    assert len(pages) >= 1, "intake PDF must render to at least one page"
+
+    canned_payload = canned_intake_extraction(
+        document_id=_DOCUMENT_ID,
+        patient_id=_PATIENT_PID,
+    )
+    response = _make_anthropic_response(
+        canned_payload, INTAKE_CONTRACT.tool_name
+    )
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(
+        contract=INTAKE_CONTRACT,
+        client=client,
+        model="claude-sonnet-4-5-20250929",
+    )
+    result = await extractor.extract(
+        pages=pages,
+        document_id=_DOCUMENT_ID,
+        patient_id=_PATIENT_PID,
+    )
+
+    extraction = result.extraction
+    assert isinstance(extraction, IntakeFormExtraction)
+    assert extraction.document_id == _DOCUMENT_ID
+    assert extraction.patient_id == _PATIENT_PID
+
+    # Pinned content survived the round-trip end-to-end.
+    assert extraction.chief_concern == PINNED_INTAKE_CONTENT.chief_concern
+    assert len(extraction.medications) == len(PINNED_INTAKE_CONTENT.medications)
+    assert extraction.medications[0].name == PINNED_INTAKE_CONTENT.medications[0][0]
+    assert len(extraction.allergies) == len(PINNED_INTAKE_CONTENT.allergies)
+    assert (
+        extraction.allergies[0].substance
+        == PINNED_INTAKE_CONTENT.allergies[0][0]
+    )
+    assert len(extraction.family_history) == len(
+        PINNED_INTAKE_CONTENT.family_history
+    )
+
+    # Real Anthropic was never touched — confirm the AsyncMock was
+    # the only thing called. Belt-and-braces against a refactor that
+    # accidentally instantiates a default client.
+    assert client.messages.create.await_count == 1
