@@ -8272,13 +8272,28 @@
         ],
         "priority": "low",
         "subtasks": []
+      },
+      {
+        "id": "40",
+        "title": "Implement Production W2 SupervisorAdapter for Eval Loop Closure",
+        "description": "Bridge LangGraph orchestrator to W2 eval runner via the production Callable[[EvalCase], SupervisorOutput] seam, plus regenerate_baseline CLI to overwrite the stub baseline with measured pass rates.",
+        "details": "Closes the deviation logged in Task 18 (W2 eval gate ships with stub baselines/week2.json). Production adapter at sidecar/src/agentforge/eval/supervisor_adapter.py drives build_graph().ainvoke() and shapes the result into SupervisorOutput (response, sources, citation payload, route-decision logs). FilenameDocumentResolver at sidecar/src/agentforge/eval/filename_resolver.py parses on-disk fixtures from case query prose. CLI at sidecar/src/agentforge/eval/regenerate_baseline.py with --mock (token-free smoke) and a real-LLM branch the human edits to wire deps. Adds 18 tests (1282 to 1300 baseline).",
+        "testStrategy": "",
+        "status": "done",
+        "dependencies": [
+          "15",
+          "18"
+        ],
+        "priority": "low",
+        "subtasks": [],
+        "updatedAt": "2026-05-08T22:49:57.389Z"
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T22:45:41.256Z",
-      "taskCount": 39,
-      "completedCount": 32,
+      "lastModified": "2026-05-08T22:49:57.390Z",
+      "taskCount": 40,
+      "completedCount": 33,
       "tags": [
         "week2"
       ]
