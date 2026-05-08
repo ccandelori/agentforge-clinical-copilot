@@ -13,8 +13,7 @@ are caught before they reach the screen.
 
 | URL | Notes |
 | --- | --- |
-| [`https://143.244.157.90:9300/`](https://143.244.157.90:9300/) | OpenEMR over HTTPS — **self-signed cert**, browser will warn (click through) |
-| [`http://143.244.157.90:8300/`](http://143.244.157.90:8300/) | OpenEMR over plain HTTP if HTTPS is blocked |
+| [`https://143.244.157.90:9300/dashboard`](https://143.244.157.90:9300/) | OpenEMR over HTTPS — **self-signed cert**, browser will warn (click through) |
 
 Login: `admin` / `pass`. Recommended demo patient: **Eula Crist** (a
 complex chronic patient with CKD stage 3, hypertension, hyperlipidemia,
