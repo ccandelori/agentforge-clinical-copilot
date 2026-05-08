@@ -8160,27 +8160,27 @@
             "title": "Citation overlay re-port to Vue + FHIR Binary auth",
             "description": "Wrap the merged citation_overlay.js logic (T24) as a Vue component <CitationOverlay :citation :pdfUrl @close>. Pdf.js loading via dynamic import of pdfjs-dist (modules in Vite-friendly form). 1-indexed page contract preserved. The pdfUrl now points at FHIR Binary or DocumentReference.content.attachment.url with OAuth Bearer token (NOT controller.php?document&retrieve — that path is OpenEMR-session-cookie auth, no longer applicable). Vitest port of the 21 jsdom tests from tests/js/citation_overlay.test.js. Citation chips inside the drawer's Intake mode receipts area become clickable, mounting <CitationOverlay> in a fixed-position viewer pane that slides out next to (or beneath) the drawer.",
             "details": "",
-            "status": "in-progress",
+            "status": "done",
             "dependencies": [
               "38.10"
             ],
             "parentTaskId": 38,
             "parentId": "undefined",
-            "updatedAt": "2026-05-07T23:03:10.757Z"
+            "updatedAt": "2026-05-08T02:52:57.971Z"
           },
           {
             "id": 12,
             "title": "Intake review form + commit-to-chart via FHIR write",
             "description": "Per the panel-design grilling 2026-05-06 (project_panel_placement memory): structured review form rendered after extraction (single-commit gesture, not per-citation approve buttons). Form sections mirror IntakeFormExtraction: chief concern (textarea), demographics list, medications list, allergies list, family history list. Each row: editable value field + include checkbox + citation chip (provenance affordance, mounts <CitationOverlay>). Bottom: 'Commit selected to chart' button. On submit: map approved fields to FHIR resources and write via FHIR API directly from the dashboard (Q6 of the grilling, but now FHIR not new PHP) — Condition for problems, AllergyIntolerance for allergies, MedicationStatement for meds, FamilyMemberHistory for family history, QuestionnaireResponse referencing the canonical intake Questionnaire as the umbrella. Validate session pid matches form patient_id before writing. Optimistic UI with rollback on FHIR write failure.",
             "details": "",
-            "status": "in-progress",
+            "status": "done",
             "dependencies": [
               "38.10",
               "38.11"
             ],
             "parentTaskId": 38,
             "parentId": "undefined",
-            "updatedAt": "2026-05-07T23:03:10.770Z"
+            "updatedAt": "2026-05-08T02:52:57.987Z"
           },
           {
             "id": 13,
@@ -8230,13 +8230,14 @@
             "title": "Extend AgentTurnCitation with W2 source_type + page_bbox; wire DocumentViewer into CitationsPane",
             "description": "The current sidecar AgentTurnCitation is the W1 flat shape (id/source/excerpt/date/kind/provenance). Extend it to optionally carry source_type (lab_pdf/intake_form/openemr_record/guideline) + page_bbox + document_id so the W2 LAB_PDF/INTAKE_FORM citations with overlay coordinates flow through to vue-ui. Then wire DocumentViewer into CitationsPane to render PDF + bbox overlay for source_type lab_pdf/intake_form. T38.11 foundation (DocumentViewer SFC) already shipped; this is the end-to-end plumbing.",
             "details": "",
-            "status": "pending",
+            "status": "done",
             "dependencies": [],
             "parentTaskId": 38,
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-08T02:52:57.997Z"
           }
         ],
-        "updatedAt": "2026-05-07T23:45:27.219Z"
+        "updatedAt": "2026-05-08T02:52:57.997Z"
       },
       {
         "id": "39",
@@ -8254,7 +8255,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-07T23:45:27.219Z",
+      "lastModified": "2026-05-08T02:52:57.997Z",
       "taskCount": 39,
       "completedCount": 17,
       "tags": [
