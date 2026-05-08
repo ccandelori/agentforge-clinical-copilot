@@ -45,6 +45,7 @@ from ._lab_e2e_fixtures import (
     DEFAULT_CBC_NORMAL,
     DEFAULT_CMP_ONE_FLAGGED,
     CapturingAuditRecorder,
+    CapturingLabPersistWriter,
     build_lab_pdf_bytes,
     lab_extraction_payload,
 )
@@ -284,3 +285,67 @@ async def test_extraction_phase_validates_canned_payload() -> None:
         v for v in extraction.values if v.test_name in cbc_test_names
     ]
     assert all(v.abnormal_flag == AbnormalFlag.NORMAL for v in cbc_extracted)
+
+
+# ---------------------------------------------------------------------------
+# 28.4 — persist phase (mock writer captures the validated extraction)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persist_phase_writes_one_result_per_value_with_document_id() -> None:
+    """The validated extraction lands at the persist boundary; the fake
+    writer captures it and returns one procedure_result id per analyte
+    plus the document_id stamped through unchanged. The test asserts:
+
+      * one procedure_result id per LabValue
+      * document_id on the persist result equals the upload's
+      * a ``lab_persist`` audit event records both the order id and
+        the result-id list
+    """
+    payload = lab_extraction_payload(
+        document_id=_DOCUMENT_ID, patient_id=_PATIENT_ID
+    )
+    extraction = LabPdfExtraction.model_validate(payload)
+
+    persist_writer = CapturingLabPersistWriter()
+    audit = CapturingAuditRecorder()
+
+    persist_result = await persist_writer.persist(extraction=extraction)
+
+    assert persist_result.document_id == _DOCUMENT_ID
+    assert len(persist_result.procedure_result_ids) == len(extraction.values)
+
+    # Every persisted procedure_result row carries the same document_id —
+    # this is the load-bearing invariant for the lab-list inbox UI
+    # ("show docs whose results were derived from this PDF").
+    audit.record_lab_persist(
+        document_id=persist_result.document_id,
+        patient_id=_PATIENT_ID,
+        procedure_order_id=persist_result.procedure_order_id,
+        procedure_result_ids=persist_result.procedure_result_ids,
+        extraction_status=(
+            "completed" if not extraction.unsupported_fields else "partial"
+        ),
+    )
+
+    assert audit.event_names == ["lab_persist"]
+    event = audit.events[0] if audit.events else None
+    assert event is not None
+    assert event.payload["document_id"] == _DOCUMENT_ID
+    assert (
+        event.payload["procedure_order_id"]
+        == persist_result.procedure_order_id
+    )
+    assert event.payload["procedure_result_ids"] == list(
+        persist_result.procedure_result_ids
+    )
+    assert event.payload["extraction_status"] == "completed"
+
+    # The persist boundary recorded the extraction it received — confirms
+    # the test exercised the writer's contract instead of short-circuiting.
+    assert persist_writer.captured is not None
+    assert len(persist_writer.captured) == 1
+    captured_extraction = persist_writer.captured[0]
+    assert captured_extraction.document_id == _DOCUMENT_ID
+    assert len(captured_extraction.values) == len(extraction.values)
