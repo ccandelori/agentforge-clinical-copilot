@@ -120,7 +120,12 @@ const ALLOWED_KINDS: ReadonlySet<CitationKind> = new Set<CitationKind>([
   'allergy',
 ])
 
-const REQUEST_TIMEOUT_MS = 30_000
+// 120s accommodates the W2 document-extraction path (PDF render →
+// VLM page-by-page → verifier → synthesizer) which can take 30–60s
+// on first cold call. Chart-Q&A turns finish in <10s — no penalty.
+// A future iteration should switch to SSE so timeout is a soft
+// upper bound, not a hard wall.
+const REQUEST_TIMEOUT_MS = 120_000
 
 function parseCitation(raw: unknown): Citation | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -224,7 +229,7 @@ export function useAgentTurn(): UseAgentTurn {
       let friendly: Error
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         friendly = new Error(
-          'Agent request timed out after 30 seconds. Please try again.',
+          'Agent request timed out after 2 minutes. Please try again.',
         )
       } else if (caught instanceof Error) {
         friendly = caught
