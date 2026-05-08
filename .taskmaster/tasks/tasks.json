@@ -6501,7 +6501,7 @@
         "dependencies": [
           "16"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6564,7 +6564,8 @@
         ],
         "complexity": 6,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create sidecar/tests/eval/judges/week2/ directory with factually_consistent.txt and safe_refusal.txt prompts for claude-sonnet-4-6 at temperature=0. Create LLMJudge class accepting case/response/source documents and returning boolean pass/fail. Integrate with EvalHarness: run programmatic grounding (schema_valid, citation_present, no_phi_in_logs) first, then LLM judge for applicable categories. Add retry with fresh seed on disagreement."
+        "expansionPrompt": "Create sidecar/tests/eval/judges/week2/ directory with factually_consistent.txt and safe_refusal.txt prompts for claude-sonnet-4-6 at temperature=0. Create LLMJudge class accepting case/response/source documents and returning boolean pass/fail. Integrate with EvalHarness: run programmatic grounding (schema_valid, citation_present, no_phi_in_logs) first, then LLM judge for applicable categories. Add retry with fresh seed on disagreement.",
+        "updatedAt": "2026-05-08T18:27:29.722Z"
       },
       {
         "id": "18",
@@ -6582,7 +6583,7 @@
           "14",
           "15"
         ],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -6647,7 +6648,8 @@
         ],
         "complexity": 7,
         "recommendedSubtasks": 5,
-        "expansionPrompt": "Break down into: 1) Create sidecar/eval_config.yaml with category_thresholds (90% each), regression_threshold (5%), llm_judge settings, 2) Create eval runner script loading all 50 cases, running through supervisor graph, scoring rubric categories, computing pass rates, 3) Implement baseline comparison against sidecar/tests/eval/baselines/week2.json, 4) Implement gate logic exiting non-zero on threshold violation, 5) Implement diff reporting for CI comments"
+        "expansionPrompt": "Break down into: 1) Create sidecar/eval_config.yaml with category_thresholds (90% each), regression_threshold (5%), llm_judge settings, 2) Create eval runner script loading all 50 cases, running through supervisor graph, scoring rubric categories, computing pass rates, 3) Implement baseline comparison against sidecar/tests/eval/baselines/week2.json, 4) Implement gate logic exiting non-zero on threshold violation, 5) Implement diff reporting for CI comments",
+        "updatedAt": "2026-05-08T18:27:56.571Z"
       },
       {
         "id": "19",
@@ -7319,7 +7321,7 @@
           "14",
           "15"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7380,7 +7382,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Update observability/cost.py with vision-call pricing for claude-sonnet-4-6 including image token estimation. Update observability/langfuse_client.py with record_retrieval_hits(), record_extraction_confidence(), record_route_decision() methods. Update TraceHandle to accumulate route_decisions list. Extend cost_report.py to project production spend and report p50/p95 latency with bottleneck flagging (>40% of budget)."
+        "expansionPrompt": "Update observability/cost.py with vision-call pricing for claude-sonnet-4-6 including image token estimation. Update observability/langfuse_client.py with record_retrieval_hits(), record_extraction_confidence(), record_route_decision() methods. Update TraceHandle to accumulate route_decisions list. Extend cost_report.py to project production spend and report p50/p95 latency with bottleneck flagging (>40% of budget).",
+        "updatedAt": "2026-05-08T18:27:31.002Z"
       },
       {
         "id": "28",
@@ -8258,9 +8261,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T17:28:13.067Z",
+      "lastModified": "2026-05-08T18:27:56.572Z",
       "taskCount": 39,
-      "completedCount": 17,
+      "completedCount": 19,
       "tags": [
         "week2"
       ]
