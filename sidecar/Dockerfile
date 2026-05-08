@@ -78,7 +78,10 @@ COPY --from=builder --chown=agentforge:agentforge /app/data /app/data
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DASHBOARD_DIST_DIR=/app/dashboard/dist
+    DASHBOARD_DIST_DIR=/app/dashboard/dist \
+    HF_HOME=/home/agentforge/.cache/huggingface \
+    TRANSFORMERS_CACHE=/home/agentforge/.cache/huggingface/hub \
+    SENTENCE_TRANSFORMERS_HOME=/home/agentforge/.cache/huggingface/sentence-transformers
 
 # Dashboard SPA mount point (T38.14, recon §8 Plan A step 2). The
 # Vue dashboard's `npm run build` output is bind-mounted here at
