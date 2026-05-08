@@ -35,7 +35,6 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
     TableStyle,
 )
 
-
 # ---------------------------------------------------------------------------
 # Synthetic lab-PDF generator
 # ---------------------------------------------------------------------------
@@ -333,7 +332,7 @@ class LabPersistWriter(Protocol):
         self,
         *,
         extraction: Any,
-    ) -> "PersistResult": ...
+    ) -> PersistResult: ...
 
 
 @dataclass(frozen=True)
