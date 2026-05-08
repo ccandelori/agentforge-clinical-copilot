@@ -120,10 +120,12 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-m",
-    "not slow and not latency and not eval",
+    "not slow and not latency and not eval and not gate_validation and not eval_smoke",
 ]
 markers = [
     "slow: integration tests that call the real LLM (deselected by default)",
     "latency: latency-budget tests that fire many requests (deselected by default)",
     "eval: baseline eval suite — invokes the real orchestrator end-to-end against the running stack and spends Anthropic tokens (deselected by default)",
+    "gate_validation: deliberately-regressed eval runs that validate the gate detects regressions (Task 19; deselected by default — invoke manually via -m gate_validation)",
+    "eval_smoke: 10-case eval subset (2 per category) used by the pre-commit hook (Task 23; deselected by default — invoke via -m eval_smoke)",
 ]

@@ -6583,7 +6583,7 @@
           "14",
           "15"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6649,7 +6649,7 @@
         "complexity": 7,
         "recommendedSubtasks": 5,
         "expansionPrompt": "Break down into: 1) Create sidecar/eval_config.yaml with category_thresholds (90% each), regression_threshold (5%), llm_judge settings, 2) Create eval runner script loading all 50 cases, running through supervisor graph, scoring rubric categories, computing pass rates, 3) Implement baseline comparison against sidecar/tests/eval/baselines/week2.json, 4) Implement gate logic exiting non-zero on threshold violation, 5) Implement diff reporting for CI comments",
-        "updatedAt": "2026-05-08T18:27:56.571Z"
+        "updatedAt": "2026-05-08T18:52:47.643Z"
       },
       {
         "id": "19",
@@ -6661,7 +6661,7 @@
         "dependencies": [
           "18"
         ],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -6726,7 +6726,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create sidecar/tests/eval/test_gate_blocks_regression.py that monkey-patches intake-extractor worker to inject fabricated lab value (e.g., A1c 15.5% when actual is 8.2%), runs full 50-case suite against patched agent, asserts factually_consistent pass rate drops >5%, verifies build would fail under gate conditions. Add pytest marker 'gate_validation' for exclusion from normal CI."
+        "expansionPrompt": "Create sidecar/tests/eval/test_gate_blocks_regression.py that monkey-patches intake-extractor worker to inject fabricated lab value (e.g., A1c 15.5% when actual is 8.2%), runs full 50-case suite against patched agent, asserts factually_consistent pass rate drops >5%, verifies build would fail under gate conditions. Add pytest marker 'gate_validation' for exclusion from normal CI.",
+        "updatedAt": "2026-05-08T18:52:48.930Z"
       },
       {
         "id": "20",
@@ -6739,7 +6740,7 @@
           "18",
           "21"
         ],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -6804,7 +6805,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Create .gitlab-ci.yml at repo root with agent-eval job: trigger on MR, use pre-baked sidecar Docker image with model weights, run eval suite script, compare to baseline, produce eval report JSON artifact. Implement MR comment posting with per-category diff showing pass rates and delta from baseline. Configure job to block merge on failure."
+        "expansionPrompt": "Create .gitlab-ci.yml at repo root with agent-eval job: trigger on MR, use pre-baked sidecar Docker image with model weights, run eval suite script, compare to baseline, produce eval report JSON artifact. Implement MR comment posting with per-category diff showing pass rates and delta from baseline. Configure job to block merge on failure.",
+        "updatedAt": "2026-05-08T18:52:50.219Z"
       },
       {
         "id": "21",
@@ -6973,7 +6975,7 @@
           "16",
           "18"
         ],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -7038,7 +7040,8 @@
         ],
         "complexity": 3,
         "recommendedSubtasks": 0,
-        "expansionPrompt": "Update .pre-commit-config.yaml to add agentforge-eval-smoke hook entry (language: python, entry: uv run pytest -m eval_smoke). Create pytest marker 'eval_smoke' for 10-case subset (2 extraction, 2 evidence-retrieval, 2 citation, 2 refusal, 2 missing-data). Ensure hook completes in <30 seconds. Document skip option."
+        "expansionPrompt": "Update .pre-commit-config.yaml to add agentforge-eval-smoke hook entry (language: python, entry: uv run pytest -m eval_smoke). Create pytest marker 'eval_smoke' for 10-case subset (2 extraction, 2 evidence-retrieval, 2 citation, 2 refusal, 2 missing-data). Ensure hook completes in <30 seconds. Document skip option.",
+        "updatedAt": "2026-05-08T18:52:51.521Z"
       },
       {
         "id": "24",
@@ -8261,9 +8264,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T18:27:56.572Z",
+      "lastModified": "2026-05-08T18:52:51.522Z",
       "taskCount": 39,
-      "completedCount": 19,
+      "completedCount": 20,
       "tags": [
         "week2"
       ]
