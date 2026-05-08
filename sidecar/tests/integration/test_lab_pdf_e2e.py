@@ -25,17 +25,28 @@ real ``DocumentUploadWriter``, real ``VisionExtractor``, and real
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import fitz  # type: ignore[import-untyped]
 import httpx
 import pytest
+from anthropic.types import Message
 
-from agentforge.tools.attach_and_extract import PdfRenderer
+from agentforge.schemas.lab import AbnormalFlag, LabPdfExtraction
+from agentforge.tools.attach_and_extract import (
+    LAB_CONTRACT,
+    PdfRenderer,
+    VisionExtractor,
+)
 from agentforge.tools.document_upload import DocumentUploadWriter
 
 from ._lab_e2e_fixtures import (
+    DEFAULT_A1C,
+    DEFAULT_CBC_NORMAL,
+    DEFAULT_CMP_ONE_FLAGGED,
     CapturingAuditRecorder,
     build_lab_pdf_bytes,
+    lab_extraction_payload,
 )
 
 
@@ -191,3 +202,85 @@ async def test_upload_phase_returns_document_id_and_records_audit() -> None:
     assert event.payload["patient_id"] == _PATIENT_ID
     assert event.payload["doc_type"] == "lab_pdf"
     assert event.payload["byte_count"] == len(pdf_bytes)
+
+
+# ---------------------------------------------------------------------------
+# 28.3 — extraction phase (real VisionExtractor, mocked Anthropic)
+# ---------------------------------------------------------------------------
+
+
+def _build_anthropic_message(payload: dict[str, Any]) -> Message:
+    """Build a fake :class:`Message` whose tool_use block is the given
+    payload. Going through the SDK's Pydantic types so a future SDK
+    rename surfaces here, not in production."""
+    return Message.model_validate({
+        "id": "msg_lab_e2e_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-5-20250929",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_lab_e2e_1",
+                "name": LAB_CONTRACT.tool_name,
+                "input": payload,
+            }
+        ],
+        "stop_reason": "tool_use",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": 1500,
+            "output_tokens": 800,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard",
+            "server_tool_use": None,
+        },
+    })
+
+
+@pytest.mark.asyncio
+async def test_extraction_phase_validates_canned_payload() -> None:
+    """The mock Anthropic response round-trips through ``VisionExtractor``,
+    validates as :class:`LabPdfExtraction`, and carries the pinned values."""
+    pdf_bytes = build_lab_pdf_bytes()
+    pages = PdfRenderer(dpi=72).render_pages(pdf_bytes)
+
+    payload = lab_extraction_payload(
+        document_id=_DOCUMENT_ID, patient_id=_PATIENT_ID
+    )
+    fake_anthropic = AsyncMock()
+    fake_anthropic.messages.create = AsyncMock(
+        return_value=_build_anthropic_message(payload)
+    )
+
+    extractor: VisionExtractor[LabPdfExtraction] = VisionExtractor(
+        contract=LAB_CONTRACT, client=fake_anthropic
+    )
+    result = await extractor.extract(
+        pages=pages, document_id=_DOCUMENT_ID, patient_id=_PATIENT_ID
+    )
+
+    extraction = result.extraction
+    assert isinstance(extraction, LabPdfExtraction)
+    assert extraction.document_id == _DOCUMENT_ID
+    assert extraction.patient_id == _PATIENT_ID
+
+    # Pin the per-row counts so a regression in the panel-default
+    # constants surfaces as a structural assertion failure here.
+    expected_count = 1 + len(DEFAULT_CMP_ONE_FLAGGED) + len(DEFAULT_CBC_NORMAL)
+    assert len(extraction.values) == expected_count
+
+    # Find A1c specifically and confirm its high flag + value survived.
+    a1c = next(v for v in extraction.values if v.test_name == DEFAULT_A1C.test_name)
+    assert a1c.value == DEFAULT_A1C.value
+    assert a1c.abnormal_flag == AbnormalFlag.HIGH
+
+    # CBC rows should all carry NORMAL after extraction (the default
+    # CBC panel has no flagged rows). One quick sanity assert is enough
+    # — the per-row mapping is exercised by lab_extraction_payload.
+    cbc_test_names = {r.test_name for r in DEFAULT_CBC_NORMAL}
+    cbc_extracted = [
+        v for v in extraction.values if v.test_name in cbc_test_names
+    ]
+    assert all(v.abnormal_flag == AbnormalFlag.NORMAL for v in cbc_extracted)
