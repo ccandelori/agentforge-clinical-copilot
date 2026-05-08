@@ -323,7 +323,7 @@ a specific spec requirement or established invariant.
 - Lands on GitLab repo URL.
 - Reads the W1+W2 README (links W1_ARCHITECTURE.md, W2_ARCHITECTURE.md,
   W2_DEFENSE.md, deployed demo).
-- Visits 143.244.157.90:9300, logs in as admin/pass, opens a
+- Visits <droplet>:9300, logs in as admin/pass, opens a
   patient with both demographics and the new agent panel.
 - Triggers a turn that exercises the supervisor + workers + RAG
   end-to-end (e.g. "extract this lab + ADA target for A1C").
@@ -731,7 +731,7 @@ W1 correctness.
     routing flow (extract this lab + ADA target).
 47. Write a README diff between W1 and W2 — explicit "what's new
     this week" section.
-48. Deploy to the droplet (143.244.157.90:9300). Run the smoke
+48. Deploy to the droplet (<droplet>:9300). Run the smoke
     test cohort on the deployed instance.
 49. (Extension if eval gate green by Thursday EOD): critic
     agent that rejects uncited claims and unsafe action

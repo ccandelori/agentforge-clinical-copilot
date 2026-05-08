@@ -432,7 +432,7 @@ Adopted directly from presearch §11 with no modification:
 
 **Why flex on the deployed instance instead of the production image:** the production image's schema is incompatible with the bundled demo SQL (AUDIT.md D2). To match the eval dataset's pinned image+data pair, the deployed instance runs the same image as local. This is intentional for the MVP demo URL only.
 
-**Reachable at:** `https://143.244.157.90:9300` (HTTPS on port 9300, the flex compose's default mapping). Self-signed cert; click through the warning. Login: `admin` / `pass`.
+**Reachable at:** `https://<droplet>:9300` (HTTPS on port 9300, the flex compose's default mapping). Self-signed cert; click through the warning. Login: `admin` / `pass`.
 
 **What gets added next (Wednesday onward):** Agent sidecar + Redis + Langfuse as additional Docker services on the same droplet. Caddy reverse proxy in front for TLS via Let's Encrypt once a domain is acquired.
 

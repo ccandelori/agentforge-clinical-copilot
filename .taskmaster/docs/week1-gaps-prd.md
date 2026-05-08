@@ -15,7 +15,7 @@ several tasks were marked closed at "built and merged" rather than at
 "wired into a user-visible turn."
 
 This PRD enumerates the gaps as shippable units. The current branch is
-main; the deployed droplet is at 143.244.157.90:9300. All work below
+main; the deployed droplet is at <droplet>:9300. All work below
 should be branch-per-task off main, merged after review.
 
 # Core Features
@@ -160,7 +160,7 @@ enforceable, or measurable. Each one closes a specific rubric item.
 - What: replace the upstream OpenEMR README at /README.md with
   a project submission README:
   - one-paragraph what-is-this
-  - deployed demo link (143.244.157.90:9300)
+  - deployed demo link (<droplet>:9300)
   - 60-second quickstart (clone, docker compose up, login)
   - architecture summary (5-line)
   - links to AUDIT.md, USERS.md, ARCHITECTURE.md, DEPLOY.md
@@ -176,7 +176,7 @@ enforceable, or measurable. Each one closes a specific rubric item.
 ## Reviewer journey
 - Lands on github/repo URL.
 - Reads new README.md, sees deployed-demo link.
-- Visits 143.244.157.90:9300, logs in as admin/pass.
+- Visits <droplet>:9300, logs in as admin/pass.
 - Opens any patient (Eula, pid=8, is the recommended demo).
 - AgentForge sidebar is present and functional.
 - Asks "Give me a chart overview" — sees streaming response with

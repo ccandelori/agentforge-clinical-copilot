@@ -166,7 +166,7 @@
 			"taskTitle": "Enable verifier by default on droplet",
 			"complexityScore": 2,
 			"recommendedSubtasks": 0,
-			"expansionPrompt": "Set VERIFIER_ENABLED=true in droplet sidecar .env file. Redeploy sidecar. Smoke test: login to 143.244.157.90:9300 as admin/pass, open patient Eula (pid=8), ask about drugs not in chart (Xanax), verify response doesn't claim patient is taking them. Document latency impact in ARCHITECTURE.md if notable.",
+			"expansionPrompt": "Set VERIFIER_ENABLED=true in droplet sidecar .env file. Redeploy sidecar. Smoke test: login to <droplet>:9300 as admin/pass, open patient Eula (pid=8), ask about drugs not in chart (Xanax), verify response doesn't claim patient is taking them. Document latency impact in ARCHITECTURE.md if notable.",
 			"reasoning": "This is a configuration change and manual verification task. The verifier_enabled flag already exists and is wired into Orchestrator (orchestrator/__init__.py:135, 265). Deployment script already exists. The testing is manual smoke testing. Very low complexity, minimal code changes."
 		},
 		{

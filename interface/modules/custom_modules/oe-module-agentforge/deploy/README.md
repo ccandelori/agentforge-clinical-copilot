@@ -45,10 +45,10 @@ The droplet's deploy script (`scripts/deploy-droplet.sh`) does NOT
 currently push this file. To add it:
 
 ```bash
-ssh root@143.244.157.90 'mkdir -p /etc/apache2/conf.d/'
+ssh root@<droplet> 'mkdir -p /etc/apache2/conf.d/'
 scp interface/modules/custom_modules/oe-module-agentforge/deploy/apache-agentforge.conf \
-    root@143.244.157.90:/etc/apache2/conf.d/agentforge.conf
-ssh root@143.244.157.90 'docker exec openemr httpd -t && docker exec openemr httpd -k graceful'
+    root@<droplet>:/etc/apache2/conf.d/agentforge.conf
+ssh root@<droplet> 'docker exec openemr httpd -t && docker exec openemr httpd -k graceful'
 ```
 
 (Or extend `scripts/deploy-droplet.sh` to copy + reload as part of

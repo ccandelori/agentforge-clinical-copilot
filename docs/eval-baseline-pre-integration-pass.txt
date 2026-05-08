@@ -1,7 +1,7 @@
 ============================= test session starts ==============================
-platform darwin -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /Users/sheep/Desktop/Gauntlet/openemr/sidecar/.venv/bin/python
+platform darwin -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- <repo>/sidecar/.venv/bin/python
 cachedir: .pytest_cache
-rootdir: /Users/sheep/Desktop/Gauntlet/openemr/sidecar
+rootdir: <repo>/sidecar
 configfile: pyproject.toml
 testpaths: tests
 plugins: langsmith-0.7.38, cov-7.1.0, asyncio-1.3.0, anyio-4.13.0

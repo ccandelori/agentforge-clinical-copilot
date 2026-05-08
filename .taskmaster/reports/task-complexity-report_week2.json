@@ -246,7 +246,7 @@
 			"taskTitle": "Deploy to Droplet and Run Production Smoke Tests",
 			"complexityScore": 6,
 			"recommendedSubtasks": 5,
-			"expansionPrompt": "Break down into: 1) Update deployment scripts for W2 changes (module + sidecar + Docker image), 2) Deploy to droplet (143.244.157.90:9300) with database migrations, 3) Run smoke test cohort (lab PDF, intake form, RAG query), 4) Verify audit events in production logs, 5) Verify Langfuse traces show route_decisions, retrieval_hits, PHI redaction. Document verification checklist.",
+			"expansionPrompt": "Break down into: 1) Update deployment scripts for W2 changes (module + sidecar + Docker image), 2) Deploy to droplet (<droplet>:9300) with database migrations, 3) Run smoke test cohort (lab PDF, intake form, RAG query), 4) Verify audit events in production logs, 5) Verify Langfuse traces show route_decisions, retrieval_hits, PHI redaction. Document verification checklist.",
 			"reasoning": "Integration task bringing all W2 components to production. Deployment scripts need updates for new components. Migration execution. Multiple smoke test scenarios. Log and trace verification. Multiple verification points across different systems (database, Langfuse, logs)."
 		},
 		{

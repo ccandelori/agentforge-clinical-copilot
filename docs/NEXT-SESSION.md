@@ -6,7 +6,7 @@ when the state captured here goes stale.
 ## Headline
 
 The vue-ui is **live on the droplet at
-[https://143.244.157.90:9300/dashboard/](https://143.244.157.90:9300/dashboard/)**
+[https://<droplet>:9300/dashboard/](https://<droplet>:9300/dashboard/)**
 with real OAuth, real FHIR, real `/api/agent/turn` (with structured
 citations and rich kind-aware excerpts). The legacy `dashboard/`
 frontend is dead code on the branch, kept as a fallback but not the
@@ -140,7 +140,7 @@ work is already done; the gap is purely client-side.
 ## Production state — for the demo + the cutover knobs
 
 ### Live URL
-https://143.244.157.90:9300/dashboard/ — the vue-ui SPA. Self-signed cert.
+https://<droplet>:9300/dashboard/ — the vue-ui SPA. Self-signed cert.
 
 ### Apache reverse proxy
 
@@ -148,7 +148,7 @@ The droplet's OpenEMR container hosts both PHP and the Vue SPA at the
 same origin so the HttpOnly session cookie rides the OAuth flow:
 
 ```
-Browser → https://143.244.157.90:9300/...
+Browser → https://<droplet>:9300/...
             │
             ├─ /dashboard/*  ──► Apache → agentforge-sidecar:8000/*  (StaticFiles, prefix-stripped)
             ├─ /auth/*       ──► Apache → agentforge-sidecar:8000/auth/*
@@ -162,8 +162,8 @@ openemr container. **It's not persistent across container recreation**
 — if `development-easy-openemr-1` ever restarts from scratch, re-inject:
 
 ```bash
-scp docker/openemr-proxy/agentforge-proxy.conf root@143.244.157.90:/opt/agentforge/agentforge-proxy.conf
-ssh root@143.244.157.90 \
+scp docker/openemr-proxy/agentforge-proxy.conf root@<droplet>:/opt/agentforge/agentforge-proxy.conf
+ssh root@<droplet> \
   'docker cp /opt/agentforge/agentforge-proxy.conf development-easy-openemr-1:/etc/apache2/conf.d/zz-agentforge-proxy.conf && \
    docker exec development-easy-openemr-1 httpd -k graceful'
 ```
@@ -172,18 +172,18 @@ ssh root@143.244.157.90 \
 
 Registered in OpenEMR `oauth_clients`:
 - `client_id`: `<rotated; live value in /opt/agentforge/sidecar/.env on droplet>`
-- `redirect_uris`: `["https://143.244.157.90:9300/auth/callback"]`
-- `post_logout_redirect_uris`: `["https://143.244.157.90:9300/dashboard/"]`
+- `redirect_uris`: `["https://<droplet>:9300/auth/callback"]`
+- `post_logout_redirect_uris`: `["https://<droplet>:9300/dashboard/"]`
 - `is_enabled = 1`
 
 Sidecar env in `/opt/agentforge/sidecar/.env` on droplet:
 ```
-DASHBOARD_APP_URL=https://143.244.157.90:9300
-DASHBOARD_OAUTH_AUTHORITY=https://143.244.157.90:9300/oauth2/default
+DASHBOARD_APP_URL=https://<droplet>:9300
+DASHBOARD_OAUTH_AUTHORITY=https://<droplet>:9300/oauth2/default
 DASHBOARD_OAUTH_CLIENT_ID=<rotated; live value in /opt/agentforge/sidecar/.env on droplet>
 DASHBOARD_OAUTH_CLIENT_SECRET=<set>
-DASHBOARD_OAUTH_REDIRECT_URI=https://143.244.157.90:9300/auth/callback
-DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI=https://143.244.157.90:9300/dashboard/
+DASHBOARD_OAUTH_REDIRECT_URI=https://<droplet>:9300/auth/callback
+DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI=https://<droplet>:9300/dashboard/
 DASHBOARD_SESSION_COOKIE_SECURE=true
 DASHBOARD_FHIR_BASE_URL=http://openemr/apis/default/fhir
 ```
@@ -201,7 +201,7 @@ has to be repeated per environment:
 
 ```bash
 # 1. Link orphan form_vitals to encounters
-ssh root@143.244.157.90 'docker exec development-easy-mysql-1 mariadb -uopenemr -popenemr openemr -e "
+ssh root@<droplet> 'docker exec development-easy-mysql-1 mariadb -uopenemr -popenemr openemr -e "
 INSERT INTO forms (date, encounter, form_name, form_id, pid, user, deleted, formdir, issue_id, provider_id)
 SELECT v.date,
   (SELECT fe.encounter FROM form_encounter fe WHERE fe.pid = v.pid ORDER BY ABS(TIMESTAMPDIFF(SECOND, fe.date, v.date)) LIMIT 1),
@@ -210,7 +210,7 @@ FROM form_vitals v
 WHERE NOT EXISTS (SELECT 1 FROM forms f WHERE f.form_id = v.id AND f.formdir=\"vitals\");"'
 
 # 2. Backfill uuid_mappings (idempotent; order matters — forms first)
-ssh root@143.244.157.90 'docker exec development-easy-openemr-1 php -r "
+ssh root@<droplet> 'docker exec development-easy-openemr-1 php -r "
 \$_GET[\"site\"] = \"default\";
 \$ignoreAuth = true;
 require \"/var/www/localhost/htdocs/openemr/interface/globals.php\";
@@ -231,9 +231,9 @@ left at localhost, the user gets redirected to their own machine
 mid-flow. Set per-droplet:
 
 ```bash
-ssh root@143.244.157.90 \
+ssh root@<droplet> \
   'docker exec development-easy-mysql-1 mariadb -uopenemr -popenemr openemr -e \
-    "UPDATE globals SET gl_value = \"https://143.244.157.90:9300\" WHERE gl_name = \"site_addr_oath\";"
+    "UPDATE globals SET gl_value = \"https://<droplet>:9300\" WHERE gl_name = \"site_addr_oath\";"
    docker exec development-easy-openemr-1 httpd -k graceful'
 ```
 
@@ -246,14 +246,14 @@ ssh root@143.244.157.90 \
 ./scripts/deploy-droplet.sh module     # rsyncs PHP module, docker cp into openemr container
 
 # Apache conf changed?
-scp docker/openemr-proxy/agentforge-proxy.conf root@143.244.157.90:/opt/agentforge/
-ssh root@143.244.157.90 \
+scp docker/openemr-proxy/agentforge-proxy.conf root@<droplet>:/opt/agentforge/
+ssh root@<droplet> \
   'docker cp /opt/agentforge/agentforge-proxy.conf development-easy-openemr-1:/etc/apache2/conf.d/zz-agentforge-proxy.conf && \
    docker exec development-easy-openemr-1 httpd -k graceful'
 
 # Sanity check
 ./scripts/deploy-droplet.sh check
-python3 -c "import ssl,urllib.request; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; print(urllib.request.urlopen('https://143.244.157.90:9300/auth/whoami', context=ctx, timeout=5).read())"
+python3 -c "import ssl,urllib.request; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; print(urllib.request.urlopen('https://<droplet>:9300/auth/whoami', context=ctx, timeout=5).read())"
 ```
 
 ## Known gaps (post-deadline / future)

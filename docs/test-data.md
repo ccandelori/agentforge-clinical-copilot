@@ -511,7 +511,7 @@ cd ~/Desktop/Gauntlet/synthea
   --exporter.baseDirectory=./output_20patients
 
 # 3. Batch-import CCDAs
-cd /Users/sheep/Desktop/Gauntlet/openemr
+cd <repo>
 docker exec development-easy-openemr-1 mkdir -p /tmp/synthea-batch
 docker cp ~/Desktop/Gauntlet/synthea/output_20patients/ccda/. \
   development-easy-openemr-1:/tmp/synthea-batch/

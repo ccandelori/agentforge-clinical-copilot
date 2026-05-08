@@ -191,7 +191,7 @@ overlay; reuses dev-easy redis + langfuse via the shared external network.
 `scripts/deploy-droplet.sh` reads these from the environment at run time
 (all have sensible defaults; override for a different droplet):
 
-- [ ] `DROPLET_HOST=root@143.244.157.90`
+- [ ] `DROPLET_HOST=root@<droplet>`
 - [ ] `OPENEMR_CONTAINER=development-easy-openemr-1`
 - [ ] `OPENEMR_NETWORK=development-easy_default`
 - [ ] `SIDECAR_NAME=agentforge-sidecar`
@@ -328,8 +328,8 @@ previous version.
 `/opt/agentforge/{module,sidecar}/.env`. Before changes, snapshot:
 
 ```bash
-ssh root@143.244.157.90 'cp /opt/agentforge/sidecar/.env /opt/agentforge/sidecar/.env.bak.$(date +%s)'
-ssh root@143.244.157.90 'cp /opt/agentforge/module/.env /opt/agentforge/module/.env.bak.$(date +%s)'
+ssh root@<droplet> 'cp /opt/agentforge/sidecar/.env /opt/agentforge/sidecar/.env.bak.$(date +%s)'
+ssh root@<droplet> 'cp /opt/agentforge/module/.env /opt/agentforge/module/.env.bak.$(date +%s)'
 ```
 
 Restore by reversing the copy + `./scripts/deploy-droplet.sh sidecar`
@@ -351,7 +351,7 @@ for the current droplet — divergence means a regression.
 
 - [ ] Sidecar container `Up` and healthy:
       ```bash
-      ssh root@143.244.157.90 'docker ps --filter name=agentforge-sidecar --format "{{.Status}}"'
+      ssh root@<droplet> 'docker ps --filter name=agentforge-sidecar --format "{{.Status}}"'
       ```
 - [ ] OpenEMR can reach the sidecar:
       ```bash
@@ -375,7 +375,7 @@ The droplet runs the same seed pipeline as local. After any data work
 These two queries together exercise the full pipeline end-to-end (auth,
 proxy, sidecar, tools, synthesis, verifier).
 
-- [ ] Open `https://143.244.157.90:9300/`, log in, open Susan Underwood
+- [ ] Open `https://<droplet>:9300/`, log in, open Susan Underwood
       (`pid=2` historically; `pid=100` per the regression-lock fixture in
       `sidecar/tests/eval/regression_locks.py`).
 - [ ] Expand the **Clinical Co-Pilot** panel.

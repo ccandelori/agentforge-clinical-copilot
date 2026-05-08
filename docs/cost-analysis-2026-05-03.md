@@ -1,7 +1,7 @@
 # AgentForge Cost Analysis — 2026-05-03
 
 Per-turn cost data collected from the live droplet
-(`https://143.244.157.90:9300/`) during demo sessions. Cost is
+(`https://<droplet>:9300/`) during demo sessions. Cost is
 emitted on every turn via the `X-Agent-Cost-USD` HTTP response
 header and the SSE `final` event's `cost_usd` field. Aggregated
 per-turn cost is computed in

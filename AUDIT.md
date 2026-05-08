@@ -3,7 +3,7 @@
 **Project:** AgentForge Clinical Co-Pilot
 **Audit date:** 2026-04-28
 **Auditor:** Cameron Candelori
-**Subject:** [openemr/openemr](https://github.com/openemr/openemr) at fork point, deployed at `https://143.244.157.90:9300` (DigitalOcean droplet, 4 GB RAM / 2 vCPU, `openemr/openemr:flex` development image with bundled demo data, self-signed TLS). The deployed instance and the local development environment now run the same image + data pair (D2).
+**Subject:** [openemr/openemr](https://github.com/openemr/openemr) at fork point, deployed at `https://<droplet>:9300` (DigitalOcean droplet, 4 GB RAM / 2 vCPU, `openemr/openemr:flex` development image with bundled demo data, self-signed TLS). The deployed instance and the local development environment now run the same image + data pair (D2).
 
 ---
 
@@ -41,7 +41,7 @@ The integration plan in ARCHITECTURE.md treats #1, #3, and #5 as load-bearing co
 | S6 | Medium | Session cookies default to `Secure => false`. On non-HTTPS deployments, tokens are MITM-interceptable. | `src/Common/Session/SessionConfigurationBuilder.php:26` |
 | S7 | Medium | CSRF tokens are SHA-256 truncated to 40 chars to fit GET requests; no per-transaction nonces. | `src/Common/Csrf/CsrfUtils.php:55` |
 | S8 | Low | SQL error logger concatenates raw query text into messages; sanitized but invites PHI leakage if a binding accidentally appears. | `library/sql.inc.php:192-194` |
-| S9 | Medium | MVP demo URL deploys the full development stack (`openemr/openemr:flex` + couchdb + openldap + selenium + mailpit + phpmyadmin), exposing services not required for the agent and increasing attack surface. Acceptable for demo with no real PHI; must not propagate to production. | `docker/development-easy/docker-compose.yml`; deployed at `https://143.244.157.90:9300` |
+| S9 | Medium | MVP demo URL deploys the full development stack (`openemr/openemr:flex` + couchdb + openldap + selenium + mailpit + phpmyadmin), exposing services not required for the agent and increasing attack surface. Acceptable for demo with no real PHI; must not propagate to production. | `docker/development-easy/docker-compose.yml`; deployed at `https://<droplet>:9300` |
 
 **Agent implications:** the gateway layer must re-implement record-level sensitivity (S2). The `api_log` PHI exposure (S1) means our observability stack must NOT mirror OpenEMR's audit log into Langfuse — we log metadata only. Default-creds rotation and Composer-token revocation are pre-deploy hard gates.
 

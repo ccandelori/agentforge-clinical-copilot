@@ -9,7 +9,7 @@ set -euo pipefail
 #   ./smoke-test-langfuse.sh
 #
 # Optional overrides:
-#   DROPLET_URL      — default https://143.244.157.90:9300
+#   DROPLET_URL      — default https://<droplet>:9300
 #   LANGFUSE_HOST    — default https://cloud.langfuse.com
 #   SIDECAR_JWT      — pre-minted JWT for the /turn endpoint (required unless
 #                      the sidecar accepts unauthenticated requests)
@@ -30,7 +30,7 @@ done
 
 # ---------- configuration -------------------------------------------------
 
-DROPLET_URL="${DROPLET_URL:-https://143.244.157.90:9300}"
+DROPLET_URL="${DROPLET_URL:-https://<droplet>:9300}"
 SIDECAR_URL="${DROPLET_URL%/}/sidecar"
 LANGFUSE_HOST="${LANGFUSE_HOST:-https://cloud.langfuse.com}"
 LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY}"

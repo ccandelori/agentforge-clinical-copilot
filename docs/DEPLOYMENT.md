@@ -9,10 +9,10 @@ Co-Pilot. Update this file whenever you change something on the droplet —
 | Field | Value |
 |---|---|
 | Provider | DigitalOcean |
-| IP | `143.244.157.90` |
+| IP | `<droplet>` |
 | Hostname | `ubuntu-s-1vcpu-2gb-nyc1` (the name lies — actually 3.8 GiB / 1 vCPU) |
 | OS | Ubuntu 24.04 |
-| SSH | `ssh root@143.244.157.90` (key-based) |
+| SSH | `ssh root@<droplet>` (key-based) |
 
 ## What's running
 
@@ -73,9 +73,9 @@ got wired in. The actual cache the sidecar uses is `agentforge-redis`.
 
 | URL | Purpose |
 |---|---|
-| `https://143.244.157.90:9300/` | OpenEMR (HTTPS, **self-signed cert** — browser will warn) |
-| `http://143.244.157.90:8300/` | OpenEMR (plain HTTP) |
-| `http://143.244.157.90:8310/` | phpMyAdmin |
+| `https://<droplet>:9300/` | OpenEMR (HTTPS, **self-signed cert** — browser will warn) |
+| `http://<droplet>:8300/` | OpenEMR (plain HTTP) |
+| `http://<droplet>:8310/` | phpMyAdmin |
 
 The sidecar is **not** publicly exposed — only reachable from the OpenEMR
 container via the docker network.
@@ -195,7 +195,7 @@ those are part of the one-time setup below.
 the script's `check_health` function emits — they're documented inline in
 `scripts/deploy-droplet.sh`.)
 
-Open `https://143.244.157.90:9300/`, log in (admin / pass), open Susan
+Open `https://<droplet>:9300/`, log in (admin / pass), open Susan
 Underwood's chart (pid=2), expand the **Clinical Co-Pilot** panel, and ask
 *"summarize this patient including problems and meds."*
 
@@ -235,15 +235,15 @@ production origin (or update the existing client's `redirect_uris` and
 `post_logout_redirect_uris`):
 
 ```bash
-ssh root@143.244.157.90 \
+ssh root@<droplet> \
   'docker exec -T development-easy-openemr-1 curl -sS -X POST \
     http://localhost/oauth2/default/registration \
     -H "Content-Type: application/json" \
     --data "{
       \"application_type\": \"private\",
       \"client_name\": \"AgentForge Dashboard BFF (sidecar, prod)\",
-      \"redirect_uris\": [\"https://143.244.157.90:9300/auth/callback\"],
-      \"post_logout_redirect_uris\": [\"https://143.244.157.90:9300/\"],
+      \"redirect_uris\": [\"https://<droplet>:9300/auth/callback\"],
+      \"post_logout_redirect_uris\": [\"https://<droplet>:9300/\"],
       \"token_endpoint_auth_method\": \"client_secret_post\",
       \"grant_types\": [\"authorization_code\", \"refresh_token\"],
       \"response_types\": [\"code\"],
@@ -269,23 +269,23 @@ In `/opt/agentforge/sidecar/.env` on the droplet:
 ```bash
 # Where the SPA lives — the post-auth landing page is built as
 # DASHBOARD_APP_URL.rstrip('/') + next_path. Same-origin in production.
-DASHBOARD_APP_URL=https://143.244.157.90:9300/
+DASHBOARD_APP_URL=https://<droplet>:9300/
 
 # Must match the OAuth client's registered redirect_uris (above).
-DASHBOARD_OAUTH_REDIRECT_URI=https://143.244.157.90:9300/auth/callback
-DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI=https://143.244.157.90:9300/
+DASHBOARD_OAUTH_REDIRECT_URI=https://<droplet>:9300/auth/callback
+DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI=https://<droplet>:9300/
 
 # Discovery URL of the authorization server (HTTPS port; OAuth2
 # endpoints reject HTTP — see PATIENT_DASHBOARD_MIGRATION.md).
-DASHBOARD_OAUTH_AUTHORITY=https://143.244.157.90:9300/oauth2/default
+DASHBOARD_OAUTH_AUTHORITY=https://<droplet>:9300/oauth2/default
 
 # Required: aud query param on /authorize. Binds the issued token
 # to the FHIR resource server.
-DASHBOARD_OAUTH_AUDIENCE=https://143.244.157.90:9300/apis/default/fhir
+DASHBOARD_OAUTH_AUDIENCE=https://<droplet>:9300/apis/default/fhir
 
 # FHIR proxy target. The sidecar forwards /api/fhir/* here with the
 # session's bearer token. Note the HTTPS port — the FHIR API rejects HTTP.
-DASHBOARD_FHIR_BASE_URL=https://143.244.157.90:9300/apis/default/fhir
+DASHBOARD_FHIR_BASE_URL=https://<droplet>:9300/apis/default/fhir
 
 # Production must serve cookies over HTTPS only.
 DASHBOARD_SESSION_COOKIE_SECURE=true
@@ -353,7 +353,7 @@ there from a fresh droplet:
    compose stack — out of scope of this repo; follow OpenEMR's docs.
 2. **Make staging dirs:**
    ```bash
-   ssh root@143.244.157.90 'mkdir -p /opt/agentforge/module /opt/agentforge/sidecar'
+   ssh root@<droplet> 'mkdir -p /opt/agentforge/module /opt/agentforge/sidecar'
    ```
 3. **Generate secrets:**
    ```bash
@@ -363,7 +363,7 @@ there from a fresh droplet:
    Save both — you'll paste them in step 4 + 5.
 4. **Drop module `.env`** on the droplet:
    ```bash
-   ssh root@143.244.157.90 'cat > /opt/agentforge/module/.env' <<EOF
+   ssh root@<droplet> 'cat > /opt/agentforge/module/.env' <<EOF
    AGENTFORGE_JWT_SECRET=<the JWT_SECRET from step 3>
    AGENTFORGE_SIDECAR_URL=http://agentforge-sidecar:8000
    EOF
@@ -372,14 +372,14 @@ there from a fresh droplet:
    so it doesn't enter shell history):
    ```bash
    read -rsp 'Anthropic API key: ' KEY
-   ssh root@143.244.157.90 "cat > /opt/agentforge/sidecar/.env" <<EOF
+   ssh root@<droplet> "cat > /opt/agentforge/sidecar/.env" <<EOF
    JWT_SECRET=<same value as AGENTFORGE_JWT_SECRET above — must match byte-for-byte>
    HMAC_KEY=<the HMAC_KEY from step 3>
    ANTHROPIC_API_KEY=$KEY
    OPENEMR_BASE_URL=http://openemr:80
    VERIFIER_ENABLED=true
    EOF
-   ssh root@143.244.157.90 'chmod 600 /opt/agentforge/sidecar/.env'
+   ssh root@<droplet> 'chmod 600 /opt/agentforge/sidecar/.env'
    unset KEY
    ```
 6. **Run the deploy script** to push code + build sidecar + start containers:

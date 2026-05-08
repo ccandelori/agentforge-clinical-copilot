@@ -175,7 +175,7 @@ unresolved on both branches.** Findings:
 - The current droplet (`docs/DEPLOYMENT.md`) runs **5 containers**:
   openemr, mysql, phpmyadmin, agentforge-sidecar, agentforge-redis.
   None of them serve the new Vue dashboard. Today's demo URL
-  (`https://143.244.157.90:9300/`) lands on classic OpenEMR; the
+  (`https://<droplet>:9300/`) lands on classic OpenEMR; the
   AgentForge integration is the **legacy in-chart panel** wired by
   `interface/modules/custom_modules/oe-module-agentforge/public/js/agent_panel.js`
   (661 lines) + `citation_overlay.js` (230 lines). Those are the
@@ -393,18 +393,18 @@ Items 1, 2, 3, 4 are independent — full agent parallelism. ~6h total.
 Most-cited reusables in dashboard-port (the things vue-ui-or-future-v2
 should crib):
 
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/stores/auth.ts`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/stores/agentDrawer.ts`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/composables/useFhirResource.ts`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/composables/useAgentTurn.ts`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/components/AgentDrawer.vue`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/components/PatientContextConflictOverlay.vue`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/src/router/index.ts`
-- `/Users/sheep/Desktop/Gauntlet/openemr/dashboard/vite.config.ts`
-- `/Users/sheep/Desktop/Gauntlet/openemr/sidecar/src/agentforge/dashboard_auth/routes.py`
-- `/Users/sheep/Desktop/Gauntlet/openemr/sidecar/src/agentforge/dashboard_auth/turn_route.py`
-- `/Users/sheep/Desktop/Gauntlet/openemr/docs/adr/0001-dashboard-auth-bridging.md`
-- `/Users/sheep/Desktop/Gauntlet/openemr/PATIENT_DASHBOARD_MIGRATION.md`
+- `<repo>/dashboard/src/stores/auth.ts`
+- `<repo>/dashboard/src/stores/agentDrawer.ts`
+- `<repo>/dashboard/src/composables/useFhirResource.ts`
+- `<repo>/dashboard/src/composables/useAgentTurn.ts`
+- `<repo>/dashboard/src/components/AgentDrawer.vue`
+- `<repo>/dashboard/src/components/PatientContextConflictOverlay.vue`
+- `<repo>/dashboard/src/router/index.ts`
+- `<repo>/dashboard/vite.config.ts`
+- `<repo>/sidecar/src/agentforge/dashboard_auth/routes.py`
+- `<repo>/sidecar/src/agentforge/dashboard_auth/turn_route.py`
+- `<repo>/docs/adr/0001-dashboard-auth-bridging.md`
+- `<repo>/PATIENT_DASHBOARD_MIGRATION.md`
 
 Most-reusable visual / UX in vue-ui (the things to lift forward):
 
