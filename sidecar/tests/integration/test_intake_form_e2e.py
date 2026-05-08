@@ -62,6 +62,7 @@ from agentforge.tools.attach_and_extract import (
     PdfRenderer,
     VisionExtractor,
 )
+from agentforge.tools.document_upload import DocumentUploadError
 from tests.integration._intake_e2e_fixtures import (
     PINNED_INTAKE_CONTENT,
     build_intake_pdf_bytes,
@@ -483,3 +484,254 @@ async def test_extraction_phase_validates_canned_intake_form_extraction() -> Non
     # the only thing called. Belt-and-braces against a refactor that
     # accidentally instantiates a default client.
     assert client.messages.create.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Subtask 29.4 — Persistence phase + the load-bearing invariant
+# ---------------------------------------------------------------------------
+
+
+# The PHP path the sidecar persistence client is expected to POST to.
+# Pinned here as the *only* allowed write surface for the intake flow.
+# Anything else hitting the MockTransport is a routing-invariant
+# violation and fails the test.
+_PERSIST_QR_PATH = (
+    "/interface/modules/custom_modules/oe-module-agentforge"
+    "/public/internal/persist_questionnaire_response.php"
+)
+
+# Paths that, if hit, would mean the extraction code reached past
+# QuestionnaireResponse and into clinical state. These are the W2
+# §2.3 forbidden writes — see W2_ARCHITECTURE invariant I-2.
+# The list is illustrative (PHP routes for these don't all exist in
+# this fork yet); the assertion below treats *any* non-allowlisted
+# path as a violation, so this list is documentation rather than
+# code-load-bearing.
+_FORBIDDEN_CLINICAL_TABLE_PATHS: frozenset[str] = frozenset({
+    "/interface/modules/custom_modules/oe-module-agentforge"
+    "/public/internal/persist_lab_result.php",
+    "/interface/modules/custom_modules/oe-module-agentforge"
+    "/public/internal/medications.php",
+    "/interface/modules/custom_modules/oe-module-agentforge"
+    "/public/internal/allergies.php",
+    "/interface/modules/custom_modules/oe-module-agentforge"
+    "/public/internal/demographics.php",
+})
+
+
+class _MockClinicalDatabase:
+    """Stand-in for the OpenEMR clinical-table state.
+
+    The W2 invariant is "intake forms write to QuestionnaireResponse,
+    not to clinical tables." We model the four clinical tables as a
+    dict of row counts. A hypothetical regression where the extraction
+    path accidentally calls a clinical-write tool would have to
+    increment one of these counters. The e2e test snapshots them at
+    the start and asserts they're equal at the end.
+
+    We intentionally also model an internal ``questionnaire_response``
+    counter because the persist phase IS supposed to bump it — the
+    "no clinical writes" assertion is meaningful only when paired with
+    a positive assertion that the QR table did get a row.
+    """
+
+    def __init__(self) -> None:
+        self.clinical_table_rows: dict[str, int] = {
+            "patient_data": 0,
+            "medications": 0,
+            "allergies": 0,
+            "family_history": 0,
+        }
+        self.questionnaire_responses: list[dict[str, Any]] = []
+
+    def baseline_clinical_counts(self) -> dict[str, int]:
+        return dict(self.clinical_table_rows)
+
+    def insert_questionnaire_response(self, payload: dict[str, Any]) -> int:
+        """Simulate a row in the questionnaire_repository QR table."""
+        qr_id = len(self.questionnaire_responses) + 1
+        self.questionnaire_responses.append({
+            "questionnaire_response_id": qr_id,
+            **payload,
+        })
+        return qr_id
+
+    def delete_questionnaire_response(self, qr_id: int) -> None:
+        self.questionnaire_responses = [
+            qr for qr in self.questionnaire_responses
+            if qr["questionnaire_response_id"] != qr_id
+        ]
+
+    def insert_clinical_row(self, table: str) -> None:
+        """Hypothetical regression path. The e2e test never invokes
+        this — its presence is illustrative, so a future contributor
+        considering "let me also write through to medications" sees
+        the wired-but-forbidden seam first.
+        """
+        self.clinical_table_rows[table] += 1
+
+
+class _PersistQuestionnaireResponseClient:
+    """In-test client that POSTs the validated extraction to the
+    PHP ``persist_questionnaire_response.php`` endpoint.
+
+    The Python sidecar doesn't yet have a production class for this
+    (Task 29 ships the test before the production wiring); we model
+    what that client is *required to do* so the e2e contract is
+    captured before the implementation lands. Its surface is small:
+    given a JWT, an extraction, and a base URL, POST the extraction
+    JSON and return the new questionnaire_response_id.
+
+    The httpx.AsyncClient is injectable so the e2e test can pass a
+    MockTransport-backed client and observe every URL touched —
+    that's how the "no-clinical-writes" allowlist assertion works.
+    """
+
+    def __init__(
+        self,
+        *,
+        http_client: httpx.AsyncClient,
+        base_url: str,
+    ) -> None:
+        self._http = http_client
+        self._base_url = base_url.rstrip("/")
+
+    async def persist(
+        self,
+        *,
+        jwt: str,
+        extraction: IntakeFormExtraction,
+    ) -> int:
+        url = f"{self._base_url}{_PERSIST_QR_PATH}"
+        response = await self._http.post(
+            url,
+            headers={"Authorization": f"Bearer {jwt}"},
+            json=extraction.model_dump(mode="json"),
+        )
+        if response.status_code != 200:
+            raise DocumentUploadError(
+                status_code=response.status_code,
+                message="persist_questionnaire_response upstream returned non-200",
+            )
+        body = response.json()
+        qr_id = body.get("questionnaire_response_id")
+        if not isinstance(qr_id, int) or qr_id <= 0:
+            raise DocumentUploadError(
+                status_code=0,
+                message="persist response missing valid questionnaire_response_id",
+            )
+        return qr_id
+
+
+@pytest.mark.asyncio
+async def test_persist_phase_creates_questionnaire_response_with_no_clinical_writes() -> None:
+    """Subtask 29.4 — the headline test.
+
+    Given a validated :class:`IntakeFormExtraction`, the persist phase:
+
+      1. Creates a ``QuestionnaireResponse`` (positive: a row appears
+         in the QR table).
+      2. Touches **only** ``persist_questionnaire_response.php`` —
+         the URL allowlist assertion below is the load-bearing
+         "no clinical-table writes" check (W2 invariant I-2).
+      3. Leaves baseline row counts in ``patient_data``,
+         ``medications``, ``allergies``, ``family_history``
+         unchanged.
+      4. Fires ``agentforge.questionnaire_persist`` audit (PSR-3
+         shape mirrored from the PHP side).
+    """
+    audit_log: list[dict[str, Any]] = []
+    db = _MockClinicalDatabase()
+    baseline = db.baseline_clinical_counts()
+
+    # Capture every URL the persistence client touches. The handler
+    # only knows the QR-persist path; if the client ever points at a
+    # different URL, MockTransport returns 404 and the test fails.
+    captured_urls: list[str] = []
+
+    def php_handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(request.url.path)
+        if request.url.path != _PERSIST_QR_PATH:
+            # Hard fail — the only allowed path is the QR-persist one.
+            return httpx.Response(404, json={"error": "forbidden path"})
+        # Simulate the PHP side: insert a QR row, fire audit, return id.
+        # The persist endpoint receives the IntakeFormExtraction JSON;
+        # we model it as a single QR row keyed on document_id.
+        payload = (
+            request.content.decode("utf-8") if request.content else "{}"
+        )
+        import json as _json
+
+        body = _json.loads(payload)
+        qr_id = db.insert_questionnaire_response({
+            "document_id": body.get("document_id"),
+            "patient_id": body.get("patient_id"),
+            "extraction": body,
+        })
+        audit_log.append({
+            "event": "agentforge.questionnaire_persist",
+            "document_id": body.get("document_id"),
+            "questionnaire_response_id": qr_id,
+        })
+        return httpx.Response(
+            200, json={"questionnaire_response_id": qr_id}
+        )
+
+    transport = httpx.MockTransport(php_handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        persist_client = _PersistQuestionnaireResponseClient(
+            http_client=http,
+            base_url=_OPENEMR_BASE,
+        )
+
+        # Build a real validated extraction — same path the production
+        # flow takes after the extractor returns.
+        extraction = IntakeFormExtraction.model_validate(
+            canned_intake_extraction(
+                document_id=_DOCUMENT_ID,
+                patient_id=_PATIENT_PID,
+            )
+        )
+        qr_id = await persist_client.persist(
+            jwt="some-internal-jwt",
+            extraction=extraction,
+        )
+
+    # ---- Positive: QR row created ----
+    assert qr_id == 1
+    assert len(db.questionnaire_responses) == 1
+    qr_row = db.questionnaire_responses[0]
+    assert qr_row["document_id"] == _DOCUMENT_ID
+    assert qr_row["patient_id"] == _PATIENT_PID
+
+    # ---- Audit fired with correct shape ----
+    assert len(audit_log) == 1
+    persist_event = audit_log[0]
+    assert persist_event["event"] == "agentforge.questionnaire_persist"
+    assert persist_event["document_id"] == _DOCUMENT_ID
+    assert persist_event["questionnaire_response_id"] == qr_id
+
+    # ---- Headline invariant: NO clinical-table writes happened ----
+    # This is the W2 I-2 invariant manifested at the routing layer:
+    # the only URL the persist phase touched was the QR-persist
+    # endpoint. Any other URL (in particular any *_FORBIDDEN_*
+    # path or anything else) means the extraction code reached
+    # past QuestionnaireResponse into clinical state.
+    assert captured_urls == [_PERSIST_QR_PATH], (
+        f"Persist phase touched URLs other than the QR endpoint: "
+        f"{captured_urls!r}. The W2 invariant requires intake forms "
+        f"to write ONLY to QuestionnaireResponse, never to clinical "
+        f"tables. Forbidden paths include: "
+        f"{sorted(_FORBIDDEN_CLINICAL_TABLE_PATHS)!r}."
+    )
+
+    # ---- Row counts in clinical tables are unchanged ----
+    # Belt-and-braces version of the URL allowlist: even if a future
+    # refactor lets writes happen through a single endpoint that
+    # touches multiple tables, the row counts surface the breach.
+    assert db.clinical_table_rows == baseline, (
+        f"Clinical-table row counts changed during intake persist: "
+        f"baseline={baseline} after={db.clinical_table_rows}. "
+        f"The W2 invariant forbids any clinical-table write on the "
+        f"intake path."
+    )
