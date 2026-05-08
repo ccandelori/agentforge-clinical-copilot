@@ -171,7 +171,7 @@ ssh root@143.244.157.90 \
 ### Production OAuth client
 
 Registered in OpenEMR `oauth_clients`:
-- `client_id`: `bdWGHR1OMeJbxMmvSRskPghCa_tIzUSz0qmDs5-uEIs`
+- `client_id`: `<rotated; live value in /opt/agentforge/sidecar/.env on droplet>`
 - `redirect_uris`: `["https://143.244.157.90:9300/auth/callback"]`
 - `post_logout_redirect_uris`: `["https://143.244.157.90:9300/dashboard/"]`
 - `is_enabled = 1`
@@ -180,7 +180,7 @@ Sidecar env in `/opt/agentforge/sidecar/.env` on droplet:
 ```
 DASHBOARD_APP_URL=https://143.244.157.90:9300
 DASHBOARD_OAUTH_AUTHORITY=https://143.244.157.90:9300/oauth2/default
-DASHBOARD_OAUTH_CLIENT_ID=bdWGHR1OMeJbxMmvSRskPghCa_tIzUSz0qmDs5-uEIs
+DASHBOARD_OAUTH_CLIENT_ID=<rotated; live value in /opt/agentforge/sidecar/.env on droplet>
 DASHBOARD_OAUTH_CLIENT_SECRET=<set>
 DASHBOARD_OAUTH_REDIRECT_URI=https://143.244.157.90:9300/auth/callback
 DASHBOARD_OAUTH_POST_LOGOUT_REDIRECT_URI=https://143.244.157.90:9300/dashboard/

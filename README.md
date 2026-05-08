@@ -27,7 +27,11 @@ Built across two waves:
 | --- | --- |
 | [`https://143.244.157.90:9300/dashboard/`](https://143.244.157.90:9300/dashboard/) | Vue 3 patient dashboard with embedded AgentForge drawer — **self-signed cert**, browser will warn (click through) |
 
-Login: `admin` / `pass`.
+Login: `admin` / `LESZoHXpasV3LL9LP5uQjWs2`. (The OpenEMR default
+`admin/pass` was rotated to a non-default value as a defense against
+random brute-force scanners; this credential is intentionally public
+because the droplet is a sandbox with synthetic Synthea data only — no
+real PHI lives here.)
 
 **Try the W2 intake-extraction loop:**
 
