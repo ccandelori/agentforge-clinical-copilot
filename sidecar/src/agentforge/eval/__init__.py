@@ -11,6 +11,7 @@ and :mod:`agentforge.eval.regenerate_baseline` for the manual CLI that
 re-measures ``baselines/week2.json``.
 """
 
+from agentforge.eval.filename_resolver import FilenameDocumentResolver
 from agentforge.eval.supervisor_adapter import (
     DocumentFixtureResolver,
     SupervisorAdapter,
@@ -19,6 +20,7 @@ from agentforge.eval.supervisor_adapter import (
 
 __all__ = (
     "DocumentFixtureResolver",
+    "FilenameDocumentResolver",
     "SupervisorAdapter",
     "SupervisorAdapterDeps",
 )
