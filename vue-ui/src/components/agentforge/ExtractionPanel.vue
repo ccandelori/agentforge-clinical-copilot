@@ -47,9 +47,12 @@ const sourceUrl = computed<string | null>(() => {
   )
 })
 
-const canShowSource = computed<boolean>(
-  () => sourceUrl.value !== null && bboxes.value.length > 0,
-)
+// Always offer "View source" when we know the document id — the modal
+// is useful even with zero bboxes (raw PDF view, useful for verifying
+// the extraction or filling gaps the extractor missed). Bboxes count
+// in the label ("View source (3)") signals overlay richness; absence
+// renders as just "View source".
+const canShowSource = computed<boolean>(() => sourceUrl.value !== null)
 
 const confidencePct = computed<number>(() => {
   return Math.round(props.extraction.extractionConfidence * 100)
@@ -109,7 +112,7 @@ const hasUnsupported = computed<boolean>(
             <path d="M10 14 20 4" />
             <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
           </svg>
-          View source ({{ bboxes.length }})
+          View source<span v-if="bboxes.length > 0"> ({{ bboxes.length }})</span>
         </button>
         <span
           class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
