@@ -12,6 +12,33 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Task 22 GH-Actions mirror: `github-script@v8` + workflow_dispatch trigger
+
+**Plan:** Task 22 brief specified `actions/github-script@v7` (or
+"current stable") and `on: pull_request`.
+
+**Deviation 1 — `actions/github-script@v8`.** v8 is the current stable
+major (v7 is one major behind). The brief explicitly allowed "current
+stable", so this is a parameter pick rather than a divergence.
+Matching the rest of the repo's bleeding-edge action pinning style
+(`actions/checkout@v6`, `actions/upload-artifact@v7`).
+
+**Deviation 2 — added `workflow_dispatch` trigger.** Brief noted "OK
+to add as a bonus, but the spec is `on PR`". Including it costs
+nothing and gives a maintainer the ability to re-run the gate from
+the Actions UI without opening a no-op PR — useful for verifying a
+baseline regen on the default branch.
+
+**Deviation 3 — added `sidecar/tests/test_ci_parity.py` (subtask 22.3).**
+Brief listed 22.3 as optional. I included it as a one-line invariant
+that fails loudly if either CI file stops delegating to the shared
+`run_eval_gate.sh`. Adds 2 tests to the suite (1280 → 1282).
+
+**What we learned:** None of these are architectural — logging for
+audit completeness only.
+
+---
+
 ## 2026-05-08 — Task 19 ships as one commit; "fabricated value" arrives as citation-strip
 
 **Plan:** Task 19 ("Implement Gate Self-Test (Deliberate Regression
