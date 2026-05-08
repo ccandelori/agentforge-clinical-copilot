@@ -312,3 +312,138 @@ class TestSelectReranker:
         )
 
         assert isinstance(reranker, PassthroughReranker)
+
+
+# ---------------------------------------------------------------------------
+# 15.4 — node round-trips a real EvidenceRetriever pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceNodePipelineWiring:
+    """Smoke-test the full BM25 + Dense + RRF + Reranker pipeline through
+    the node with stub encoders / corpora. The unit-level
+    ``EvidenceRetriever`` tests already cover the pre-filter / merge /
+    rerank composition; this case verifies the node hands a real
+    pipeline a query and gets back the top_k=5 results without
+    re-implementing any pipeline behavior in the node body.
+    """
+
+    async def test_node_drives_full_pipeline_top_k_5(self) -> None:
+        from collections.abc import Sequence
+
+        import numpy as np
+        from numpy.typing import NDArray
+
+        from agentforge.rag.bm25 import BM25Retriever
+        from agentforge.rag.dense import DenseRetriever
+        from agentforge.rag.evidence_retriever import EvidenceRetriever
+        from agentforge.rag.reranker import PassthroughReranker
+        from agentforge.rag.rrf import RRFMerger
+
+        # Six chunks (one more than top_k) with orthogonal embeddings so
+        # we can predict which chunk each query lands on. The dense
+        # encoder is a deterministic table lookup so the test never
+        # touches a real model.
+        chunks = [
+            GuidelineChunk.from_index_entry(
+                doc_id="g",
+                section="s",
+                version="v",
+                chunk_id=f"c{i}",
+                text=f"text-{i}",
+                token_count=2,
+                source_path="g.pdf",
+            )
+            for i in range(6)
+        ]
+
+        class _StubEncoder:
+            def __init__(self, table: dict[str, list[float]]) -> None:
+                self._table = {
+                    k: np.array(v, dtype=np.float32) for k, v in table.items()
+                }
+
+            def encode(self, texts: Sequence[str]) -> NDArray[np.float32]:
+                if not texts:
+                    dim = next(iter(self._table.values())).shape[0]
+                    return np.zeros((0, dim), dtype=np.float32)
+                return np.vstack([self._table[t] for t in texts])
+
+        encoder_table: dict[str, list[float]] = {
+            f"text-{i}": [1.0 if j == i else 0.0 for j in range(6)]
+            for i in range(6)
+        }
+        # Query vector aligns with chunk c0; BM25 also term-overlaps
+        # since the query word appears in c0's text.
+        encoder_table["text-0 relevant"] = [
+            1.0 if j == 0 else 0.0 for j in range(6)
+        ]
+
+        retriever = EvidenceRetriever(
+            bm25=BM25Retriever(chunks),
+            dense=DenseRetriever(chunks, encoder=_StubEncoder(encoder_table)),
+            merger=RRFMerger(),
+            reranker=PassthroughReranker(),
+        )
+
+        state = _starter_state(query="text-0 relevant")
+        update = await evidence_retriever_node(state, retriever)
+
+        results = update["evidence_chunks"]
+        # The node defaults to top_k=5 — the pipeline must return at
+        # most that many results regardless of corpus size.
+        assert 1 <= len(results) <= 5
+        # The top result must be c0 — both retrievers concur on it.
+        assert results[0].chunk.chunk_id == "c0"
+
+    async def test_node_round_trips_citation_through_pipeline(self) -> None:
+        # Smaller variant: confirm the GUIDELINE citation survives the
+        # full pipeline (no chunk → result rewrite drops it). This is
+        # the contract piece that downstream `[guideline #chunk_id]`
+        # tag resolution depends on.
+        from collections.abc import Sequence
+
+        import numpy as np
+        from numpy.typing import NDArray
+
+        from agentforge.rag.bm25 import BM25Retriever
+        from agentforge.rag.dense import DenseRetriever
+        from agentforge.rag.evidence_retriever import EvidenceRetriever
+        from agentforge.rag.reranker import PassthroughReranker
+        from agentforge.rag.rrf import RRFMerger
+
+        chunks = [
+            GuidelineChunk.from_index_entry(
+                doc_id="ada-2024",
+                section="9.1",
+                version="2024",
+                chunk_id="ada-9-1#0",
+                text="A1C target",
+                token_count=2,
+                source_path="ada.pdf",
+            )
+        ]
+
+        class _StubEncoder:
+            def encode(self, texts: Sequence[str]) -> NDArray[np.float32]:
+                if not texts:
+                    return np.zeros((0, 1), dtype=np.float32)
+                return np.ones((len(texts), 1), dtype=np.float32)
+
+        retriever = EvidenceRetriever(
+            bm25=BM25Retriever(chunks),
+            dense=DenseRetriever(chunks, encoder=_StubEncoder()),
+            merger=RRFMerger(),
+            reranker=PassthroughReranker(),
+        )
+
+        state = _starter_state(query="A1C target")
+        update = await evidence_retriever_node(state, retriever)
+
+        result = update["evidence_chunks"][0]
+        cite = result.chunk.citation
+        assert cite.source_type is SourceType.GUIDELINE
+        assert cite.source_id == "ada-2024"
+        assert cite.page_or_section == "9.1"
+        assert cite.field_or_chunk_id == "ada-9-1#0"
+        assert cite.quote_or_value == "A1C target"
