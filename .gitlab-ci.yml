@@ -126,10 +126,18 @@ sidecar-regression-locks:
 agent-eval:
   extends: .python_base
   stage: test
+  # allow_failure is explicit (rather than relying on the GitLab
+  # default of false) so a future edit can't silently flip the gate
+  # to advisory by setting it to true. Block-on-failure is the
+  # contract — any below_threshold / regression / missing_category
+  # violation must fail the pipeline.
+  allow_failure: false
   rules:
-    # Trigger on merge requests + on pushes to the main branch (so
-    # protected-branch state stays green). Other branches don't run
-    # the gate to keep CI bills bounded.
+    # Trigger on merge requests + on pushes to the default branch
+    # (so protected-branch state stays green between merges). Other
+    # branches skip the gate to keep CI bills bounded; a developer
+    # who wants the gate's verdict on an in-progress branch should
+    # open a draft MR.
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
