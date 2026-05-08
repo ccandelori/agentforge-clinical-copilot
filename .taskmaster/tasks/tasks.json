@@ -7160,7 +7160,7 @@
         "id": "25",
         "title": "Wire Citation Overlay into Agent Panel",
         "description": "Wire the citation overlay component into the existing agent_panel.js, fetching the PDF from OpenEMR's session-authenticated controller.php document retrieval route and rendering inline with overlay positioning. Uses vanilla JS (no React) matching the existing agent_panel.js IIFE pattern.",
-        "status": "pending",
+        "status": "cancelled",
         "dependencies": [
           "24",
           "13"
@@ -7241,7 +7241,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 6,
-        "expansionPrompt": "Already has 6 subtasks defined: 1) Add patient_id data attribute to agent panel template, 2) Add script tag for citation_overlay.js in template, 3) Parse citations from agent response and render citation links with data attributes, 4) Implement citation click handler with document URL construction using as_file=false, 5) Add loading and error state handling, 6) Add overlay container styling to panel CSS"
+        "expansionPrompt": "Already has 6 subtasks defined: 1) Add patient_id data attribute to agent panel template, 2) Add script tag for citation_overlay.js in template, 3) Parse citations from agent response and render citation links with data attributes, 4) Implement citation click handler with document URL construction using as_file=false, 5) Add loading and error state handling, 6) Add overlay container styling to panel CSS",
+        "updatedAt": "2026-05-08T22:34:28.330Z"
       },
       {
         "id": "26",
@@ -8275,7 +8276,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T22:26:43.585Z",
+      "lastModified": "2026-05-08T22:34:28.330Z",
       "taskCount": 39,
       "completedCount": 29,
       "tags": [
