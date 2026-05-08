@@ -440,6 +440,276 @@ def test_cli_returns_nonzero_when_langfuse_unconfigured(
     assert "Langfuse" in err
 
 
+def test_project_production_spend_scales_avg_cost_per_turn_to_qps() -> None:
+    """Task 27.4: given an average cost per turn and a projected QPS,
+    return projected $/day, $/month under that load.
+
+    Math: cost_per_turn × qps × seconds_per_day = $/day; ×30 = $/month.
+    """
+    from agentforge.observability.cost_report import project_production_spend
+
+    proj = project_production_spend(
+        avg_cost_per_turn=0.05,
+        projected_qps=1.5,
+    )
+    # 0.05 * 1.5 * 86400 = 6480.
+    assert proj.daily == pytest.approx(6480.0, rel=1e-9)
+    # 30 day month.
+    assert proj.monthly == pytest.approx(6480.0 * 30, rel=1e-9)
+
+
+def test_project_production_spend_with_zero_qps_is_zero() -> None:
+    from agentforge.observability.cost_report import project_production_spend
+
+    proj = project_production_spend(avg_cost_per_turn=0.05, projected_qps=0.0)
+    assert proj.daily == 0.0
+    assert proj.monthly == 0.0
+
+
+def test_project_production_spend_rejects_negative_inputs() -> None:
+    from agentforge.observability.cost_report import project_production_spend
+
+    with pytest.raises(ValueError):
+        project_production_spend(avg_cost_per_turn=-0.01, projected_qps=1.0)
+    with pytest.raises(ValueError):
+        project_production_spend(avg_cost_per_turn=0.01, projected_qps=-1.0)
+
+
+def test_average_cost_per_observation_handles_empty_input() -> None:
+    """Empty observation list → 0.0 (no division-by-zero crash)."""
+    from agentforge.observability.cost_report import average_cost_per_observation
+
+    assert average_cost_per_observation([]) == 0.0
+
+
+def test_average_cost_per_observation_returns_mean() -> None:
+    from agentforge.observability.cost_report import (
+        CostObservation,
+        average_cost_per_observation,
+    )
+
+    obs = [
+        CostObservation(start_time=datetime(2026, 5, 1, tzinfo=UTC), cost_usd=0.10),
+        CostObservation(start_time=datetime(2026, 5, 1, tzinfo=UTC), cost_usd=0.20),
+        CostObservation(start_time=datetime(2026, 5, 1, tzinfo=UTC), cost_usd=0.30),
+    ]
+    assert average_cost_per_observation(obs) == pytest.approx(0.20, rel=1e-9)
+
+
+def test_cli_project_qps_flag_emits_projection_block(
+    patched_settings: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--project-qps 0.5`` adds a projection footer to the daily
+    report driven by the observed average per-turn cost."""
+    from agentforge.observability import cost_report
+    from agentforge.observability.cost_report import CostObservation
+
+    today = datetime.now(UTC)
+    obs = [
+        CostObservation(start_time=today - timedelta(hours=1), cost_usd=0.04),
+        CostObservation(start_time=today - timedelta(hours=2), cost_usd=0.06),
+    ]
+
+    with (
+        patch.object(cost_report, "_build_langfuse_for_report", return_value=object()),
+        patch.object(cost_report, "fetch_cost_observations", return_value=obs),
+    ):
+        rc = cost_report.main(["--days", "1", "--project-qps", "0.5"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    # Average per turn = 0.05; at 0.5 QPS daily = 0.05 * 0.5 * 86400 = 2160.
+    assert "Production Spend Projection" in out
+    assert "QPS:           0.5" in out
+    assert "$/day:         $2160.00" in out
+    # Monthly = daily * 30 = 64800.
+    assert "$/month:       $64800.00" in out
+
+
+# ---------------------------------------------------------------------------
+# Latency percentiles + bottleneck flagging (Task 27.5)
+# ---------------------------------------------------------------------------
+
+
+def test_percentile_returns_value_at_position() -> None:
+    """``percentile`` uses the linear-interpolation rule
+    (np.percentile compatible). For a sorted [1, 2, 3, 4, 5]:
+    p50 = 3, p95 = 4.8.
+    """
+    from agentforge.observability.cost_report import percentile
+
+    samples = [5, 3, 1, 4, 2]
+    assert percentile(samples, 50) == pytest.approx(3.0, rel=1e-9)
+    assert percentile(samples, 95) == pytest.approx(4.8, rel=1e-9)
+
+
+def test_percentile_handles_single_sample() -> None:
+    from agentforge.observability.cost_report import percentile
+
+    assert percentile([42], 50) == 42.0
+    assert percentile([42], 95) == 42.0
+
+
+def test_percentile_raises_on_empty_input() -> None:
+    """Empty input has no defined percentile — surface the error
+    rather than projecting a misleading 0.0."""
+    from agentforge.observability.cost_report import percentile
+
+    with pytest.raises(ValueError):
+        percentile([], 50)
+
+
+def test_aggregate_latencies_by_step_groups_and_summarises() -> None:
+    """``aggregate_latencies_by_step`` returns per-step summaries
+    (p50, p95, mean, count) keyed by the step name.
+    """
+    from agentforge.observability.cost_report import (
+        LatencyObservation,
+        aggregate_latencies_by_step,
+    )
+
+    obs = [
+        LatencyObservation(step="llm", latency_ms=100),
+        LatencyObservation(step="llm", latency_ms=200),
+        LatencyObservation(step="llm", latency_ms=300),
+        LatencyObservation(step="retrieval", latency_ms=50),
+        LatencyObservation(step="retrieval", latency_ms=70),
+    ]
+    summary = aggregate_latencies_by_step(obs)
+
+    assert set(summary) == {"llm", "retrieval"}
+    assert summary["llm"].count == 3
+    assert summary["llm"].p50 == pytest.approx(200.0, rel=1e-9)
+    # p95 of [100, 200, 300] = 290 by linear interpolation.
+    assert summary["llm"].p95 == pytest.approx(290.0, rel=1e-9)
+    assert summary["llm"].mean == pytest.approx(200.0, rel=1e-9)
+
+    assert summary["retrieval"].count == 2
+    assert summary["retrieval"].p50 == pytest.approx(60.0, rel=1e-9)
+
+
+def test_identify_bottleneck_steps_flags_steps_above_40_percent() -> None:
+    """A step whose mean latency exceeds 40% of the per-turn total
+    (sum of step means) is flagged as a bottleneck.
+    """
+    from agentforge.observability.cost_report import (
+        StepLatencySummary,
+        identify_bottleneck_steps,
+    )
+
+    summaries = {
+        # Mean 800 of 1000 total = 80% — bottleneck.
+        "synthesis": StepLatencySummary(p50=800, p95=900, mean=800, count=10),
+        # Mean 100 of 1000 = 10% — not a bottleneck.
+        "retrieval": StepLatencySummary(p50=100, p95=120, mean=100, count=10),
+        # Mean 100 of 1000 = 10% — not a bottleneck.
+        "verifier": StepLatencySummary(p50=100, p95=120, mean=100, count=10),
+    }
+    flagged = identify_bottleneck_steps(summaries, threshold=0.40)
+    assert flagged == ["synthesis"]
+
+
+def test_identify_bottleneck_steps_empty_input_returns_empty() -> None:
+    from agentforge.observability.cost_report import identify_bottleneck_steps
+
+    assert identify_bottleneck_steps({}, threshold=0.40) == []
+
+
+def test_identify_bottleneck_steps_flags_multiple_above_threshold() -> None:
+    """Two steps each at 50% of total — both are above 40% so both are
+    flagged. Ordering is by descending mean so the worst offender
+    appears first."""
+    from agentforge.observability.cost_report import (
+        StepLatencySummary,
+        identify_bottleneck_steps,
+    )
+
+    summaries = {
+        "synthesis": StepLatencySummary(p50=500, p95=600, mean=500, count=10),
+        "extraction": StepLatencySummary(p50=500, p95=600, mean=500, count=10),
+    }
+    flagged = identify_bottleneck_steps(summaries, threshold=0.40)
+    assert set(flagged) == {"synthesis", "extraction"}
+
+
+def test_format_latency_report_contains_pinned_columns() -> None:
+    from agentforge.observability.cost_report import (
+        StepLatencySummary,
+        format_latency_report,
+    )
+
+    summaries = {
+        "llm": StepLatencySummary(p50=200, p95=290, mean=200, count=3),
+        "retrieval": StepLatencySummary(p50=60, p95=68, mean=60, count=2),
+    }
+    out = format_latency_report(summaries, bottleneck_threshold=0.40)
+    assert "Latency by Step" in out
+    assert "p50" in out
+    assert "p95" in out
+    assert "llm" in out
+    assert "retrieval" in out
+
+
+def test_format_latency_report_marks_bottleneck_steps() -> None:
+    """Bottleneck rows should carry a visible marker so an operator
+    can spot them at a glance.
+    """
+    from agentforge.observability.cost_report import (
+        StepLatencySummary,
+        format_latency_report,
+    )
+
+    summaries = {
+        "synthesis": StepLatencySummary(p50=800, p95=900, mean=800, count=10),
+        "retrieval": StepLatencySummary(p50=100, p95=120, mean=100, count=10),
+    }
+    out = format_latency_report(summaries, bottleneck_threshold=0.40)
+    # The bottleneck row gets a marker; the non-bottleneck row doesn't.
+    synthesis_line = [
+        line for line in out.splitlines() if "synthesis" in line
+    ]
+    retrieval_line = [
+        line for line in out.splitlines() if "retrieval" in line
+    ]
+    assert any("BOTTLENECK" in line for line in synthesis_line)
+    assert not any("BOTTLENECK" in line for line in retrieval_line)
+
+
+def test_cli_latency_flag_emits_latency_report(
+    patched_settings: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--latency`` adds the per-step latency summary to the daily report."""
+    from agentforge.observability import cost_report
+    from agentforge.observability.cost_report import LatencyObservation
+
+    with (
+        patch.object(cost_report, "_build_langfuse_for_report", return_value=object()),
+        patch.object(cost_report, "fetch_cost_observations", return_value=[]),
+        patch.object(
+            cost_report,
+            "fetch_latency_observations",
+            return_value=[
+                LatencyObservation(step="synthesis", latency_ms=900),
+                LatencyObservation(step="synthesis", latency_ms=1000),
+                LatencyObservation(step="retrieval", latency_ms=50),
+                LatencyObservation(step="retrieval", latency_ms=70),
+            ],
+        ),
+    ):
+        rc = cost_report.main(["--days", "1", "--latency"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Latency by Step" in out
+    assert "synthesis" in out
+    assert "retrieval" in out
+    # Synthesis dominates total mean latency; should be flagged.
+    synthesis_lines = [line for line in out.splitlines() if "synthesis" in line]
+    assert any("BOTTLENECK" in line for line in synthesis_lines)
+
+
 def test_cli_returns_nonzero_when_fetch_raises(
     patched_settings: None,
     capsys: pytest.CaptureFixture[str],

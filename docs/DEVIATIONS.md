@@ -12,6 +12,37 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Task 27.2 fold-in: `record_extraction_confidence` only
+
+**Plan:** Task 27.2 originally called for adding both
+`record_retrieval_hits` and `record_extraction_confidence` to the
+`LangfuseClient` Protocol, the real `AgentLangfuse`, and the
+`NullLangfuseClient`.
+
+**Deviation:** Task 15 already shipped `record_retrieval_hits` (commit
+`5d89c8726`), including the orchestrator wiring via
+`_maybe_record_retrieval_hits` in `evidence_retriever_node`. Task 27.2
+therefore folds in only the still-needed half: a stand-alone
+`record_extraction_confidence(trace, confidence, unsupported_fields_count)`
+evaluator-style span.
+
+**Why:** Re-shipping the same retrieval_hits contract would either
+(a) duplicate the existing implementation verbatim — pure churn — or
+(b) reshape Task 15's caller in `orchestrator/graph.py`, breaking the
+already-merged `_maybe_record_retrieval_hits` helper. Both are worse
+than scoping 27.2 to the genuinely new surface.
+
+**Verified compatibility:** the existing `record_retrieval_hits`
+signature (`bm25_count`, `dense_count`, `post_rerank_count`) matches
+the Task 27 spec's signature/intent exactly — three list-size counts,
+no PHI surface — so no reconciliation is required.
+
+**What we learned:** Cross-task subtask spec overlap is a real risk
+when sibling tasks ship in parallel worktrees. The cheap mitigation is
+to read the merged-main observability surface before writing red tests.
+
+---
+
 ## 2026-05-08 — Evidence-retriever node consumes `retrieve_with_stats`, not `retrieve`
 
 **Plan:** Task 15.5 calls for emitting a Langfuse `retrieval_hits` span

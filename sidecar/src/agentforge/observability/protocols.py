@@ -18,7 +18,30 @@ S7.3 ("What is never logged").
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class RouteDecisionRecord:
+    """One supervisor routing decision — frozen so the trace handle's
+    accumulated trail is read-only after append.
+
+    Mirrors the ``record_handoff_span`` field set so dashboards can
+    cross-reference span events against the in-memory trail without
+    field-name drift.
+
+    All five fields are PHI-safe by construction: closed enums or
+    bounded strings (``decision``, ``from_node``, ``to_node``), the
+    bounded-vocabulary ``reason``, and the integer ``iteration``
+    capped by ``MAX_ITERATIONS``.
+    """
+
+    decision: str
+    reason: str
+    from_node: str
+    to_node: str
+    iteration: int
 
 
 @runtime_checkable
@@ -29,12 +52,29 @@ class TraceHandle(Protocol):
     context, or nothing at all (Null implementation). Callers should
     not introspect the handle — pass it back to the client's span
     methods to attach child observations.
+
+    Per-turn accumulators:
+
+    * ``route_decisions`` — every supervisor → worker handoff this
+      turn, appended in order by :meth:`LangfuseClient.record_route_decision`.
+      Eval runs read this trail to assert the routing path without
+      walking the Langfuse span store.
+    * ``eval_outcome`` — eval-run case verdict (``"pass"`` / ``"fail"``
+      / ``"refused"`` / etc.); ``None`` for production turns. Mutable
+      so eval harnesses can stamp the verdict after the run completes.
     """
 
     @property
     def trace_id(self) -> str | None:
         """Stable trace identifier, or ``None`` for the Null implementation."""
         ...
+
+    @property
+    def route_decisions(self) -> list[RouteDecisionRecord]:
+        """The ordered routing trail for this turn (mutated by append)."""
+        ...
+
+    eval_outcome: str | None
 
 
 @runtime_checkable
@@ -188,6 +228,51 @@ class LangfuseClient(Protocol):
         stale_labs_count: int,
         conflict_count: int,
     ) -> None: ...
+
+    def record_route_decision(
+        self,
+        trace: TraceHandle,
+        *,
+        decision: str,
+        reason: str,
+        from_node: str,
+        to_node: str,
+        iteration: int,
+    ) -> None:
+        """Record one supervisor routing decision.
+
+        Distinct from :meth:`record_handoff_span` in two ways:
+
+        * **Appends** the decision to ``trace.route_decisions``, building
+          a per-turn routing trail the eval harness can introspect
+          without walking the Langfuse span store.
+        * Emits as ``span`` (not ``evaluator``) and uses the
+          ``route_decision:from->to`` naming so dashboards can isolate
+          routing-trail spans from older handoff spans.
+
+        All five fields are PHI-safe by construction (see the
+        ``RouteDecisionRecord`` docstring).
+        """
+        ...
+
+    def record_extraction_confidence(
+        self,
+        trace: TraceHandle,
+        *,
+        confidence: float,
+        unsupported_fields_count: int,
+    ) -> None:
+        """Record the worker's self-rated extraction confidence.
+
+        Companion to :meth:`record_extraction_call` for callers that
+        observe the confidence signal *outside* the call site (e.g. a
+        post-validation hook that flags low-confidence extractions for
+        downstream review). The two fields are PHI-safe by construction:
+        ``confidence`` is a float in [0, 1]; ``unsupported_fields_count``
+        is the **length** of the worker's ``unsupported_fields`` list,
+        not the field names themselves.
+        """
+        ...
 
     def record_retrieval_hits(
         self,

@@ -114,6 +114,7 @@ def _intake_extraction_result(
         model="claude-test",
         input_tokens=100,
         output_tokens=50,
+        cost_usd=None,
     )
 
 
