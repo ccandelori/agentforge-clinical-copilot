@@ -62,14 +62,16 @@ ENV HF_HOME=/opt/hf-cache \
     SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache/sentence-transformers
 RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 # CrossEncoderReranker (rag/cross_encoder.py) defaults to
-# BAAI/bge-reranker-base — ~280 MB safetensors. Pre-baked here so the
+# BAAI/bge-reranker-base — ~1.1 GB safetensors (the model is
+# roberta-base scale, ~280 M params at fp32). Pre-baked here so the
 # reranker initializes from disk on first request instead of pulling
 # from HF. Cohere reranker stays optional (env-gated) and is
 # intentionally NOT baked.
 #
-# allow_patterns excludes the legacy pytorch_model.bin (1.1 GB) — the
-# safetensors weight file plus tokenizer/config is the modern path and
-# what transformers prefers when both are present.
+# allow_patterns excludes the duplicate pytorch_model.bin (also
+# ~1.1 GB) — the safetensors weight file plus tokenizer/config is the
+# modern path and what transformers prefers when both are present.
+# See docs/DEVIATIONS.md (2026-05-08) for size-target reconciliation.
 RUN /app/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-base', cache_dir='/opt/hf-cache/sentence-transformers', allow_patterns=['*.json','*.txt','tokenizer*','*.safetensors'])"
 # Build-time gate: load both models with HF_HUB_OFFLINE=1 so a missing
 # or corrupt cache fails the build instead of the first production
@@ -106,8 +108,8 @@ COPY --from=builder --chown=agentforge:agentforge /app/data /app/data
 # all-MiniLM-L6-v2 + bge-reranker-base safetensors into /opt/hf-cache;
 # we relocate them into the agentforge user's home so the runtime user
 # (uid 1000) can read them and the HF env vars (set below) point here.
-# Without this layer the first request blocks on a ~370 MB download
-# from huggingface.co.
+# Without this layer the first request blocks on a ~1.2 GB download
+# from huggingface.co (88 MB MiniLM + 1.1 GB bge-reranker safetensors).
 COPY --from=builder --chown=agentforge:agentforge /opt/hf-cache /home/agentforge/.cache/huggingface
 
 ENV PATH="/app/.venv/bin:${PATH}" \
