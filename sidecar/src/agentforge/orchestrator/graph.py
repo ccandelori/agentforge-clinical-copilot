@@ -53,6 +53,7 @@ from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.planner import Plan, UseCase
 from agentforge.prompts import load_prompt
+from agentforge.rag.evidence_retriever import RetrievalStats
 from agentforge.rag.types import RetrievalResult
 from agentforge.schemas.citation import Citation as W2Citation
 from agentforge.schemas.intake import IntakeFormExtraction
@@ -176,11 +177,22 @@ class _VisionExtractorLike(Protocol):
 
 class _EvidenceRetrieverLike(Protocol):
     """Subset of ``EvidenceRetriever`` consumed by
-    ``evidence_retriever_node``."""
+    ``evidence_retriever_node``.
+
+    The node calls :meth:`retrieve_with_stats` so the
+    ``retrieval_hits`` Langfuse span can carry the per-stage counts
+    alongside the retrieved chunks. :meth:`retrieve` stays in the
+    contract for legacy callers (W1 fallback) but the node itself
+    reads the stats path.
+    """
 
     async def retrieve(
         self, query: str, *, top_k: int = 5
     ) -> list[RetrievalResult]: ...
+
+    async def retrieve_with_stats(
+        self, query: str, *, top_k: int = 5
+    ) -> RetrievalStats: ...
 
 
 class _SynthesisLLMLike(Protocol):
@@ -413,9 +425,40 @@ async def evidence_retriever_node(
     query = state["query"]
     if not query:
         return last_node_update
-    results = await retriever.retrieve(query)
-    del langfuse  # consumed by the 15.5 ``retrieval_hits`` emission below
-    return {**last_node_update, "evidence_chunks": results}
+    stats = await retriever.retrieve_with_stats(query)
+    _maybe_record_retrieval_hits(
+        langfuse,
+        state.get("langfuse_trace"),
+        bm25_count=stats.bm25_count,
+        dense_count=stats.dense_count,
+        post_rerank_count=stats.post_rerank_count,
+    )
+    return {**last_node_update, "evidence_chunks": stats.results}
+
+
+def _maybe_record_retrieval_hits(
+    langfuse: LangfuseClient | None,
+    trace: TraceHandle | None,
+    *,
+    bm25_count: int,
+    dense_count: int,
+    post_rerank_count: int,
+) -> None:
+    """Forward the per-stage counts to Langfuse when both client and trace are wired.
+
+    Mirrors :func:`_maybe_record_handoff` — either argument missing →
+    no-op. Keeps the node body free of the ``if langfuse is None or
+    trace is None`` guard while preserving the structural property
+    that we never call into the Null implementation with a fake trace.
+    """
+    if langfuse is None or trace is None:
+        return
+    langfuse.record_retrieval_hits(
+        trace,
+        bm25_count=bm25_count,
+        dense_count=dense_count,
+        post_rerank_count=post_rerank_count,
+    )
 
 
 def _state_messages_to_llm_messages(

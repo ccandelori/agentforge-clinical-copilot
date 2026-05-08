@@ -189,6 +189,32 @@ class LangfuseClient(Protocol):
         conflict_count: int,
     ) -> None: ...
 
+    def record_retrieval_hits(
+        self,
+        trace: TraceHandle,
+        *,
+        bm25_count: int,
+        dense_count: int,
+        post_rerank_count: int,
+    ) -> None:
+        """Record one evidence-retrieval call's per-stage counts.
+
+        Emitted by the W2 ``evidence_retriever_node`` whenever the RAG
+        pipeline runs (W2_ARCHITECTURE.md §7 — ``retrieval_hits``).
+        The three counts are PHI-safe by construction: they're sizes
+        of the BM25 / dense / final-result lists, not the chunks
+        themselves. Dashboards roll these up to surface "did the
+        reranker actually move the needle on this turn?" without
+        cracking open the chunk text.
+
+        * ``bm25_count`` — candidates BM25 contributed (after its
+          internal zero-score drop).
+        * ``dense_count`` — candidates the dense retriever contributed.
+        * ``post_rerank_count`` — candidates that survived rerank into
+          the final result list (equals ``len(results)``).
+        """
+        ...
+
     def record_handoff_span(
         self,
         trace: TraceHandle,

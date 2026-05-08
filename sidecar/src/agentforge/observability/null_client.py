@@ -194,6 +194,16 @@ class NullLangfuseClient:
     ) -> None:
         del trace, from_node, to_node, route_decision, route_reason, iteration
 
+    def record_retrieval_hits(
+        self,
+        trace: TraceHandle,
+        *,
+        bm25_count: int,
+        dense_count: int,
+        post_rerank_count: int,
+    ) -> None:
+        del trace, bm25_count, dense_count, post_rerank_count
+
     def flush(self) -> None:
         return None
 

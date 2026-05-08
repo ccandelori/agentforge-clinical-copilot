@@ -63,7 +63,14 @@ def _retrieval_result(
 
 
 class _StubRetriever:
-    """Minimal :class:`_EvidenceRetrieverLike` for the node's contract tests."""
+    """Minimal :class:`_EvidenceRetrieverLike` for the node's contract tests.
+
+    Satisfies both ``retrieve()`` (legacy callers) and
+    ``retrieve_with_stats()`` (the node's call site after Task 15.5)
+    so a single stub suffices across all test classes in this file.
+    Stats default to dummy non-zero values; suites that exercise the
+    counts use ``_StatsRetriever`` below for explicit values.
+    """
 
     def __init__(self, results: list[RetrievalResult]) -> None:
         self._results = results
@@ -74,6 +81,19 @@ class _StubRetriever:
     ) -> list[RetrievalResult]:
         self.calls.append({"query": query, "top_k": top_k})
         return list(self._results)
+
+    async def retrieve_with_stats(
+        self, query: str, *, top_k: int = 5
+    ) -> object:
+        from agentforge.rag.evidence_retriever import RetrievalStats
+
+        self.calls.append({"query": query, "top_k": top_k})
+        return RetrievalStats(
+            results=list(self._results),
+            bm25_count=len(self._results),
+            dense_count=len(self._results),
+            post_rerank_count=len(self._results),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -447,3 +467,160 @@ class TestEvidenceNodePipelineWiring:
         assert cite.page_or_section == "9.1"
         assert cite.field_or_chunk_id == "ada-9-1#0"
         assert cite.quote_or_value == "A1C target"
+
+
+# ---------------------------------------------------------------------------
+# 15.5 — Langfuse ``retrieval_hits`` span emission with per-stage counts
+# ---------------------------------------------------------------------------
+
+
+class _StatsRetriever:
+    """Stub satisfying the extended ``_EvidenceRetrieverLike`` Protocol.
+
+    Returns canned ``(results, stats)`` from ``retrieve_with_stats()``
+    so tests can assert the node forwards the stats into the
+    ``record_retrieval_hits`` span.
+    """
+
+    def __init__(
+        self,
+        results: list[RetrievalResult],
+        *,
+        bm25_count: int,
+        dense_count: int,
+        post_rerank_count: int,
+    ) -> None:
+        self._results = results
+        self._bm25_count = bm25_count
+        self._dense_count = dense_count
+        self._post_rerank_count = post_rerank_count
+        self.calls: list[dict[str, object]] = []
+
+    async def retrieve(
+        self, query: str, *, top_k: int = 5
+    ) -> list[RetrievalResult]:
+        # The legacy surface still exists for callers that don't need
+        # stats. Tests exercise the stats path instead.
+        self.calls.append({"query": query, "top_k": top_k, "stats": False})
+        return list(self._results)
+
+    async def retrieve_with_stats(
+        self, query: str, *, top_k: int = 5
+    ) -> object:
+        from agentforge.rag.evidence_retriever import RetrievalStats
+
+        self.calls.append({"query": query, "top_k": top_k, "stats": True})
+        return RetrievalStats(
+            results=list(self._results),
+            bm25_count=self._bm25_count,
+            dense_count=self._dense_count,
+            post_rerank_count=self._post_rerank_count,
+        )
+
+
+class TestEvidenceNodeRetrievalHitsSpan:
+    """The node emits a ``retrieval_hits`` span carrying the three
+    per-stage counts whenever ``langfuse`` and ``state["langfuse_trace"]``
+    are both wired. Mirrors the supervisor's handoff-span guard:
+    without a trace handle the call is suppressed so the dashboard
+    never sees a fake-trace span.
+    """
+
+    async def test_records_retrieval_hits_with_per_stage_counts(self) -> None:
+        from unittest.mock import MagicMock
+
+        retriever = _StatsRetriever(
+            [_retrieval_result(chunk_id="c1"), _retrieval_result(chunk_id="c2")],
+            bm25_count=20,
+            dense_count=20,
+            post_rerank_count=2,
+        )
+        langfuse = MagicMock()
+        trace = MagicMock(trace_id="t-1")
+
+        state = _starter_state(query="A1C target")
+        state["langfuse_trace"] = trace
+
+        update = await evidence_retriever_node(
+            state, retriever, langfuse=langfuse
+        )
+
+        # The chunks ride through unchanged — the span is metadata,
+        # not a state mutation.
+        assert len(update["evidence_chunks"]) == 2
+
+        langfuse.record_retrieval_hits.assert_called_once()
+        kwargs = langfuse.record_retrieval_hits.call_args.kwargs
+        assert kwargs["bm25_count"] == 20
+        assert kwargs["dense_count"] == 20
+        assert kwargs["post_rerank_count"] == 2
+
+    async def test_skips_span_when_trace_missing(self) -> None:
+        # langfuse wired but state["langfuse_trace"] is None — no span.
+        # Otherwise the dashboard's trace_id flips to None on a fake
+        # trace and the span loses its parent context.
+        from unittest.mock import MagicMock
+
+        retriever = _StatsRetriever(
+            [_retrieval_result()],
+            bm25_count=5,
+            dense_count=5,
+            post_rerank_count=1,
+        )
+        langfuse = MagicMock()
+
+        state = _starter_state(query="anything")  # langfuse_trace == None
+
+        await evidence_retriever_node(state, retriever, langfuse=langfuse)
+
+        langfuse.record_retrieval_hits.assert_not_called()
+
+    async def test_skips_span_when_no_query_or_idempotent_re_entry(self) -> None:
+        # Two no-op paths must NOT emit the span (no retrieval call
+        # actually happened, so there are no stats to emit):
+        #
+        # 1. empty query → node skips retrieval entirely.
+        # 2. evidence_chunks already populated (loop-back) → node no-ops.
+        from unittest.mock import MagicMock
+
+        retriever = _StatsRetriever(
+            [_retrieval_result()],
+            bm25_count=10,
+            dense_count=10,
+            post_rerank_count=1,
+        )
+        langfuse = MagicMock()
+        trace = MagicMock(trace_id="t-1")
+
+        state = _starter_state(query="")  # empty
+        state["langfuse_trace"] = trace
+        await evidence_retriever_node(state, retriever, langfuse=langfuse)
+
+        state2 = _starter_state(query="x")
+        state2["langfuse_trace"] = trace
+        state2["evidence_chunks"] = [_retrieval_result(chunk_id="prior")]
+        await evidence_retriever_node(state2, retriever, langfuse=langfuse)
+
+        langfuse.record_retrieval_hits.assert_not_called()
+
+
+class TestRetrievalStatsContract:
+    """Pin the stats DTO shape so callers (the node, the eval harness)
+    can rely on the exact field names the protocol exports."""
+
+    def test_retrieval_stats_carries_results_and_three_counts(self) -> None:
+        from agentforge.rag.evidence_retriever import RetrievalStats
+
+        stats = RetrievalStats(
+            results=[_retrieval_result()],
+            bm25_count=20,
+            dense_count=20,
+            post_rerank_count=5,
+        )
+
+        # Each field is independently addressable — the node reads
+        # results separately from the counts.
+        assert len(stats.results) == 1
+        assert stats.bm25_count == 20
+        assert stats.dense_count == 20
+        assert stats.post_rerank_count == 5

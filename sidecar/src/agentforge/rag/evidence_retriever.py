@@ -48,6 +48,38 @@ class RetrievalConfig:
     fetches 20 candidates from each retriever before RRF/rerank."""
 
 
+@dataclass(frozen=True)
+class RetrievalStats:
+    """Per-stage counts emitted alongside the final reranked results.
+
+    The node uses these to populate the Langfuse ``retrieval_hits``
+    span (W2_ARCHITECTURE.md §7) so dashboards can roll up per-stage
+    contribution without re-running the pipeline. The counts are
+    *not* a substitute for trace-level latency — they answer "did
+    BM25 contribute?" / "did the reranker actually pick from the
+    pool?", not "how long did dense take?".
+
+    All three are non-negative integers bounded by the corpus size +
+    rerank pool. Treat them as ordinal — the absolute counts depend
+    on ``rerank_multiplier``.
+    """
+
+    results: list[RetrievalResult]
+    """The final reranked top-``top_k`` slice — same payload as
+    :meth:`EvidenceRetriever.retrieve` returns."""
+
+    bm25_count: int
+    """How many candidates BM25 contributed to the pre-filter pool."""
+
+    dense_count: int
+    """How many candidates the dense retriever contributed."""
+
+    post_rerank_count: int
+    """How many candidates survived to the final result. Equals
+    ``len(results)``; surfaced as a separate field so dashboards can
+    consume the three counts uniformly without unwrapping the list."""
+
+
 class EvidenceRetriever:
     """Hybrid BM25 + Dense + RRF + Reranker pipeline.
 
@@ -92,11 +124,38 @@ class EvidenceRetriever:
         Returns ``[]`` when the corpus is empty or BM25+Dense produce
         no candidates after the pre-filter. The reranker is never
         called with an empty candidate list.
+
+        Thin wrapper over :meth:`retrieve_with_stats` for callers that
+        don't need per-stage counts. Kept on the surface because every
+        existing caller (W1 path, the existing graph node fallback)
+        speaks this shape and there's no benefit forcing them to
+        unwrap the stats DTO.
+        """
+        stats = await self.retrieve_with_stats(query, top_k=top_k)
+        return stats.results
+
+    async def retrieve_with_stats(
+        self, query: str, *, top_k: int = 5
+    ) -> RetrievalStats:
+        """Retrieve top-``top_k`` chunks plus per-stage counts.
+
+        Same pipeline as :meth:`retrieve`; returns the counts the
+        Langfuse ``retrieval_hits`` span consumes (BM25 contribution,
+        dense contribution, post-rerank survivors). The counts come
+        from the components' actual output, not the rerank pool size,
+        so a BM25 retriever that drops zero-score hits surfaces fewer
+        contributions than the configured pool — which is what we
+        want to surface on the dashboard.
         """
         if top_k <= 0:
             raise ValueError(f"top_k must be positive; got {top_k}")
         if self.corpus_size == 0:
-            return []
+            return RetrievalStats(
+                results=[],
+                bm25_count=0,
+                dense_count=0,
+                post_rerank_count=0,
+            )
 
         rerank_input_size = top_k * self._config.rerank_multiplier
         # BM25 is sync (CPU-bound, sub-millisecond); Dense is sync but
@@ -113,6 +172,17 @@ class EvidenceRetriever:
             top_k=rerank_input_size,
         )
         if not merged:
-            return []
+            return RetrievalStats(
+                results=[],
+                bm25_count=len(bm25_results),
+                dense_count=len(dense_results),
+                post_rerank_count=0,
+            )
 
-        return await self._reranker.rerank(query, merged, top_k=top_k)
+        results = await self._reranker.rerank(query, merged, top_k=top_k)
+        return RetrievalStats(
+            results=results,
+            bm25_count=len(bm25_results),
+            dense_count=len(dense_results),
+            post_rerank_count=len(results),
+        )
