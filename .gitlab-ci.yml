@@ -139,6 +139,54 @@ agent-eval:
     # repo root — keeping this command flat means Task 22's GitHub
     # Actions mirror is a near-identical one-line copy.
     - ./scripts/run_eval_gate.sh
+  after_script:
+    # Post the markdown diff report as an MR comment whether the
+    # gate passed or failed (after_script runs on both paths).
+    #
+    # Uses the GitLab API via curl directly — avoids installing glab
+    # into the python:3.12-slim image, and the curl + jq baseline is
+    # already present (apt-installed by .python_base's siblings or
+    # via pip's bundled wheel deps). The Python `python -c` JSON
+    # encode below means we don't have to worry about jq specifically.
+    #
+    # Auth precedence:
+    #   1. GLAB_TOKEN — preferred; a masked project / group access
+    #      token with `api` scope. Set this if you want CI comments.
+    #   2. CI_JOB_TOKEN — works if the project's CI/CD settings
+    #      allow job-token MR-note writes; some self-hosted
+    #      installations restrict this.
+    # Both unset → no-op (info log only). The job's pass/fail status
+    # is what blocks merge; the comment is informational.
+    - |
+      if [ -z "${CI_MERGE_REQUEST_IID:-}" ]; then
+        echo "info: not an MR pipeline; skipping comment post"
+        exit 0
+      fi
+      REPORT="${CI_PROJECT_DIR}/sidecar/var/eval_gate_report.md"
+      if [ ! -f "$REPORT" ]; then
+        echo "warn: $REPORT not found; nothing to comment"
+        exit 0
+      fi
+      TOKEN="${GLAB_TOKEN:-${CI_JOB_TOKEN:-}}"
+      HEADER_NAME="PRIVATE-TOKEN"
+      if [ -z "${GLAB_TOKEN:-}" ] && [ -n "${CI_JOB_TOKEN:-}" ]; then
+        HEADER_NAME="JOB-TOKEN"
+      fi
+      if [ -z "$TOKEN" ]; then
+        echo "info: no GLAB_TOKEN / CI_JOB_TOKEN; skipping comment post"
+        exit 0
+      fi
+      # JSON-encode the report body via Python (already on PATH from
+      # the python-base image) so embedded backticks / quotes / newlines
+      # don't break the request payload.
+      BODY_JSON="$(REPORT_PATH="$REPORT" python -c 'import json,os; print(json.dumps({"body": open(os.environ["REPORT_PATH"]).read()}))')"
+      curl --silent --show-error --fail-with-body \
+        --request POST \
+        --header "${HEADER_NAME}: ${TOKEN}" \
+        --header "Content-Type: application/json" \
+        --data "${BODY_JSON}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/merge_requests/${CI_MERGE_REQUEST_IID}/notes" \
+        || echo "warn: MR-note POST failed; comment skipped (job status still gates the merge)"
   artifacts:
     when: always
     # Artifact paths are evaluated relative to $CI_PROJECT_DIR, *not*
