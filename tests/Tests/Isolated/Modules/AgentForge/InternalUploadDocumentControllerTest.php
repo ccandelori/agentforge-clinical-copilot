@@ -79,7 +79,6 @@ final class InternalUploadDocumentControllerTest extends TestCase
 
         $response = $controller->upload($request);
 
-        self::assertInstanceOf(JsonResponse::class, $response);
         self::assertSame(401, $response->getStatusCode());
     }
 

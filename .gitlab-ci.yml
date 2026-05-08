@@ -71,10 +71,10 @@ phpunit-isolated:
 .python_base:
   image: python:3.12-slim
   before_script:
-    - apt-get update -qq
-    - apt-get install -y -qq --no-install-recommends curl ca-certificates
-    - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - export PATH="$HOME/.local/bin:$PATH"
+    # uv ships as a PyPI wheel — no curl/apt-get bootstrap needed.
+    # Avoids the recurring "no free space in /var/cache/apt/archives"
+    # failure on shared GitLab runners with full disks.
+    - pip install --quiet --root-user-action=ignore uv
     - cd sidecar
     - uv sync --frozen
   cache:
