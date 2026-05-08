@@ -1,0 +1,89 @@
+# Evidence-retrieval eval cases (10) — hybrid RAG over the loaded
+# guideline corpus (sidecar/data/guidelines/).
+#
+# Each case poses a clinical question whose answer is grounded in a
+# specific chunk in the corpus. The harness verifies that the
+# retrieval layer (BM25 + dense + cross-encoder rerank) surfaces that
+# chunk among its top-k results AND that the synthesizer's response
+# carries a GUIDELINE Citation pointing at the right chunk.
+#
+# Real chunk_ids referenced (from sidecar/data/guidelines/index.json):
+#   diabetes-ada-standards-glycemic-targets::a1c-goal-for-most-nonpregnant-adults::0
+#   diabetes-ada-standards-glycemic-targets::less-stringent-a1c-goals::0
+#   diabetes-ada-standards-glycemic-targets::glycemic-targets-in-practice::0
+#   diabetes-ada-standards-glycemic-targets::hypoglycemia::0
+#   hypertension-acc-aha-2017-targets::blood-pressure-categories-in-mmhg::0
+#   hypertension-acc-aha-2017-targets::treatment-targets::0
+#   hypertension-acc-aha-2017-targets::first-line-pharmacologic-options::0
+#   hypertension-acc-aha-2017-targets::special-populations::0
+#   hypertension-acc-aha-2017-targets::out-of-office-confirmation::0
+#   labs-a1c-interpretation::a1c-as-a-diagnostic-test::0
+#   labs-a1c-interpretation::diagnostic-categories::0
+#   labs-a1c-interpretation::when-not-to-use-a1c::0
+#   labs-a1c-interpretation::a1c-to-average-glucose-conversion-eag::0
+#   lipids-aha-acc-2018-cholesterol::four-major-statin-benefit-groups::0
+#   lipids-aha-acc-2018-cholesterol::intensity-of-statin-therapy::0
+#   lipids-aha-acc-2018-cholesterol::treatment-recommendations::0
+#   renal-kdigo-ckd-staging::gfr-categories::0
+#   renal-kdigo-ckd-staging::albuminuria-categories::0
+#   renal-kdigo-ckd-staging::combined-risk-stratification::0
+
+- id: w2_evr_01
+  category: evidence_retrieval
+  patient_id: 8
+  query: "What is the recommended A1c target for most nonpregnant adults with diabetes?"
+  expected_behavior: "Retrieves chunk diabetes-ada-standards-glycemic-targets::a1c-goal-for-most-nonpregnant-adults::0 in top-3. Response cites this chunk via a GUIDELINE Citation, states the <7% target, and notes individualization factors. Does not invent a single number without the individualization caveat."
+
+- id: w2_evr_02
+  category: evidence_retrieval
+  patient_id: 8
+  query: "When should I consider a less stringent A1c target like <8% instead of <7%?"
+  expected_behavior: "Retrieves chunk diabetes-ada-standards-glycemic-targets::less-stringent-a1c-goals::0 in top-3. Response cites it via a GUIDELINE Citation and lists the criteria (limited life expectancy, advanced complications, comorbidities, long-standing diabetes). No criteria fabricated beyond the chunk."
+
+- id: w2_evr_03
+  category: evidence_retrieval
+  patient_id: 8
+  query: "What is the BP target for an adult with confirmed stage 2 hypertension under the 2017 ACC/AHA guideline?"
+  expected_behavior: "Retrieves hypertension-acc-aha-2017-targets::treatment-targets::0 (and ideally hypertension-acc-aha-2017-targets::blood-pressure-categories-in-mmhg::0) in top-3. Cites the <130/80 mmHg target with a GUIDELINE Citation. Does not import older JNC-7 numbers."
+
+- id: w2_evr_04
+  category: evidence_retrieval
+  patient_id: 8
+  query: "What are the first-line antihypertensive options under the 2017 ACC/AHA guideline?"
+  expected_behavior: "Retrieves hypertension-acc-aha-2017-targets::first-line-pharmacologic-options::0 in top-3. Lists thiazide diuretics, calcium channel blockers, ACE inhibitors or ARBs (with the do-not-combine ACEi+ARB caveat). GUIDELINE Citation pinned to that chunk."
+
+- id: w2_evr_05
+  category: evidence_retrieval
+  patient_id: 8
+  query: "How is CKD staged by GFR under KDIGO?"
+  expected_behavior: "Retrieves renal-kdigo-ckd-staging::gfr-categories::0 in top-3. Lists G1..G5 with their GFR ranges. GUIDELINE Citation pinned to that chunk. Does not collapse G3a / G3b into a single G3 stage."
+
+- id: w2_evr_06
+  category: evidence_retrieval
+  patient_id: 8
+  query: "What is the KDIGO albuminuria categorization?"
+  expected_behavior: "Retrieves renal-kdigo-ckd-staging::albuminuria-categories::0 in top-3. Lists A1 (<30), A2 (30-300), A3 (>300) with ACR units (mg/g). GUIDELINE Citation. Notes first-morning-void preferred specimen."
+
+- id: w2_evr_07
+  category: evidence_retrieval
+  patient_id: 8
+  query: "Which patients fall into the four major statin benefit groups under the 2018 AHA/ACC cholesterol guideline?"
+  expected_behavior: "Retrieves lipids-aha-acc-2018-cholesterol::four-major-statin-benefit-groups::0 in top-3. Lists all four groups (clinical ASCVD; severe LDL>=190; diabetes age 40-75; primary prevention age 40-75 with ASCVD risk >=7.5%). GUIDELINE Citation."
+
+- id: w2_evr_08
+  category: evidence_retrieval
+  patient_id: 8
+  query: "What is the recommended statin intensity for a 60-year-old with clinical ASCVD?"
+  expected_behavior: "Retrieves lipids-aha-acc-2018-cholesterol::treatment-recommendations::0 in top-3. Cites the high-intensity-statin recommendation for clinical ASCVD age <=75. GUIDELINE Citation. Does not fabricate a specific drug pick (the chunk recommends intensity, not an agent)."
+
+- id: w2_evr_09
+  category: evidence_retrieval
+  patient_id: 8
+  query: "When is A1c unreliable as a diagnostic test for diabetes?"
+  expected_behavior: "Retrieves labs-a1c-interpretation::when-not-to-use-a1c::0 in top-3. Lists the major conditions (hemoglobinopathies, recent transfusion, hemolytic anemia, iron-deficiency anemia, EPO therapy, pregnancy 2nd/3rd trimester, ESRD, recent severe hyperglycemia). GUIDELINE Citation."
+
+- id: w2_evr_10
+  category: evidence_retrieval
+  patient_id: 8
+  query: "What A1c value confirms a diagnosis of diabetes?"
+  expected_behavior: "Retrieves labs-a1c-interpretation::a1c-as-a-diagnostic-test::0 in top-3. Cites A1c >=6.5% with the NGSP-certified / DCCT-aligned assay caveat. Notes the diagnosis requires two abnormal results (or unequivocal hyperglycemia). GUIDELINE Citation."

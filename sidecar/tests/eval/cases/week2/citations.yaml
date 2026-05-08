@@ -1,0 +1,75 @@
+# Citation-contract eval cases (10) — verifies the W2 citation
+# discipline: every clinical claim is cited; the source_type matches
+# the underlying source kind; chart facts (OPENEMR_RECORD) and
+# guideline evidence (GUIDELINE) are kept distinct; scanned-source
+# citations carry high-confidence PageBBoxes.
+#
+# Real fixtures referenced:
+#   GUIDELINE chunks: see sidecar/data/guidelines/index.json
+#   LAB_PDF: lab-results/p01-chen-lipid-panel.pdf,
+#            lab-results/p04-kowalski-cmp.pdf,
+#            lab-results/p03-reyes-hba1c.png
+#   INTAKE_FORM: intake-forms/p02-whitaker-intake.pdf
+#
+# Eula (patient_id 8) has the populated W1 OpenEMR chart used as the
+# OPENEMR_RECORD substrate for chart-based claims.
+
+- id: w2_cit_01
+  category: citations
+  patient_id: 8
+  query: "Give me a chart overview for this patient with citations."
+  expected_behavior: "Every clinical claim (active problem, current med, allergy, recent vital) carries an OPENEMR_RECORD Citation. No GUIDELINE citations attached to chart-resident facts. Demographics statements that do not constitute clinical claims may be uncited."
+
+- id: w2_cit_02
+  category: citations
+  patient_id: 8
+  query: "Should this patient be on a statin given her ASCVD risk profile?"
+  expected_behavior: "Patient-specific risk facts (LDL, age, comorbidities) cite OPENEMR_RECORD. The statin-benefit-group recommendation cites a GUIDELINE chunk under lipids-aha-acc-2018-cholesterol. Chart facts and guideline evidence are NOT collapsed into a single citation type."
+
+- id: w2_cit_03
+  category: citations
+  patient_id: 1
+  query: "Summarize the abnormal lipids on this patient's uploaded panel (p01-chen-lipid-panel.pdf)."
+  expected_behavior: "Each abnormal value carries a LAB_PDF Citation with source_id = p01-chen-lipid-panel and a PageBBox. Each PageBBox.bbox_confidence is >= 0.7. Reference-range explanations may cite a GUIDELINE chunk; numeric values from the PDF do not."
+
+- id: w2_cit_04
+  category: citations
+  patient_id: 4
+  query: "Walk through the abnormalities on this patient's CMP (p04-kowalski-cmp.pdf) and what they imply."
+  expected_behavior: "Lab values cite LAB_PDF (p04-kowalski-cmp). Implication statements that draw on guideline thresholds (e.g. KDIGO GFR categories) cite a GUIDELINE chunk under renal-kdigo-ckd-staging. Mixed-source response keeps the two citation types separate."
+
+- id: w2_cit_05
+  category: citations
+  patient_id: 2
+  query: "Confirm this patient's allergies from the intake form (p02-whitaker-intake.pdf)."
+  expected_behavior: "Each allergy claim carries an INTAKE_FORM Citation with a PageBBox (bbox_confidence >= 0.7). If the form lists 'NKDA' the response repeats that verbatim and cites it. No allergy claim is uncited."
+
+- id: w2_cit_06
+  category: citations
+  patient_id: 8
+  query: "What is the recommended A1c target for this patient?"
+  expected_behavior: "Generic recommendation portion cites GUIDELINE chunk diabetes-ada-standards-glycemic-targets::a1c-goal-for-most-nonpregnant-adults::0. Patient-specific individualization (age, comorbidities, life expectancy) cites OPENEMR_RECORD. Source types match the source kind on every claim."
+
+- id: w2_cit_07
+  category: citations
+  patient_id: 3
+  query: "Interpret this patient's A1c value (p03-reyes-hba1c.png) against the ADA diagnostic categories."
+  expected_behavior: "The numeric A1c value carries a LAB_PDF Citation pointing at p03-reyes-hba1c. The diagnostic-category boundary (>=6.5% = diabetes) cites GUIDELINE chunk labs-a1c-interpretation::diagnostic-categories::0. The two source_types are not transposed."
+
+- id: w2_cit_08
+  category: citations
+  patient_id: 8
+  query: "List this patient's active medications."
+  expected_behavior: "Each medication entry carries an OPENEMR_RECORD Citation referencing a real prescription record id. No fabricated record ids. No GUIDELINE citations attached to a chart-resident med list."
+
+- id: w2_cit_09
+  category: citations
+  patient_id: 8
+  query: "What is the BP category for a reading of 138/86 in an adult under the 2017 ACC/AHA guideline?"
+  expected_behavior: "Pure-guideline question — answer cites the BP-categories chunk hypertension-acc-aha-2017-targets::blood-pressure-categories-in-mmhg::0. Stage 1 hypertension is named. No OPENEMR_RECORD or LAB_PDF citation is attached because no patient-specific record is referenced."
+
+- id: w2_cit_10
+  category: citations
+  patient_id: 8
+  query: "Summarize the patient's diabetes status with both chart context and current ADA guidance."
+  expected_behavior: "Mixed response. Patient-specific facts (last A1c, current meds, problem-list entries) cite OPENEMR_RECORD. Treatment-target / diagnostic-criterion statements cite GUIDELINE chunks (diabetes-ada-standards-glycemic-targets and/or labs-a1c-interpretation). Citations distinguish the two sources; the response does not blur 'patient is at <7%' with 'guideline says <7%' under one citation."
