@@ -53,6 +53,7 @@ from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.orchestrator.planner import Plan, UseCase
 from agentforge.prompts import load_prompt
+from agentforge.rag.evidence_retriever import RetrievalStats
 from agentforge.rag.types import RetrievalResult
 from agentforge.schemas.citation import Citation as W2Citation
 from agentforge.schemas.intake import IntakeFormExtraction
@@ -176,11 +177,22 @@ class _VisionExtractorLike(Protocol):
 
 class _EvidenceRetrieverLike(Protocol):
     """Subset of ``EvidenceRetriever`` consumed by
-    ``evidence_retriever_node``."""
+    ``evidence_retriever_node``.
+
+    The node calls :meth:`retrieve_with_stats` so the
+    ``retrieval_hits`` Langfuse span can carry the per-stage counts
+    alongside the retrieved chunks. :meth:`retrieve` stays in the
+    contract for legacy callers (W1 fallback) but the node itself
+    reads the stats path.
+    """
 
     async def retrieve(
         self, query: str, *, top_k: int = 5
     ) -> list[RetrievalResult]: ...
+
+    async def retrieve_with_stats(
+        self, query: str, *, top_k: int = 5
+    ) -> RetrievalStats: ...
 
 
 class _SynthesisLLMLike(Protocol):
@@ -383,6 +395,8 @@ async def intake_extractor_node(
 async def evidence_retriever_node(
     state: AgentState,
     retriever: _EvidenceRetrieverLike,
+    *,
+    langfuse: LangfuseClient | None = None,
 ) -> dict[str, Any]:
     """Drive guideline retrieval against ``state["query"]``.
 
@@ -392,6 +406,16 @@ async def evidence_retriever_node(
     call the retriever with an empty string. Stamps ``last_node`` so
     the next supervisor handoff span knows where the loop-back came
     from.
+
+    When ``langfuse`` is provided alongside a non-Null
+    ``state["langfuse_trace"]``, emits one ``retrieval_hits`` span per
+    successful retrieval call carrying ``bm25_count``, ``dense_count``,
+    and ``post_rerank_count`` (the post-RRF, pre-rerank count is
+    captured under ``dense_count + bm25_count`` shape per
+    W2_ARCHITECTURE.md §7). The same Null-trace guard the supervisor
+    uses for handoff spans applies here — without a trace handle, the
+    span is suppressed so the dashboard's trace_id never flips to
+    ``None`` from a misrouted Null call.
     """
     last_node_update: dict[str, Any] = {
         "last_node": RouteDecision.EVIDENCE_RETRIEVER.value
@@ -401,8 +425,40 @@ async def evidence_retriever_node(
     query = state["query"]
     if not query:
         return last_node_update
-    results = await retriever.retrieve(query)
-    return {**last_node_update, "evidence_chunks": results}
+    stats = await retriever.retrieve_with_stats(query)
+    _maybe_record_retrieval_hits(
+        langfuse,
+        state.get("langfuse_trace"),
+        bm25_count=stats.bm25_count,
+        dense_count=stats.dense_count,
+        post_rerank_count=stats.post_rerank_count,
+    )
+    return {**last_node_update, "evidence_chunks": stats.results}
+
+
+def _maybe_record_retrieval_hits(
+    langfuse: LangfuseClient | None,
+    trace: TraceHandle | None,
+    *,
+    bm25_count: int,
+    dense_count: int,
+    post_rerank_count: int,
+) -> None:
+    """Forward the per-stage counts to Langfuse when both client and trace are wired.
+
+    Mirrors :func:`_maybe_record_handoff` — either argument missing →
+    no-op. Keeps the node body free of the ``if langfuse is None or
+    trace is None`` guard while preserving the structural property
+    that we never call into the Null implementation with a fake trace.
+    """
+    if langfuse is None or trace is None:
+        return
+    langfuse.record_retrieval_hits(
+        trace,
+        bm25_count=bm25_count,
+        dense_count=dense_count,
+        post_rerank_count=post_rerank_count,
+    )
 
 
 def _state_messages_to_llm_messages(
@@ -812,7 +868,9 @@ def build_graph(
     async def _evidence_retriever(state: AgentState) -> dict[str, Any]:
         if evidence_retriever is None:
             return {"last_node": RouteDecision.EVIDENCE_RETRIEVER.value}
-        return await evidence_retriever_node(state, evidence_retriever)
+        return await evidence_retriever_node(
+            state, evidence_retriever, langfuse=langfuse
+        )
 
     async def _synthesize(state: AgentState) -> dict[str, Any]:
         if synthesis_llm is None:

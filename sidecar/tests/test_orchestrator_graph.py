@@ -186,7 +186,13 @@ def _retrieval_result(chunk_id: str = "c1", score: float = 0.9) -> RetrievalResu
 
 
 class StubEvidenceRetriever:
-    """Test stand-in for ``EvidenceRetriever``."""
+    """Test stand-in for ``EvidenceRetriever``.
+
+    Implements both the legacy ``retrieve()`` and the stats-augmented
+    ``retrieve_with_stats()`` introduced in Task 15.5. The stats path
+    is what the node calls in production; ``retrieve()`` stays here
+    for any callers / tests that pre-date the change.
+    """
 
     def __init__(self, results: list[RetrievalResult]) -> None:
         self._results = results
@@ -197,6 +203,19 @@ class StubEvidenceRetriever:
     ) -> list[RetrievalResult]:
         self.calls.append({"query": query, "top_k": top_k})
         return list(self._results)
+
+    async def retrieve_with_stats(
+        self, query: str, *, top_k: int = 5
+    ) -> Any:
+        from agentforge.rag.evidence_retriever import RetrievalStats
+
+        self.calls.append({"query": query, "top_k": top_k})
+        return RetrievalStats(
+            results=list(self._results),
+            bm25_count=len(self._results),
+            dense_count=len(self._results),
+            post_rerank_count=len(self._results),
+        )
 
 
 class StubSynthesisLLM:

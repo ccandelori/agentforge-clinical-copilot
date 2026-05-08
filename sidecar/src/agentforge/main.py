@@ -67,13 +67,13 @@ from agentforge.orchestrator.planner import Planner
 from agentforge.orchestrator.truncation import SynthesisInputTruncator
 from agentforge.rag import (
     BM25Retriever,
-    CrossEncoderReranker,
     DenseRetriever,
     EvidenceRetriever,
     RRFMerger,
     SentenceTransformerCrossEncoder,
     SentenceTransformerEncoder,
     load_corpus,
+    select_reranker,
 )
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.timeouts import TimeoutPolicy
@@ -301,12 +301,21 @@ def _build_evidence_retriever(settings: Settings) -> EvidenceRetriever | None:
         return None
     chunks = load_corpus(settings.guidelines_index_path)
     encoder = SentenceTransformerEncoder()
-    cross_encoder = SentenceTransformerCrossEncoder()
+    # Reranker selection lives in ``rag.reranker_factory.select_reranker``
+    # so the construction shape is shared with eval ablation runs and
+    # keeps the COHERE_API_KEY branch out of this module's import graph
+    # (the cohere SDK is an optional extra). Cross-encoder is the local
+    # default; deployments that set ``COHERE_API_KEY`` get the hosted
+    # rerank API instead.
+    reranker = select_reranker(
+        cohere_api_key=settings.cohere_api_key or None,
+        cross_encoder_factory=SentenceTransformerCrossEncoder,
+    )
     return EvidenceRetriever(
         bm25=BM25Retriever(chunks),
         dense=DenseRetriever(chunks, encoder=encoder),
         merger=RRFMerger(),
-        reranker=CrossEncoderReranker(cross_encoder),
+        reranker=reranker,
     )
 
 

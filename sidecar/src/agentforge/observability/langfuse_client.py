@@ -447,6 +447,37 @@ class AgentLangfuse:
         )
         span.end()
 
+    def record_retrieval_hits(
+        self,
+        trace: TraceHandle,
+        *,
+        bm25_count: int,
+        dense_count: int,
+        post_rerank_count: int,
+    ) -> None:
+        """Emit a span carrying the W2 ``retrieval_hits`` per-stage counts.
+
+        Three PHI-safe metadata fields — sizes of the BM25 / dense /
+        post-rerank lists. The same Null-trace guard the other
+        ``record_*`` helpers use applies: when the trace is the Null
+        implementation's handle, the call short-circuits before hitting
+        the SDK.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="retrieval_hits",
+            as_type="span",
+            metadata={
+                "bm25_count": bm25_count,
+                "dense_count": dense_count,
+                "post_rerank_count": post_rerank_count,
+            },
+        )
+        span.end()
+
     def record_handoff_span(
         self,
         trace: TraceHandle,

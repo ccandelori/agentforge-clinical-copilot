@@ -12,6 +12,41 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Evidence-retriever node consumes `retrieve_with_stats`, not `retrieve`
+
+**Plan:** Task 15.5 calls for emitting a Langfuse `retrieval_hits` span
+with per-stage counts (`bm25_count`, `dense_count`, `post_rerank_count`).
+The original `EvidenceRetriever.retrieve()` returned only the final result
+list — no stage counts.
+
+**Deviation:** Added a sibling method `EvidenceRetriever.retrieve_with_stats()`
+returning a new `RetrievalStats` DTO (results + the three counts). The
+existing `retrieve()` becomes a thin wrapper that drops the counts. The
+W2 LangGraph node now calls `retrieve_with_stats()` so the span payload
+is computed inside the existing seam — no per-stage component plumbing
+leaks into the orchestrator.
+
+**Why:** The task spec offered two options ("extend the return type
+carefully (test-first) or compute them at the call site by invoking
+the components"). Computing at the call site would have required the
+node to know about BM25/Dense/RRF/Reranker individually, breaking the
+W2_ARCHITECTURE.md §3 contract that the pipeline is a single
+black-box surface. Extending the return type via a sibling method keeps
+both surfaces — legacy callers stay on `retrieve()`, the node speaks
+`retrieve_with_stats()` — and adds zero new top-level dependencies.
+
+**Citation schema check:** the spec's field-name list (`source_id`,
+`page_or_section`, `field_or_chunk_id`, `quote_or_value`) matches the
+canonical `agentforge.schemas.citation.Citation` shape exactly — no
+schema-vs-spec drift to log.
+
+**What we learned:** When a return-type extension is the right answer,
+adding a sibling method beats forcing every existing caller through a
+new DTO. The wrapper pattern keeps the diff blast radius local to the
+new caller (the node).
+
+---
+
 ## 2026-05-08 — Sidecar image delta is ~1.2 GB, not the spec's ~370 MB
 
 **Plan:** Taskmaster Task 21 set the image-size target at 300-450 MB
