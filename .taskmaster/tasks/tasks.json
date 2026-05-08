@@ -6901,7 +6901,7 @@
         "dependencies": [
           "20"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -6968,7 +6968,7 @@
         "complexity": 4,
         "recommendedSubtasks": 0,
         "expansionPrompt": "Create .github/workflows/agent-eval.yml mirroring GitLab eval gate job: trigger on PR, use same Docker image as GitLab, run identical eval script and eval_config.yaml, same threshold logic. Post PR comment with diff using actions/github-script. Share eval runner script between both CI systems to prevent drift.",
-        "updatedAt": "2026-05-08T19:17:25.601Z"
+        "updatedAt": "2026-05-08T19:53:58.574Z"
       },
       {
         "id": "23",
@@ -7641,7 +7641,7 @@
         "description": "Run the full 50-case Week 2 eval suite against the deployed production agent (post-Task 30 deployment), export per-category pass rates with judge rationales for failures, compute delta against the pinned week2.json baseline, and author the graded artifact at docs/eval-report-2026-05-04.md.",
         "details": "1. Create docs/eval-report-2026-05-04.md using the existing report structure from docs/eval-report-2026-05-03.md as a reference, but with expanded sections for Week 2's more sophisticated eval:\n\n2. Report Structure:\n   ```markdown\n   # Week 2 Eval Report 2026-05-04\n   \n   ## Executive Summary\n   - Total cases: 50\n   - Overall pass rate: X%\n   - Gate status: PASS/FAIL\n   - Gate self-test result: PASS (citing test_gate_blocks_regression.py outcome)\n   - Total run cost: $X.XX (from cost.py aggregation)\n   - Baseline comparison: +X.X% / -X.X% vs week2.json\n   \n   ## Methodology\n   \n   ### Programmatic Grounding Layer\n   - schema_valid: Pydantic validation (LabPdfExtraction, IntakeFormExtraction, Citation models)\n   - citation_present: Citation parser check via find_citations() in verifier/citation.py\n   - no_phi_in_logs: Regex scan over exported Langfuse traces for PHI patterns\n   \n   ### LLM-as-Judge Layer\n   - Model: claude-sonnet-4-6 at temperature=0\n   - factually_consistent: Checks claims match source documents (judges/factually_consistent.txt)\n   - safe_refusal: Checks appropriate refusal behavior (judges/safe_refusal.txt)\n   - Consensus voting: 3 independent evaluations with majority-vote aggregation\n   \n   ## Category-by-Category Breakdown\n   \n   ### extraction (12 cases)\n   - Pass rate: X/12 (X%)\n   - Delta from baseline: +X% / -X%\n   - Cases: [list with PASS/FAIL markers]\n   \n   ### evidence-retrieval (10 cases)\n   - Pass rate: X/10 (X%)\n   - Delta from baseline: +X% / -X%\n   - Cases: [list with PASS/FAIL markers]\n   \n   ### citations (10 cases)\n   - Pass rate: X/10 (X%)\n   - Delta from baseline: +X% / -X%\n   - Cases: [list with PASS/FAIL markers]\n   \n   ### refusals (8 cases)\n   - Pass rate: X/8 (X%)\n   - Delta from baseline: +X% / -X%\n   - Cases: [list with PASS/FAIL markers]\n   \n   ### missing-data (10 cases)\n   - Pass rate: X/10 (X%)\n   - Delta from baseline: +X% / -X%\n   - Cases: [list with PASS/FAIL markers]\n   \n   ## Failed Cases Detail\n   \n   For each failed case:\n   - Case ID and query\n   - Category\n   - Expected behavior\n   - Which rubric(s) failed\n   - LLM judge rationale (verbatim from LLMJudgeResult.rationale)\n   - Programmatic failure details (ungrounded citations, missing terms, etc.)\n   \n   ## Cost Analysis\n   \n   - Total LLM cost for 50-case run: $X.XX\n   - Breakdown by call type:\n     - Orchestrator turns: $X.XX (N calls)\n     - LLM judge evaluations: $X.XX (N calls × 3 consensus runs)\n   - Per-case average: $X.XX\n   - Cost computed via agentforge.observability.cost.calculate_cost()\n   \n   ## Baseline Delta\n   \n   Comparison against sidecar/tests/eval/baselines/week2.json:\n   \n   | Category | Baseline | Current | Delta |\n   |----------|----------|---------|-------|\n   | extraction | X% | X% | ±X% |\n   | evidence-retrieval | X% | X% | ±X% |\n   | citations | X% | X% | ±X% |\n   | refusals | X% | X% | ±X% |\n   | missing-data | X% | X% | ±X% |\n   \n   ## Gate Self-Test\n   \n   Result of test_gate_blocks_regression.py:\n   - Monkey-patched intake-extractor with fabricated lab value (A1c: 15.5% vs actual 8.2%)\n   - factually_consistent dropped from X% to Y% (delta: -Z%)\n   - Gate correctly blocked due to >5% regression threshold\n   - Test status: PASS\n   ```\n\n3. Implementation Steps:\n   a. Run the full 50-case eval suite against https://<droplet>:9300/ using EvalRunner\n   b. Collect results via EvalHarness.summarize() for aggregate stats\n   c. For each failed case, capture LLMJudgeResult.rationale from llm_judge.py\n   d. Load sidecar/tests/eval/baselines/week2.json and compute per-category deltas\n   e. Sum cost across all LLM calls using CallCost dataclass from cost.py\n   f. Run test_gate_blocks_regression.py and capture its output\n   g. Generate markdown using generate_report() as base, extending with new sections\n\n4. Data Sources:\n   - Cases from sidecar/tests/eval/cases/week2/*.yaml (5 category subdirectories)\n   - Baseline from sidecar/tests/eval/baselines/week2.json\n   - Graders from sidecar/tests/eval/graders/deterministic.py and llm_judge.py\n   - Cost from sidecar/src/agentforge/observability/cost.py\n   - Gate self-test from sidecar/tests/eval/test_gate_blocks_regression.py\n\n5. Artifact Requirements:\n   - Date-stamped filename: docs/eval-report-2026-05-04.md\n   - Format mirrors docs/eval-report-2026-05-03.md structure where applicable\n   - Must include verbatim judge rationales for any failures (graders need to see the LLM's reasoning)\n   - Must include the exact delta values against baseline with +/- signs\n   - Must show gate self-test result prominently in Executive Summary",
         "testStrategy": "1. Verify report file exists at docs/eval-report-2026-05-04.md with correct date stamp\n\n2. Validate report structure contains all required sections:\n   - Executive Summary with gate status and cost\n   - Methodology section with both programmatic and LLM-as-judge layers documented\n   - Category-by-category breakdown for all 5 categories (extraction, evidence-retrieval, citations, refusals, missing-data)\n   - Case counts match spec: 12+10+10+8+10 = 50 total\n   - Failed cases detail section with judge rationales\n   - Cost analysis section with total and breakdown\n   - Baseline delta table with all 5 categories\n\n3. Verify numerical consistency:\n   - Total cases = 50\n   - Sum of per-category cases = 50\n   - Pass rate percentages are mathematically correct (passed/total × 100)\n   - Delta values match (current - baseline)\n\n4. Verify gate self-test documentation:\n   - test_gate_blocks_regression.py result explicitly mentioned\n   - Shows factually_consistent category drop\n   - Confirms >5% threshold detection\n\n5. Verify cost calculation:\n   - Total cost is a positive dollar value\n   - Cost breakdown components sum to total\n   - Uses PRICING table from cost.py (claude-sonnet-4-6: $3/1M input, $15/1M output)\n\n6. Cross-reference with baseline:\n   - Load sidecar/tests/eval/baselines/week2.json\n   - Confirm all 5 category keys present in delta table\n   - Verify delta signs are correct (+/-)\n\n7. Verify failure rationales:\n   - Every failed case has a verbatim LLM judge rationale\n   - Rationale text is non-empty and descriptive\n   - Programmatic failure details included (e.g., ungrounded citation IDs)",
-        "status": "in-progress",
+        "status": "done",
         "dependencies": [
           "16",
           "17",
@@ -7715,7 +7715,7 @@
         "complexity": 5,
         "recommendedSubtasks": 0,
         "expansionPrompt": "Run full 50-case eval suite against deployed production agent post-Task 30, export per-category pass rates with judge rationales for failures, compute delta against week2.json baseline, author docs/eval-report-2026-05-04.md with Executive Summary, Methodology, Category-by-Category Breakdown, Failed Cases Detail, Cost Analysis, Baseline Delta table, and Gate Self-Test result.",
-        "updatedAt": "2026-05-08T19:17:26.861Z"
+        "updatedAt": "2026-05-08T19:53:59.840Z"
       },
       {
         "id": "32",
@@ -8271,9 +8271,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T19:17:26.861Z",
+      "lastModified": "2026-05-08T19:53:59.840Z",
       "taskCount": 39,
-      "completedCount": 23,
+      "completedCount": 25,
       "tags": [
         "week2"
       ]
