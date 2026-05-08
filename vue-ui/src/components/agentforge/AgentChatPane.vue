@@ -2,7 +2,25 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { useDocumentUpload } from '@/composables/useDocumentUpload'
+import {
+  useDocumentUpload,
+  type DocumentType,
+} from '@/composables/useDocumentUpload'
+
+/**
+ * Filename → BFF doc_type heuristic.
+ *
+ * The BFF route's `_ALLOWED_DOC_TYPES` is currently `{lab_pdf,
+ * intake_form}`. The picker in the composer is doc-type-agnostic, so
+ * we sniff the filename for lab markers; everything else falls back to
+ * intake_form (the demo's primary path). This is a deliberate
+ * shortcut — a future iteration will surface a doc-type select next
+ * to the attach button.
+ */
+const _LAB_FILENAME_PATTERN = /\b(lab|panel|cbc|cmp|lipid|hba1c|results?)\b/i
+function inferDocType(filename: string): DocumentType {
+  return _LAB_FILENAME_PATTERN.test(filename) ? 'lab_pdf' : 'intake_form'
+}
 import { useAgentForgeStore, type ChatMessage } from '@/stores/agentforge'
 
 import AgentMessage from './AgentMessage.vue'
@@ -149,7 +167,8 @@ async function onFileSelected(ev: Event): Promise<void> {
     return
   }
   try {
-    const { document_id } = await uploadDocument(file, uuid)
+    const docType = inferDocType(file.name)
+    const { document_id } = await uploadDocument(file, uuid, docType)
     store.setPendingAttachment({ documentId: document_id, filename: file.name })
     uploadError.value = null
   } catch (caught) {

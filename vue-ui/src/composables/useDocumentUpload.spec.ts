@@ -71,7 +71,7 @@ describe('useDocumentUpload', () => {
     const { uploadDocument } = useDocumentUpload()
 
     const file = makeFile()
-    const promise = uploadDocument(file, 'patient-uuid-1')
+    const promise = uploadDocument(file, 'patient-uuid-1', 'intake_form')
     respond({ success: true, document_id: 42 }, 201)
     const result = await promise
 
@@ -88,15 +88,28 @@ describe('useDocumentUpload', () => {
     expect(fd.get('file')).toBeInstanceOf(File)
     expect((fd.get('file') as File).name).toBe('lab.pdf')
     expect(fd.get('patient_uuid')).toBe('patient-uuid-1')
+    expect(fd.get('doc_type')).toBe('intake_form')
 
     expect(result).toEqual({ document_id: '42' })
+  })
+
+  it('forwards lab_pdf doc_type when supplied', async () => {
+    const { calls, respond } = setupFetchMock()
+    const { uploadDocument } = useDocumentUpload()
+
+    const promise = uploadDocument(makeFile(), 'p1', 'lab_pdf')
+    respond({ success: true, document_id: 9 })
+    await promise
+
+    const fd = calls[0]!.init.body as FormData
+    expect(fd.get('doc_type')).toBe('lab_pdf')
   })
 
   it('coerces a numeric document_id from the BFF into a string', async () => {
     const { respond } = setupFetchMock()
     const { uploadDocument } = useDocumentUpload()
 
-    const promise = uploadDocument(makeFile(), 'p1')
+    const promise = uploadDocument(makeFile(), 'p1', 'intake_form')
     respond({ success: true, document_id: 7 })
     const result = await promise
 
@@ -107,7 +120,7 @@ describe('useDocumentUpload', () => {
     const { respond } = setupFetchMock()
     const { uploadDocument } = useDocumentUpload()
 
-    const promise = uploadDocument(makeFile(), 'p1')
+    const promise = uploadDocument(makeFile(), 'p1', 'intake_form')
     respond({ error: 'CSRF failed' }, 403)
 
     await expect(promise).rejects.toThrow(/upload failed/i)
@@ -117,7 +130,7 @@ describe('useDocumentUpload', () => {
     const { respond } = setupFetchMock()
     const { uploadDocument } = useDocumentUpload()
 
-    const promise = uploadDocument(makeFile(), 'p1')
+    const promise = uploadDocument(makeFile(), 'p1', 'intake_form')
     respond({ success: true })
 
     await expect(promise).rejects.toThrow(/document_id/i)
@@ -127,7 +140,7 @@ describe('useDocumentUpload', () => {
     const { fail } = setupFetchMock()
     const { uploadDocument } = useDocumentUpload()
 
-    const promise = uploadDocument(makeFile(), 'p1')
+    const promise = uploadDocument(makeFile(), 'p1', 'intake_form')
     fail(new TypeError('network down'))
 
     await expect(promise).rejects.toThrow()

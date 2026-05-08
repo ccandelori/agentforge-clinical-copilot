@@ -35,6 +35,13 @@ export interface UploadResult {
   readonly document_id: string
 }
 
+/**
+ * BFF-allowed document types. Mirrors `_ALLOWED_DOC_TYPES` in
+ * `sidecar/src/agentforge/dashboard_auth/upload_route.py`. Sending
+ * anything else gets a 422 from the route.
+ */
+export type DocumentType = 'intake_form' | 'lab_pdf'
+
 export interface UseDocumentUpload {
   /** ``true`` while a request is in flight. Surfaced for spinner UI. */
   isUploading: Ref<boolean>
@@ -48,7 +55,11 @@ export interface UseDocumentUpload {
    * thrown error carries a user-facing message; callers should surface
    * it as-is in the chat error bubble.
    */
-  uploadDocument: (file: File, patientUuid: string) => Promise<UploadResult>
+  uploadDocument: (
+    file: File,
+    patientUuid: string,
+    docType: DocumentType,
+  ) => Promise<UploadResult>
 }
 
 const UPLOAD_URL = '/api/agent/upload'
@@ -75,6 +86,7 @@ export function useDocumentUpload(): UseDocumentUpload {
   async function uploadDocument(
     file: File,
     patientUuid: string,
+    docType: DocumentType,
   ): Promise<UploadResult> {
     isUploading.value = true
     error.value = null
@@ -82,6 +94,7 @@ export function useDocumentUpload(): UseDocumentUpload {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('patient_uuid', patientUuid)
+    formData.append('doc_type', docType)
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => {
