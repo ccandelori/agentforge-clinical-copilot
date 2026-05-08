@@ -1,9 +1,17 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { IntakeExtraction } from '@/composables/useAgentTurn'
 
 import ExtractionPanel from '../ExtractionPanel.vue'
+
+// Stub vue-router — ExtractionPanel reads route.params.id to build the
+// document-fetch URL. The component-level concern under test here is
+// rendering, not routing; the source-modal interaction belongs in an
+// integration test (out of scope for this spec).
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { id: 'patient-uuid-fixture' } }),
+}))
 
 function makeCitation() {
   return {

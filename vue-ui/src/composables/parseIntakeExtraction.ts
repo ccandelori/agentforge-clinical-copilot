@@ -12,11 +12,20 @@
  * tolerated; structurally-invalid required fields → null parse result.
  */
 
+import type { PageBBox } from '@/types/citation'
+
 export interface IntakeExtractionCitation {
   readonly sourceType: string
   readonly sourceId: string
   readonly pageOrSection: string
   readonly evidenceText: string
+  /**
+   * Normalized 0..1 bounding box on a 1-indexed PDF page. Present on
+   * scanned-source citations (`source_type` of `lab_pdf` or
+   * `intake_form`); absent on `openemr_record` and `guideline`
+   * citations (which don't have geometry by design).
+   */
+  readonly pageBbox?: PageBBox
 }
 
 export interface IntakeExtractionDemographic {
@@ -75,6 +84,44 @@ function parseStringList(v: unknown): readonly string[] {
   return out
 }
 
+function parseNumberInRange(
+  v: unknown,
+  min: number,
+  max: number,
+): number | undefined {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return undefined
+  if (v < min || v > max) return undefined
+  return v
+}
+
+function parsePageBbox(v: unknown): PageBBox | undefined {
+  if (!isObject(v)) return undefined
+  const page = v.page
+  if (typeof page !== 'number' || !Number.isInteger(page) || page < 1) {
+    return undefined
+  }
+  const x0 = parseNumberInRange(v.x0, 0, 1)
+  const y0 = parseNumberInRange(v.y0, 0, 1)
+  const x1 = parseNumberInRange(v.x1, 0, 1)
+  const y1 = parseNumberInRange(v.y1, 0, 1)
+  const conf = parseNumberInRange(v.bbox_confidence, 0, 1)
+  if (
+    x0 === undefined
+    || y0 === undefined
+    || x1 === undefined
+    || y1 === undefined
+    || conf === undefined
+  ) {
+    return undefined
+  }
+  // Schema-level invariant on the sidecar: x1 > x0 and y1 > y0. The
+  // route validates and rejects inverted boxes; we mirror the same
+  // rule defensively here so a deserialised payload that survived
+  // some buggy intermediate stays out of the renderer.
+  if (x1 <= x0 || y1 <= y0) return undefined
+  return { page, x0, y0, x1, y1, bbox_confidence: conf }
+}
+
 function parseCitation(v: unknown): IntakeExtractionCitation | null {
   if (!isObject(v)) return null
   const sourceType = parseString(v.source_type)
@@ -89,7 +136,14 @@ function parseCitation(v: unknown): IntakeExtractionCitation | null {
   ) {
     return null
   }
-  return { sourceType, sourceId, pageOrSection, evidenceText }
+  const pageBbox = parsePageBbox(v.page_bbox)
+  return {
+    sourceType,
+    sourceId,
+    pageOrSection,
+    evidenceText,
+    ...(pageBbox !== undefined ? { pageBbox } : {}),
+  }
 }
 
 function parseDemographic(v: unknown): IntakeExtractionDemographic | null {

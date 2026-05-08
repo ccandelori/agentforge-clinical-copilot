@@ -114,6 +114,73 @@ describe('parseIntakeExtraction', () => {
     expect(out.allergies[0]?.substance).toBe('Penicillin')
   })
 
+  it('parses page_bbox on citations when present (scanned sources)', () => {
+    const raw = {
+      document_id: 1,
+      patient_id: 1,
+      extraction_confidence: 0.85,
+      chief_concern: 'Knee pain',
+      chief_concern_citation: {
+        ...VALID_CITATION,
+        page_bbox: {
+          page: 1,
+          x0: 0.1,
+          y0: 0.2,
+          x1: 0.4,
+          y1: 0.3,
+          bbox_confidence: 0.92,
+        },
+      },
+    }
+    const out = parseIntakeExtraction(raw) as IntakeExtraction
+    const cc = out.chiefConcernCitation
+    expect(cc?.pageBbox).toEqual({
+      page: 1,
+      x0: 0.1,
+      y0: 0.2,
+      x1: 0.4,
+      y1: 0.3,
+      bbox_confidence: 0.92,
+    })
+  })
+
+  it('omits pageBbox when the wire payload has no page_bbox', () => {
+    const raw = {
+      document_id: 1,
+      patient_id: 1,
+      extraction_confidence: 0.85,
+      chief_concern: 'Knee pain',
+      chief_concern_citation: VALID_CITATION,
+    }
+    const out = parseIntakeExtraction(raw) as IntakeExtraction
+    expect(out.chiefConcernCitation?.pageBbox).toBeUndefined()
+  })
+
+  it('drops malformed page_bbox without dropping the citation', () => {
+    const raw = {
+      document_id: 1,
+      patient_id: 1,
+      extraction_confidence: 0.85,
+      chief_concern: 'Knee pain',
+      chief_concern_citation: {
+        ...VALID_CITATION,
+        // Inverted box — violates the schema invariant. Should land
+        // as a citation without pageBbox, NOT as a null citation.
+        page_bbox: {
+          page: 1,
+          x0: 0.5,
+          y0: 0.5,
+          x1: 0.4,
+          y1: 0.4,
+          bbox_confidence: 0.9,
+        },
+      },
+    }
+    const out = parseIntakeExtraction(raw) as IntakeExtraction
+    expect(out.chiefConcernCitation).toBeDefined()
+    expect(out.chiefConcernCitation?.pageBbox).toBeUndefined()
+  })
+
   it('preserves unsupported_fields', () => {
     const raw = {
       document_id: 1,

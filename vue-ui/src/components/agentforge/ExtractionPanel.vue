@@ -1,13 +1,55 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
+import DocumentViewer from '@/components/DocumentViewer.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
 import type { IntakeExtraction } from '@/composables/useAgentTurn'
+import type { PageBBox } from '@/types/citation'
 
 interface Props {
   extraction: IntakeExtraction
 }
 
 const props = defineProps<Props>()
+
+const route = useRoute()
+const showSource = ref<boolean>(false)
+
+/**
+ * Walk the extraction and collect every bbox-bearing citation. Used as
+ * the overlay set passed into the DocumentViewer when the user opens
+ * the source-document modal.
+ */
+const bboxes = computed<readonly PageBBox[]>(() => {
+  const out: PageBBox[] = []
+  const push = (bbox: PageBBox | undefined): void => {
+    if (bbox !== undefined) out.push(bbox)
+  }
+
+  push(props.extraction.chiefConcernCitation?.pageBbox)
+  for (const d of props.extraction.demographics) push(d.citation.pageBbox)
+  for (const m of props.extraction.medications) push(m.citation.pageBbox)
+  for (const a of props.extraction.allergies) push(a.citation.pageBbox)
+  for (const f of props.extraction.familyHistory) push(f.citation.pageBbox)
+
+  return out
+})
+
+const sourceUrl = computed<string | null>(() => {
+  const patientUuid = route.params.id
+  if (typeof patientUuid !== 'string' || patientUuid.length === 0) {
+    return null
+  }
+  return (
+    `/api/agent/document/${props.extraction.documentId}`
+    + `?patient_uuid=${encodeURIComponent(patientUuid)}`
+  )
+})
+
+const canShowSource = computed<boolean>(
+  () => sourceUrl.value !== null && bboxes.value.length > 0,
+)
 
 const confidencePct = computed<number>(() => {
   return Math.round(props.extraction.extractionConfidence * 100)
@@ -47,12 +89,35 @@ const hasUnsupported = computed<boolean>(
       <h4 class="text-xs font-semibold uppercase tracking-wide text-ink-muted">
         Extracted from intake form
       </h4>
-      <span
-        class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
-        :class="confidenceTone"
-      >
-        {{ confidencePct }}% confidence
-      </span>
+      <div class="flex items-center gap-2">
+        <button
+          v-if="canShowSource"
+          type="button"
+          class="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink-muted hover:bg-surface-2 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          aria-label="View source document with extracted regions highlighted"
+          @click="showSource = true"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            class="h-3 w-3"
+            aria-hidden="true"
+          >
+            <path d="M14 4h6v6" />
+            <path d="M10 14 20 4" />
+            <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+          </svg>
+          View source ({{ bboxes.length }})
+        </button>
+        <span
+          class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+          :class="confidenceTone"
+        >
+          {{ confidencePct }}% confidence
+        </span>
+      </div>
     </header>
 
     <div
@@ -158,4 +223,18 @@ const hasUnsupported = computed<boolean>(
       </ul>
     </section>
   </div>
+
+  <BaseModal
+    v-if="canShowSource"
+    :open="showSource"
+    title="Source document"
+    size="xl"
+    @update:open="showSource = $event"
+  >
+    <DocumentViewer
+      v-if="showSource && sourceUrl !== null"
+      :src="sourceUrl"
+      :bboxes="bboxes"
+    />
+  </BaseModal>
 </template>

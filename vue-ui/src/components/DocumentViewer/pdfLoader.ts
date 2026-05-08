@@ -64,7 +64,7 @@ export const loadPdfPages: PdfLoader = async (src) => {
         }) => RenderTask
     }
     type GetDocumentParams =
-        | { url: string }
+        | { url: string; withCredentials?: boolean }
         | { data: ArrayBuffer | Uint8Array }
 
     const pdfjs = (await import('pdfjs-dist')) as unknown as {
@@ -105,9 +105,15 @@ export const loadPdfPages: PdfLoader = async (src) => {
 
 async function toGetDocumentParams(
     src: PdfSource,
-): Promise<{ url: string } | { data: ArrayBuffer | Uint8Array }> {
+): Promise<
+    | { url: string; withCredentials?: boolean }
+    | { data: ArrayBuffer | Uint8Array }
+> {
     if (typeof src === 'string') {
-        return { url: src }
+        // BFF document route is same-origin and gated on the HttpOnly
+        // session cookie; PDF.js's default URL fetcher opts out of
+        // credentials, so we have to opt in explicitly.
+        return { url: src, withCredentials: true }
     }
     if (src instanceof ArrayBuffer) {
         return { data: src }
