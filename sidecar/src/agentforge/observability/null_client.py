@@ -204,6 +204,15 @@ class NullLangfuseClient:
     ) -> None:
         del trace, bm25_count, dense_count, post_rerank_count
 
+    def record_extraction_confidence(
+        self,
+        trace: TraceHandle,
+        *,
+        confidence: float,
+        unsupported_fields_count: int,
+    ) -> None:
+        del trace, confidence, unsupported_fields_count
+
     def flush(self) -> None:
         return None
 

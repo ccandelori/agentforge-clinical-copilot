@@ -447,6 +447,37 @@ class AgentLangfuse:
         )
         span.end()
 
+    def record_extraction_confidence(
+        self,
+        trace: TraceHandle,
+        *,
+        confidence: float,
+        unsupported_fields_count: int,
+    ) -> None:
+        """Emit an evaluator-style span carrying the worker's
+        self-rated extraction confidence.
+
+        Companion to :meth:`record_extraction_call` for callers that
+        observe the confidence signal outside the call site (e.g. a
+        post-validation hook). Two PHI-safe metadata fields:
+        ``confidence`` is a float in [0, 1]; ``unsupported_fields_count``
+        is the size of the worker's ``unsupported_fields`` list, not
+        the field names themselves.
+        """
+        parent = self._parent_span(trace)
+        if parent is None:
+            return
+
+        span = parent.start_observation(
+            name="extraction_confidence",
+            as_type="evaluator",
+            metadata={
+                "confidence": confidence,
+                "unsupported_fields_count": unsupported_fields_count,
+            },
+        )
+        span.end()
+
     def record_retrieval_hits(
         self,
         trace: TraceHandle,

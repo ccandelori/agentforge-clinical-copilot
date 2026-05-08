@@ -189,6 +189,25 @@ class LangfuseClient(Protocol):
         conflict_count: int,
     ) -> None: ...
 
+    def record_extraction_confidence(
+        self,
+        trace: TraceHandle,
+        *,
+        confidence: float,
+        unsupported_fields_count: int,
+    ) -> None:
+        """Record the worker's self-rated extraction confidence.
+
+        Companion to :meth:`record_extraction_call` for callers that
+        observe the confidence signal *outside* the call site (e.g. a
+        post-validation hook that flags low-confidence extractions for
+        downstream review). The two fields are PHI-safe by construction:
+        ``confidence`` is a float in [0, 1]; ``unsupported_fields_count``
+        is the **length** of the worker's ``unsupported_fields`` list,
+        not the field names themselves.
+        """
+        ...
+
     def record_retrieval_hits(
         self,
         trace: TraceHandle,

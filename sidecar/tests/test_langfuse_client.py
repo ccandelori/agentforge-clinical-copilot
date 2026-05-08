@@ -414,6 +414,47 @@ def test_record_extraction_call_returns_none_when_handle_is_null() -> None:
     sdk.start_observation.return_value.start_observation.assert_not_called()
 
 
+# ---------- record_extraction_confidence ----------
+
+
+def test_record_extraction_confidence_emits_evaluator_span_with_score() -> None:
+    """Task 27.2: a stand-alone confidence signal that doesn't carry the
+    full extraction-call shape. Used by post-validation hooks that
+    observe the worker's self-rating without re-running the LLM call.
+    """
+    client, sdk = _build_client()
+    handle = client.trace_turn(user_id=1, patient_id=2, breakglass_flag=False, role=None)
+    parent_span = sdk.start_observation.return_value
+
+    client.record_extraction_confidence(
+        handle,
+        confidence=0.78,
+        unsupported_fields_count=3,
+    )
+
+    parent_span.start_observation.assert_called_once()
+    kwargs = parent_span.start_observation.call_args.kwargs
+    assert kwargs["name"] == "extraction_confidence"
+    assert kwargs["as_type"] == "evaluator"
+    md = kwargs["metadata"]
+    assert md["confidence"] == 0.78
+    assert md["unsupported_fields_count"] == 3
+
+
+def test_record_extraction_confidence_is_noop_for_null_handle() -> None:
+    """Mirror of the null-handle short-circuit pattern shared with the
+    other ``record_*`` helpers."""
+    from agentforge.observability.null_client import _NULL_TRACE
+
+    client, sdk = _build_client()
+    client.record_extraction_confidence(
+        _NULL_TRACE,
+        confidence=0.5,
+        unsupported_fields_count=0,
+    )
+    sdk.start_observation.return_value.start_observation.assert_not_called()
+
+
 # ---------- record_planner_decision ----------
 
 
