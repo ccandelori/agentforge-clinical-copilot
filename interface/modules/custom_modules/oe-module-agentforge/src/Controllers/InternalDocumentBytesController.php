@@ -35,10 +35,26 @@ use Symfony\Component\HttpFoundation\Response;
  *   403 — record exists but its `foreign_id` (patient owner) doesn't
  *         match the JWT's `patient_id` claim
  *
- * Bytes are streamed verbatim; no server-side caching. The sidecar's
- * vision tool consumes one document per call, the response body is
- * already the smallest privacy-relevant chunk we can return, and any
- * cache layer would invert the load-bearing patient-scope check.
+ * Caching policy (Task 26): a 5-minute private revalidating cache.
+ * The citation overlay re-opens the same document on every chip
+ * click; on each click PDF.js issues a fresh GET, and re-downloading
+ * the bytes (often O(MB)) makes the overlay paint feel laggy. We
+ * issue:
+ *
+ *   ``Cache-Control: max-age=300, private, must-revalidate``
+ *   ``ETag: "<md5 of bytes>"``
+ *
+ * Then on subsequent fetches with ``If-None-Match`` we short-circuit
+ * to a 304 (no body). ``private`` is mandatory — these are PHI bytes
+ * and a shared (proxy / CDN) cache hit on a previous patient's bytes
+ * would invert the JWT-vs-patient scope check. ``must-revalidate``
+ * prevents a client from serving stale entries past the freshness
+ * window without re-asking the server.
+ *
+ * The 304 short-circuit runs AFTER JWT validation, document lookup,
+ * and the patient-scope check — order is load-bearing, since a 304
+ * that bypassed auth would let an attacker who once observed a valid
+ * ETag skip authentication entirely.
  *
  * The matching JWT-patient-vs-document check duplicates the same kind
  * of triple-validation Task 12's persistence endpoint will do
@@ -49,6 +65,18 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class InternalDocumentBytesController
 {
+    /**
+     * Freshness window before a client must revalidate via
+     * ``If-None-Match``. Five minutes is long enough to absorb the
+     * citation-overlay re-open burst (a clinician clicks several
+     * chips in quick succession) and short enough that a revoked
+     * document falls out of cache before the next chart visit.
+     */
+    private const CACHE_MAX_AGE_SECONDS = 300;
+
+    private const CACHE_CONTROL_VALUE
+        = 'max-age=' . self::CACHE_MAX_AGE_SECONDS . ', private, must-revalidate';
+
     public function __construct(
         private readonly AgentJwtValidator $validator,
         private readonly DocumentBytesRepository $repository,
@@ -103,19 +131,36 @@ class InternalDocumentBytesController
             );
         }
 
+        // Content-derived strong validator. md5 is fine here — it is
+        // not used for security (every request is JWT-gated and
+        // patient-scoped above) but as a stable fingerprint of the
+        // bytes for cache revalidation. RFC 7232 §2.3 requires the
+        // value be quoted; Symfony's Response normalises this for us
+        // when we hand it the unquoted hash plus ``weak: false``.
+        $etag = md5($document->bytes);
+
+        // Symfony's ``Request::getETags()`` parses the header per
+        // RFC 7232 §2.3 and returns the quoted forms. Compare against
+        // the quoted version of our hash so wildcards (``*``) and
+        // weak/strong distinctions are handled by the framework.
+        $quotedEtag = '"' . $etag . '"';
+        if (in_array($quotedEtag, $request->getETags(), true)) {
+            $notModified = new Response('', Response::HTTP_NOT_MODIFIED);
+            $notModified->setEtag($etag);
+            $notModified->headers->set('Cache-Control', self::CACHE_CONTROL_VALUE);
+            return $notModified;
+        }
+
         $response = new Response(
             $document->bytes,
             Response::HTTP_OK,
             [
                 'Content-Type' => $document->mimetype,
                 'Content-Length' => (string) strlen($document->bytes),
-                // Defense in depth: forbid any intermediary cache from
-                // retaining the bytes. The JWT scopes the request, so
-                // a shared cache hit on a previous patient's bytes
-                // would be a privacy regression.
-                'Cache-Control' => 'no-store, no-cache, must-revalidate, private',
+                'Cache-Control' => self::CACHE_CONTROL_VALUE,
             ]
         );
+        $response->setEtag($etag);
 
         return $response;
     }
