@@ -1,71 +1,113 @@
-# Where we left off — 2026-05-08 (doc-upload thread shipped, ~36 hours to deadline)
+# Where we left off — 2026-05-08 evening (eval pipeline shipped, ~30 hours to deadline)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-The W2 document-upload thread is **shipped end-to-end on the live
-droplet**. A clinician can attach an intake-form PDF in the AgentForge
-drawer, see the chat reply summarise it, see an `<ExtractionPanel>`
-render the structured fields below the bubble, click "View source (N)",
-and get a modal with the PDF rendered + transparent rectangles
-overlaid where each extracted field came from. Live URL:
-**[https://143.244.157.90:9300/dashboard/](https://143.244.157.90:9300/dashboard/)**.
+Two threads are now shipped end-to-end, both pushed to both remotes
+(`labs.gauntletai.com/cameroncandelori/openemr` and the public mirror
+at `github.com/ccandelori/agentforge-clinical-copilot`):
 
-W2 deadline: Sun 2026-05-10 noon. ~36 hours left.
+1. **W2 doc-upload + citation overlay** (shipped morning of 2026-05-08).
+   Live on the droplet at
+   [https://143.244.157.90:9300/dashboard/](https://143.244.157.90:9300/dashboard/).
+2. **W2 eval pipeline** (shipped this evening). 11 tasks merged in two
+   parallel-agent waves: hybrid-RAG-backed evidence-retriever node,
+   50-case YAML suite, programmatic + LLM-as-judge graders, eval gate
+   with baseline + thresholds, gate self-test, GitLab CI agent-eval
+   job, GitHub Actions mirror, eval-smoke pre-commit hook, observability
+   extensions, the W2 evaluation report, and the production
+   SupervisorAdapter that closes the loop. Sidecar suite: **1313 passed,
+   30 deselected** (gate_validation + eval_smoke marker tags).
 
-**Open priorities** (no specific order): defense slides refresh,
-end-to-end live-demo dry run, T38.13 (PATIENT_DASHBOARD_MIGRATION
-defense doc).
+W2 deadline: Sun 2026-05-10 noon. **~30 hours left.**
 
-## What shipped this session (Thursday 2026-05-07 → Friday 2026-05-08)
+**Open priorities** (in rough order):
 
-`feat/t38.11-12-document-flow` merged via MR !40 on 2026-05-08 (~22
-commits). The commit graph in chronological order:
+1. **T38.13 — `PATIENT_DASHBOARD_MIGRATION.md` defense doc.** Graded
+   artifact for the W2 surprise challenge. Some content is already in
+   `PATIENT_DASHBOARD_MIGRATION.md` at the repo root; needs a refresh
+   against current shipped state.
+2. **Defense slides refresh** (`docs/w2-defense-slides.html`). Still
+   has the pre-session edits sitting in stash (`presession-slides-WIP`).
+   Pop, then update for the doc-upload pipeline + bbox overlay
+   trust-artifact story AND the eval-pipeline-as-correctness-claim story.
+3. **Manual baseline regen** so the eval gate has a measured baseline,
+   not a stub. See "Eval pipeline state" below.
+4. **Live-demo dry run.** End-to-end on Chen + Whitaker (typed PDFs);
+   time it, note flakes. The chat-reply-duplicates-panel and
+   snake_case demographics labels are the visible papercuts.
+5. **Operational deferreds** for the new CI surface (`GLAB_TOKEN`,
+   GitHub branch protection). See "CI / operational deferreds" below.
 
+## Eval pipeline state
+
+The infrastructure is shipped and proven correct (the gate self-test
+catches a deliberately-regressed adapter); what's NOT yet measured is
+how the agent itself scores on the 50 W2 cases.
+
+**The stub.** `sidecar/tests/eval/baselines/week2.json` is structurally
+pinned at 1.0 across all five categories with `_meta.status: "stub"`.
+The gate compares against this stub today, which is fine for catching
+regressions from this baseline forward but doesn't tell you the absolute
+pass rate.
+
+**The bridge.** `sidecar/src/agentforge/eval/supervisor_adapter.py`
+is the production `Callable[[EvalCase], SupervisorOutput]` adapter that
+drives `build_graph().ainvoke()` and shapes the result for the eval
+runner. It ships fully tested with mocked LLMs.
+
+**The regen CLI.**
+
+```bash
+cd sidecar
+uv run python -m agentforge.eval.regenerate_baseline \
+    --output tests/eval/baselines/week2.json
+# or for a token-free smoke:
+uv run python -m agentforge.eval.regenerate_baseline --mock --output /tmp/smoke.json
 ```
-T38.15 — Document upload pipeline:
-  feat(vue-ui): add useDocumentUpload composable
-  feat(vue-ui): pass document_id through useAgentTurn
-  feat(vue-ui): wire file-attach in AgentChatPane composer
-  feat(agentforge-php): JWT-authed internal upload_document.php endpoint
-  feat(sidecar): DocumentUploadWriter — JWT-authed PHP bridge
-  feat(sidecar): POST /api/agent/upload BFF route
-  feat(sidecar): AgentTurnRequest.document_id + orchestrator pdf_pages wiring
-  fix(vue-ui): send doc_type on upload — BFF requires it
-  fix(vue-ui): bump agent-turn client timeout 30s → 120s for doc extraction
 
-T38.11 — DocumentViewer component:
-  feat(vue-ui): add DocumentViewer with bbox overlay (pdfjs-dist + injectable PdfLoader)
+The real-LLM branch raises `NotImplementedError` until a human edits
+`_build_real_supervisor_and_harness` in
+`sidecar/src/agentforge/eval/regenerate_baseline.py` to construct the
+deps tree their run needs (settings, redis client, openemr client, etc.).
+This is a deliberate seam — the module-level imports stay light so the
+CLI's mock path doesn't drag FastAPI/Redis/OpenEMR-client startup costs.
 
-T38.12 — Extraction surfacing:
-  feat(sidecar): surface per-turn extraction snapshot on AgentTurnResponse
-  feat(vue-ui): plumb intake extraction through useAgentTurn + store
-  feat(vue-ui): render <ExtractionPanel> below assistant bubble
+**The cost.** A measured run is 50 cases × (vision extract + RAG +
+synthesizer + judge) = several dollars at current rates. Project the
+total via `sidecar/src/agentforge/observability/cost.py` first.
 
-T38.16 — Citation overlay end-to-end:
-  feat(sidecar): GET /api/agent/document/{id} BFF route
-  feat(sidecar): wire document-fetch router into app factory
-  feat(vue-ui): View source modal on ExtractionPanel — bbox overlay
-  fix(vue-ui): always show View source button when documentId known
-  fix(vue-ui): await nextTick before painting PDF canvases
-  fix(vue-ui): use sidecar Citation field names — quote_or_value/field_or_chunk_id
+**Judge routing limitation** (logged in DEVIATIONS): the LLM judge's
+`factually_consistent` category fires only for `HALLUCINATION` /
+`REFUSAL` `EvalCategory` values. The W2 case suite uses
+`extraction` / `evidence_retrieval` / `citations` / `refusal` /
+`missing_data`. The gate self-test catches *citation-strip-shaped*
+fabrications via the programmatic `citation_present` grader; extending
+the judge routing for value-fabrication coverage is a documented
+follow-up (not blocking the W2 deadline).
 
-Performance:
-  perf(sidecar): make Claude model configurable via CLAUDE_MODEL env
-  (droplet env now: CLAUDE_MODEL + ANTHROPIC_VISION_MODEL = claude-haiku-4-5-20251001)
+## CI / operational deferreds
 
-Security hygiene:
-  security: rotate OAuth client + admin password; scrub leaked OAuth client_id
-  chore(deploy): require DROPLET_HOST env, no hardcoded IP
-  chore(deploy): source scripts/.env.local for personal config (gitignored)
-  chore(docs): scrub workstation paths + droplet IP from supporting docs
+The eval gate runs on both GitLab CI (Task 20) and GitHub Actions
+(Task 22) via the shared `sidecar/scripts/run_eval_gate.sh`. CI today
+runs with a mocked supervisor, so it's purely a regression check
+against the stub baseline. To make CI useful as a *correctness* check
+rather than a *no-regression* check:
 
-Demo seeding:
-  chore(demo): seed 4 personas matching W2 example intake forms
-  chore(demo): vendor W2 example documents into repo
-```
+1. **Set `GLAB_TOKEN`** as a masked CI variable on the GitLab project
+   so MR comments actually post (Task 20). Without it, the gate still
+   passes/fails correctly but the diff report only ships as a job
+   artifact.
+2. **Configure GitHub branch protection** on the public mirror's `main`
+   to require the `agent-eval` workflow status check (Task 22).
+3. **Publish the pre-baked sidecar Docker image** to a registry so the
+   future real-LLM manual eval job can pull it. The deploy script
+   currently builds it locally; nothing pushes to a registry yet.
+4. **Push the GitHub mirror after every GitLab push** (or set up a
+   mirror push). Currently both remotes are at the same SHA after
+   manual `git push origin main && git push github main`.
 
 ## Demo runbook (production droplet)
 
@@ -89,7 +131,11 @@ Three other personas seeded for additional test runs:
 
 Re-run `scripts/seed-demo-patients.php` (idempotent on `pubpid`) if any persona disappears.
 
-## Production state — for the demo + the cutover knobs
+PNG personas (Reyes, Kowalski) won't render in the View-source modal —
+PDF.js can't parse `image/png` bytes. **Stick to typed PDFs (Chen,
+Whitaker) for the demo's bbox-overlay story.**
+
+## Production droplet — config knobs
 
 ### Live URL
 [https://143.244.157.90:9300/dashboard/](https://143.244.157.90:9300/dashboard/) — vue-ui SPA. Self-signed cert.
@@ -218,84 +264,122 @@ mid-flow. Set per-droplet (`<droplet>` → your IP/hostname).
 If `DROPLET_HOST` is unset, the script exits 2 with a hint pointing
 at `scripts/.env.local`.
 
-## Known gaps surfaced this session
+## Known gaps (carried forward + new)
 
 W2-deadline-relevant (worth deciding before Sunday noon):
 
-1. **DocumentViewer is PDF-only.** PNG intake forms (Reyes, Kowalski
-   — `*.png` files in `week2/example-documents/intake-forms/`) won't
-   render in the modal — PDF.js can't parse `image/png` bytes. The
-   BFF returns the bytes correctly, the renderer fails. Half-day fix
-   is a sibling `<ImageViewer>` for raster sources, switched on at
-   the modal layer based on Content-Type. **Demo-shippable workaround:
-   stick to typed PDFs (Chen, Whitaker) for the bbox-overlay story.**
-2. **Bbox placement is approximate.** Haiku-vision produces bboxes
-   that land in the right region but are offset by a row/cell or so.
-   Acceptable as a "where on the page" trust artifact; not pixel-tight.
-3. **Demographics labels are raw snake_case.** `legal_name`,
-   `date_of_birth`, `sex_assigned_at_birth`, etc. — surfaced from the
-   extractor's field keys verbatim. Quarter-day cleanup: a small
+1. **DocumentViewer is PDF-only.** PNG intake forms (Reyes, Kowalski)
+   won't render in the modal. Demo workaround: stick to typed PDFs.
+2. **Bbox placement is approximate.** Haiku-vision bboxes land in the
+   right region but offset by a row/cell. Acceptable trust artifact;
+   not pixel-tight.
+3. **Demographics labels are raw snake_case.** Quarter-day fix: a
    `humanizeFieldName()` helper in `<ExtractionPanel>`.
-4. **Chat reply duplicates panel content.** When the model decides to
-   describe the extracted fields in prose, the same content shows up
-   in the chat bubble AND the structured panel below. Either tighten
-   the synthesizer prompt to defer to the panel, or accept it.
+4. **Chat reply duplicates panel content.** Either tighten the
+   synthesizer prompt to defer to the panel, or accept it.
 5. **Planner Haiku tool-call fallback warning.** Logs show
-   `planner LLM returned no submit_plan tool call; falling back`
-   regularly — Haiku is less compliant than Sonnet on tool-only
-   output. Orchestrator falls back to `default_plan_for(use_case)`,
-   so requests still complete; multi-step queries get a less-tailored
-   tool selection. Cleanest fix: add a separate `PLANNER_MODEL` env
-   knob and pin planner to Sonnet (synthesizer + vision stay on
-   Haiku). ~half-day.
+   `planner LLM returned no submit_plan tool call; falling back`.
+   Orchestrator falls back to `default_plan_for(use_case)`; requests
+   complete with less-tailored tool selection. ~half-day fix: separate
+   `PLANNER_MODEL` env knob, pin planner to Sonnet.
+6. **Eval baseline is a stub** (see "Eval pipeline state" above).
+7. **Judge routing limitation** — LLM judge only fires for
+   HALLUCINATION/REFUSAL categories; W2 cases use five different ones.
+   Programmatic `citation_present` grader carries the load-bearing
+   assertion in the gate self-test.
 
 Post-deadline / future:
 
-6. **No vue-ui tests at the SFC integration level.** Unit tests for
-   composables and pure helpers (parser, mapBBoxToPixels,
-   useDocumentUpload, useAgentTurn) are in. Component-level
-   integration tests for the drawer flow are not.
-7. **Sign & Finalize / Edit demographics are preview-only.** Same
-   gap as W1 — needs `POST /api/fhir/Encounter` and `PATCH /Patient`.
-   Tracked in DEVIATIONS.md (FHIR write scopes constraint).
-8. **Token refresh not implemented.** OAuth access_token expires
-   ~1 hr; FHIR returns 401; SPA bounces to /login.
-9. **CalendarView / SettingsView are mocked** — not wired to real FHIR.
-10. **Apache proxy conf is not persisted** across openemr container
+8. **No vue-ui tests at the SFC integration level.** Unit tests for
+   composables and pure helpers are in. Drawer-flow integration
+   tests are not.
+9. **Sign & Finalize / Edit demographics are preview-only.** Same gap
+   as W1 — needs `POST /api/fhir/Encounter` and `PATCH /Patient`.
+   Tracked in DEVIATIONS.md.
+10. **Token refresh not implemented.** OAuth access_token expires
+    ~1 hr; FHIR returns 401; SPA bounces to /login.
+11. **CalendarView / SettingsView are mocked** — not wired to real FHIR.
+12. **Apache proxy conf is not persisted** across openemr container
     recreation — recipe above to re-inject.
+13. **bge-reranker-base image cost.** Pre-baked at fp32 = ~1.1 GB
+    (not the spec's ~280 MB — that was a parameter-count-as-MB
+    confusion). Mitigations available (fp16 / smaller cross-encoder /
+    int8-quantized variant) but not blocking. Logged in DEVIATIONS.
 
 ## Things to focus on next session
 
-In priority order with ~36 hours left:
+In priority order with ~30 hours left:
 
-1. **Defense slides** (`docs/w2-defense-slides.html`). Was dirty pre-
-   session, still hasn't gotten its W2-architecture-aware refresh
-   pass. The doc-upload pipeline + bbox overlay are the W2
-   trust-artifact story — slides should land that.
-2. **Live-demo dry run.** End-to-end on Chen + Whitaker, time it,
-   note any flakes. The chat-reply-duplicates-panel and snake_case
-   demographics labels are the visible papercuts; decide on the spot
-   whether to fix or explain away.
-3. **T38.13 — `PATIENT_DASHBOARD_MIGRATION.md` defense doc.** Graded
-   artifact for the W2 surprise challenge (Vue 3 vs alternatives).
-   Some of this content is already in `docs/PATIENT_DASHBOARD_MIGRATION.md`;
-   needs a refresh against the now-shipped state.
-4. **Decision pass on the gaps above** (1–5). Commit-to-chart is
-   already in DEVIATIONS as "deferred"; decide whether the snake_case
-   demographics labels and the planner-fallback warning are worth
-   fixing or noting.
+1. **T38.13 — `PATIENT_DASHBOARD_MIGRATION.md` defense doc.** Graded
+   W2-surprise artifact. Refresh the existing doc against
+   currently-shipped state. (Gates Task 38 finishing in Taskmaster.)
+2. **Defense slides refresh** (`docs/w2-defense-slides.html`). Pop
+   `stash@{0} presession-slides-WIP` first. Land doc-upload + bbox +
+   eval-pipeline trust-artifact story.
+3. **Live-demo dry run** on Chen + Whitaker. Time it, note flakes,
+   decide papercut fixes (snake_case labels, chat-duplicates-panel).
+4. **Decision pass on the gaps above (1–7).** Most are noted but
+   undecided. Quick fixes vs. defense narrative — judgment call.
+5. (Optional) **Manual baseline regen.** Edit
+   `_build_real_supervisor_and_harness` in
+   `sidecar/src/agentforge/eval/regenerate_baseline.py`, run on droplet,
+   commit measured `baselines/week2.json`. ~2-4 hours including cost
+   review. The defense narrative is stronger with measured numbers
+   than with stub-pinned ones, but the gate self-test (Task 19) carries
+   the correctness claim either way.
+6. (Optional) **Operational deferreds.** `GLAB_TOKEN` masked variable,
+   GitHub branch protection. ~30 min total.
 
 ## Branch state at this commit
 
-- Branch: `main` (clean, fully merged)
-- Origin: GitLab (`labs.gauntletai.com/cameroncandelori/openemr`)
-- Mirror: GitHub (`github.com/ccandelori/agentforge-clinical-copilot`)
-- Both remotes synced to the same SHA. MR !40 closed.
+- Branch: `main` (clean)
+- HEAD: `50c867e67`
+- Origin: GitLab (`labs.gauntletai.com/cameroncandelori/openemr`) — synced
+- Mirror: GitHub (`github.com/ccandelori/agentforge-clinical-copilot`) — synced
+- Sidecar suite: 1313 passed, 30 deselected (gate_validation + eval_smoke)
 
-Pre-existing dirty files at session end (NOT in scope, NOT committed):
-- `docs/w2-defense-slides.html` (presession edits, deserves a fresh pass — see priority 1 above)
-- `docs/architecture-overview-slides.html` (untracked, presession addition)
+## Taskmaster state (`week2` tag)
 
-Per stash:
-- `stash@{0} presession-slides-WIP` — the pre-session edits to the slides;
-  pop before the slides refresh in priority 1.
+- 33 done · 1 cancelled (#25 — per-chart citation overlay obsoleted by
+  drawer placement decision) · 1 in-progress (#38 dashboard port
+  pending T38.13 defense doc) · 5 pending
+- Pending: #30 (deploy + run baseline on droplet), #32 (cost/latency
+  report), #33 (demo video), #34 (replace README), #39 (CareTeam seed)
+- All four (#32/#33/#34) gate on #30. #39 gates on #38.
+
+## Stashes
+
+- `stash@{0} presession-slides-WIP` — pre-session edits to
+  `docs/w2-defense-slides.html`. Pop before the slides refresh in
+  priority 2.
+
+## What shipped this session — summary index
+
+For full detail see `docs/DEVIATIONS.md` (every entry from 2026-05-08)
+and `git log --since=2026-05-08`.
+
+**Morning round** — W2 doc-upload thread (MR !40, ~22 commits): the
+upload composable, BFF route, JWT-authed PHP upload endpoint, document
+viewer with bbox overlay, ExtractionPanel, "View source" modal, OAuth
+client rotation, droplet env hygiene.
+
+**Evening round** — W2 eval pipeline (~95 commits, 14 tasks):
+
+| Task | What |
+|---|---|
+| #15 | Evidence Retriever LangGraph node |
+| #16 | 50-case YAML W2 eval suite (12/10/10/8/10) |
+| #17 | LLM-as-Judge layer (factually_consistent + safe_refusal) + programmatic graders |
+| #18 | Eval gate with thresholds, baseline, runner CLI, diff reporter |
+| #19 | Gate self-test (proves regression detection) |
+| #20 | GitLab CI agent-eval job |
+| #21 | Sidecar Dockerfile pre-baked HF model weights |
+| #22 | GitHub Actions eval mirror |
+| #23 | Pre-commit eval-smoke hook (10-case <30s budget) |
+| #26 | HTTP cache headers on InternalDocumentBytesController |
+| #27 | Observability extensions (vision pricing, route_decisions, latency p50/p95) |
+| #28 | Lab PDF E2E happy-path test |
+| #29 | Intake form E2E happy-path test |
+| #31 | W2 evaluation report (`docs/eval-report-2026-05-08.md`) |
+| #35 | Defense Q&A primer (`docs/defense-qa-w2.md`) |
+| #40 | Production W2 SupervisorAdapter + regenerate_baseline CLI |
