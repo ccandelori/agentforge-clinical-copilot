@@ -675,6 +675,9 @@ def create_app(
     # client; otherwise the legacy /turn surface is the only path
     # into the orchestrator.
     if dashboard_me_http is not None:
+        from agentforge.dashboard_auth.document_route import (
+            make_agent_document_router,
+        )
         from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
         from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
         from agentforge.dashboard_auth.openemr_patient_pid import (
@@ -747,6 +750,22 @@ def create_app(
                 jwt_minter=jwt_minter,
                 auth_gateway=auth_gateway,
                 document_upload_writer=document_upload_writer,
+            )
+        )
+        # Document-fetch BFF route (T38.16). Same auth pipeline as
+        # /api/agent/turn — vue-ui's <DocumentViewer> calls this to
+        # load a stored PDF/image when a citation pill points at a
+        # document. Reuses the process-wide ``DocumentBytesFetcher``
+        # already constructed for the legacy /turn document path.
+        app.include_router(
+            make_agent_document_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                document_bytes_fetcher=document_bytes_fetcher_instance,
             )
         )
 
