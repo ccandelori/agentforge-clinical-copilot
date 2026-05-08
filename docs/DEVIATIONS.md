@@ -2730,3 +2730,49 @@ kept auth posture uniform.
 `2ba02686b` (turn-request wiring).
 
 ---
+
+## 2026-05-08 — Lab-PDF E2E test runs process-level, not against live stack (Task 28)
+
+**Plan:** Task 28's brief framed the E2E lab-PDF test as having a choice
+between (a) live docker-compose + real Anthropic and (b) process-level
+integration with mocked LLM and mocked PHP boundary. The brief assumed
+a Python-side `procedure_result_writer` boundary the test could mock at;
+it also referenced `~1282` baseline tests.
+
+**Deviation:** Picked shape (b). Built `CapturingLabPersistWriter` and
+`CapturingAuditRecorder` as inline Protocol-level fakes in
+`tests/integration/_lab_e2e_fixtures.py` — the Python sidecar has **no**
+production `LabPersistWriter` yet; persist is implemented entirely PHP-
+side via `InternalLabPersistController` (see `interface/modules/.../public/internal/persist_lab_result.php`).
+Baseline test count was 1127, not 1282 — final after this branch is 1134.
+
+**Why:**
+- `tests/integration/conftest.py` already gates live-stack tests on a
+  reachable OpenEMR (skip on cold stack). A test that *requires* the
+  stack would regress that "skip-when-down" ergonomic.
+- Anthropic calls cost real tokens; the brief explicitly forbade token
+  spend by default.
+- Building a real Python `LabPersistWriter` to satisfy the brief's mock
+  point would have meant writing untested production code in a test
+  PR — the brief's "don't modify schemas, tools, or audit logger" rule
+  blocked that path. Defining the Protocol locally documents the
+  contract a future Python adapter would satisfy without committing to
+  a particular implementation.
+- The PHP `InternalLabPersistController` already has dedicated PHPUnit
+  coverage; duplicating it from Python would duplicate without
+  extending.
+
+**What we learned:** Briefs that describe a "boundary to mock" sometimes
+presume a boundary that hasn't been built yet. When that happens, the
+test can either commit to building the boundary as production code
+(scope creep) or define the boundary locally as a test-side Protocol
+(scope honest). Local Protocol surfaces are reusable: when the
+production adapter lands, it satisfies the same contract by structural
+typing and the test doesn't change.
+
+**Artifacts:** branch `feat/task-28-lab-pdf-e2e-test` commits
+`408a7619d` (PDF generator + smoke), `fe4d9dbe2` (upload phase),
+`b0ac3d960` (extraction phase), `7d0a8860c` (persist phase),
+`a5b89ba43` (full-flow ordering + cleanup).
+
+---
