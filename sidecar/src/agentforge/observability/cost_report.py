@@ -113,6 +113,101 @@ def _iter_day_range(start: date, end: date) -> Iterator[date]:
 
 
 # ---------------------------------------------------------------------------
+# Production spend projection (Task 27.4)
+# ---------------------------------------------------------------------------
+
+# Seconds per day, used to scale per-second QPS to per-day spend.
+_SECONDS_PER_DAY: int = 86_400
+
+# Days per month for the monthly rollup. 30 is the same convention the
+# Anthropic console uses on its monthly-spend forecast — picking 30.44
+# (true average) over-rotates a developer-facing projection that callers
+# round mentally to the nearest hundred dollars.
+_DAYS_PER_MONTH: int = 30
+
+
+@dataclass(frozen=True)
+class ProductionSpendProjection:
+    """Projected forward-looking spend for one (cost-per-turn, QPS) pair.
+
+    Returned by :func:`project_production_spend`. Daily and monthly
+    figures are USD; the monthly figure is the daily figure scaled by
+    ``_DAYS_PER_MONTH``.
+    """
+
+    avg_cost_per_turn: float
+    projected_qps: float
+    daily: float
+    monthly: float
+
+
+def average_cost_per_observation(
+    observations: Iterable[CostObservation],
+) -> float:
+    """Mean ``cost_usd`` across the input list, or 0.0 on empty input.
+
+    Used by the CLI to derive a representative per-turn cost from the
+    observed report window before scaling to projected QPS.
+    """
+    total = 0.0
+    count = 0
+    for obs in observations:
+        total += obs.cost_usd
+        count += 1
+    if count == 0:
+        return 0.0
+    return total / count
+
+
+def project_production_spend(
+    *,
+    avg_cost_per_turn: float,
+    projected_qps: float,
+) -> ProductionSpendProjection:
+    """Project forward-looking $/day and $/month at the given QPS.
+
+    Math: ``$/day = avg_cost_per_turn × qps × 86_400``; monthly scales
+    by 30 days. Both inputs must be non-negative — a "negative QPS"
+    is meaningless and a "negative cost per turn" indicates upstream
+    aggregation went wrong, both of which we surface rather than
+    silently project a refund.
+    """
+    if avg_cost_per_turn < 0.0:
+        raise ValueError(
+            f"avg_cost_per_turn must be non-negative; got {avg_cost_per_turn}"
+        )
+    if projected_qps < 0.0:
+        raise ValueError(f"projected_qps must be non-negative; got {projected_qps}")
+
+    daily = avg_cost_per_turn * projected_qps * _SECONDS_PER_DAY
+    monthly = daily * _DAYS_PER_MONTH
+    return ProductionSpendProjection(
+        avg_cost_per_turn=avg_cost_per_turn,
+        projected_qps=projected_qps,
+        daily=daily,
+        monthly=monthly,
+    )
+
+
+def format_projection_report(proj: ProductionSpendProjection) -> str:
+    """Render the projection block as a stable text table.
+
+    Consumers (CI cost dashboards, ad-hoc operator runs) parse this by
+    line prefix, so the field labels are pinned and the dollar
+    formatting matches :func:`format_daily_report`.
+    """
+    lines = [
+        "Production Spend Projection",
+        "-" * 30,
+        f"Avg $/turn:    ${proj.avg_cost_per_turn:.4f}",
+        f"QPS:           {proj.projected_qps:g}",
+        f"$/day:         ${proj.daily:.2f}",
+        f"$/month:       ${proj.monthly:.2f}",
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
 
@@ -253,6 +348,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Roll the daily totals up to ISO weeks (Monday-anchored).",
     )
+    parser.add_argument(
+        "--project-qps",
+        type=float,
+        default=None,
+        help=(
+            "Project forward-looking $/day and $/month at the given QPS, "
+            "scaled from the observed average cost per turn. Skipped when "
+            "absent."
+        ),
+    )
     return parser
 
 
@@ -327,6 +432,21 @@ def main(argv: list[str] | None = None) -> int:
         print(format_weekly_report(weekly))
     else:
         print(format_daily_report(daily, start=start.date(), end=end.date()))
+
+    if args.project_qps is not None:
+        if args.project_qps < 0.0:
+            print(
+                "error: --project-qps must be non-negative",
+                file=sys.stderr,
+            )
+            return 2
+        avg = average_cost_per_observation(observations)
+        proj = project_production_spend(
+            avg_cost_per_turn=avg,
+            projected_qps=args.project_qps,
+        )
+        print()
+        print(format_projection_report(proj))
 
     return 0
 

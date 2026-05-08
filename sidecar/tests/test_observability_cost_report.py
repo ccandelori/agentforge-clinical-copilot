@@ -440,6 +440,93 @@ def test_cli_returns_nonzero_when_langfuse_unconfigured(
     assert "Langfuse" in err
 
 
+def test_project_production_spend_scales_avg_cost_per_turn_to_qps() -> None:
+    """Task 27.4: given an average cost per turn and a projected QPS,
+    return projected $/day, $/month under that load.
+
+    Math: cost_per_turn × qps × seconds_per_day = $/day; ×30 = $/month.
+    """
+    from agentforge.observability.cost_report import project_production_spend
+
+    proj = project_production_spend(
+        avg_cost_per_turn=0.05,
+        projected_qps=1.5,
+    )
+    # 0.05 * 1.5 * 86400 = 6480.
+    assert proj.daily == pytest.approx(6480.0, rel=1e-9)
+    # 30 day month.
+    assert proj.monthly == pytest.approx(6480.0 * 30, rel=1e-9)
+
+
+def test_project_production_spend_with_zero_qps_is_zero() -> None:
+    from agentforge.observability.cost_report import project_production_spend
+
+    proj = project_production_spend(avg_cost_per_turn=0.05, projected_qps=0.0)
+    assert proj.daily == 0.0
+    assert proj.monthly == 0.0
+
+
+def test_project_production_spend_rejects_negative_inputs() -> None:
+    from agentforge.observability.cost_report import project_production_spend
+
+    with pytest.raises(ValueError):
+        project_production_spend(avg_cost_per_turn=-0.01, projected_qps=1.0)
+    with pytest.raises(ValueError):
+        project_production_spend(avg_cost_per_turn=0.01, projected_qps=-1.0)
+
+
+def test_average_cost_per_observation_handles_empty_input() -> None:
+    """Empty observation list → 0.0 (no division-by-zero crash)."""
+    from agentforge.observability.cost_report import average_cost_per_observation
+
+    assert average_cost_per_observation([]) == 0.0
+
+
+def test_average_cost_per_observation_returns_mean() -> None:
+    from agentforge.observability.cost_report import (
+        CostObservation,
+        average_cost_per_observation,
+    )
+
+    obs = [
+        CostObservation(start_time=datetime(2026, 5, 1, tzinfo=UTC), cost_usd=0.10),
+        CostObservation(start_time=datetime(2026, 5, 1, tzinfo=UTC), cost_usd=0.20),
+        CostObservation(start_time=datetime(2026, 5, 1, tzinfo=UTC), cost_usd=0.30),
+    ]
+    assert average_cost_per_observation(obs) == pytest.approx(0.20, rel=1e-9)
+
+
+def test_cli_project_qps_flag_emits_projection_block(
+    patched_settings: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--project-qps 0.5`` adds a projection footer to the daily
+    report driven by the observed average per-turn cost."""
+    from agentforge.observability import cost_report
+    from agentforge.observability.cost_report import CostObservation
+
+    today = datetime.now(UTC)
+    obs = [
+        CostObservation(start_time=today - timedelta(hours=1), cost_usd=0.04),
+        CostObservation(start_time=today - timedelta(hours=2), cost_usd=0.06),
+    ]
+
+    with (
+        patch.object(cost_report, "_build_langfuse_for_report", return_value=object()),
+        patch.object(cost_report, "fetch_cost_observations", return_value=obs),
+    ):
+        rc = cost_report.main(["--days", "1", "--project-qps", "0.5"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    # Average per turn = 0.05; at 0.5 QPS daily = 0.05 * 0.5 * 86400 = 2160.
+    assert "Production Spend Projection" in out
+    assert "QPS:           0.5" in out
+    assert "$/day:         $2160.00" in out
+    # Monthly = daily * 30 = 64800.
+    assert "$/month:       $64800.00" in out
+
+
 def test_cli_returns_nonzero_when_fetch_raises(
     patched_settings: None,
     capsys: pytest.CaptureFixture[str],
