@@ -58,6 +58,16 @@ ENV HF_HOME=/opt/hf-cache \
     TRANSFORMERS_CACHE=/opt/hf-cache/hub \
     SENTENCE_TRANSFORMERS_HOME=/opt/hf-cache/sentence-transformers
 RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+# CrossEncoderReranker (rag/cross_encoder.py) defaults to
+# BAAI/bge-reranker-base — ~280 MB safetensors. Pre-baked here so the
+# reranker initializes from disk on first request instead of pulling
+# from HF. Cohere reranker stays optional (env-gated) and is
+# intentionally NOT baked.
+#
+# allow_patterns excludes the legacy pytorch_model.bin (1.1 GB) — the
+# safetensors weight file plus tokenizer/config is the modern path and
+# what transformers prefers when both are present.
+RUN /app/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-base', cache_dir='/opt/hf-cache/sentence-transformers', allow_patterns=['*.json','*.txt','tokenizer*','*.safetensors'])"
 
 # ---------- Production stage ----------
 FROM python:${PYTHON_VERSION} AS production
