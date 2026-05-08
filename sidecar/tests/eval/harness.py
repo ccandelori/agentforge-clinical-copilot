@@ -39,7 +39,16 @@ from agentforge.verifier.citation import Citation, find_citations
 
 
 class EvalCategory(StrEnum):
-    """Adversarial / behavioral categories from ARCHITECTURE.md §8."""
+    """Adversarial / behavioral categories from ARCHITECTURE.md §8.
+
+    The W1 set (PROMPT_INJECTION through AMBIGUOUS) covers the agent's
+    text-only orchestration over OpenEMR records. The W2 set
+    (EXTRACTION through REFUSAL) extends coverage to the multimodal
+    document pipeline introduced in W2: vision-extraction over scanned
+    intake forms / lab PDFs, hybrid retrieval over the guideline
+    corpus, and citation contracts that distinguish chart facts from
+    guideline evidence. See W2_ARCHITECTURE.md §8.
+    """
 
     PROMPT_INJECTION = "prompt_injection"
     AUTH_BOUNDARY = "auth_boundary"
@@ -48,6 +57,10 @@ class EvalCategory(StrEnum):
     CONFLICTING_DATA = "conflicting_data"
     HAPPY_PATH = "happy_path"
     AMBIGUOUS = "ambiguous"
+    EXTRACTION = "extraction"
+    EVIDENCE_RETRIEVAL = "evidence_retrieval"
+    CITATIONS = "citations"
+    REFUSAL = "refusal"
 
 
 @dataclass(frozen=True)

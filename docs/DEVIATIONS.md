@@ -2765,3 +2765,44 @@ kept auth posture uniform.
 `2ba02686b` (turn-request wiring).
 
 ---
+
+## 2026-05-08 — Extended `EvalCategory` for the W2 case suite
+
+**Plan:** Task 16 ("Author 50-Case Week2 Eval Suite") names five
+categories: `extraction`, `evidence-retrieval`, `citations`,
+`refusals`, `missing-data`. Of those, only `missing-data` overlaps the
+existing W1 `EvalCategory` enum in `sidecar/tests/eval/harness.py`.
+
+**Deviation:** Added four new W2 members to `EvalCategory`:
+`EXTRACTION = "extraction"`, `EVIDENCE_RETRIEVAL = "evidence_retrieval"`,
+`CITATIONS = "citations"`, `REFUSAL = "refusal"`. Mapped the spec's
+hyphenated `evidence-retrieval` and `refusals` to the snake-case
+identifiers the loader's `_CATEGORY_BY_VALUE` dispatch already keys on.
+
+**Why:** Task 16 instructs that "if the task spec contradicts the
+loader, the loader is canonical." But the loader rejects unknown
+category strings outright (`ValueError`), so simply lowering each spec
+category onto the existing enum was not an option for the four
+non-overlapping ones. Mapping them all to `HALLUCINATION` /
+`MISSING_DATA` would erase the per-category distribution check the
+acceptance criterion demands. Extending the enum is the smallest
+loader change that preserves both the distribution count
+(12/10/10/8/10) and the case-discriminator the harness already runs
+through `EvalHarness.summarize()`. The `REFUSAL` label is singular to
+match the existing `*_BOUNDARY` / `*_DATA` style.
+
+**What we learned:** The W1 enum was framed as "adversarial /
+behavioral categories" — it captured how the agent should respond,
+not what type of input drove the case. W2 adds *input-source*
+categories (extraction = vision tool over scanned doc, evidence
+retrieval = RAG over guideline corpus, citations = synthesizer
+contract). Future case-suite expansions probably want to track both
+axes; for now we keep them flat in one enum to avoid touching the
+harness's dispatch machinery.
+
+**Artifacts:** `sidecar/tests/eval/harness.py` (enum extension),
+`sidecar/scripts/validate_eval_cases.py` (new validator script),
+`sidecar/tests/eval/test_week2_cases.py` (pytest wrapper),
+`sidecar/tests/eval/cases/week2/*.yaml` (the 50 cases).
+
+---

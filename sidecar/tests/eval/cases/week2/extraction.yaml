@@ -1,0 +1,93 @@
+# Extraction eval cases (12) — vision-tool extraction over the W2 corpus.
+#
+# These cases exercise the attach_and_extract pipeline: VLM reads a scanned
+# PDF or PNG, returns structured fields with INTAKE_FORM or LAB_PDF
+# Citations carrying high-confidence PageBBoxes. The expected_behavior
+# names which fields the extractor must surface and which gotchas the
+# response must respect (e.g. "do not silently coerce abnormal flags").
+#
+# Real fixtures referenced (under week2/example-documents/):
+#   intake-forms/p01-chen-intake-typed.pdf
+#   intake-forms/p02-whitaker-intake.pdf
+#   intake-forms/p03-reyes-intake.png
+#   intake-forms/p04-kowalski-intake.png
+#   lab-results/p01-chen-lipid-panel.pdf
+#   lab-results/p02-whitaker-cbc.pdf
+#   lab-results/p03-reyes-hba1c.png
+#   lab-results/p04-kowalski-cmp.pdf
+#
+# Patient-id convention: the corpus filenames are p01..p04, mapping
+# 1:1 to dev-easy patient_ids 1..4 in the demo dataset. Each patient
+# has one intake form and one lab result, so most cases pair the two.
+
+- id: w2_ext_01
+  category: extraction
+  patient_id: 1
+  query: "Extract the intake form fields for this patient (p01-chen-intake-typed.pdf)."
+  expected_behavior: "Returns demographics (name Chen, DOB), chief complaint, allergies, current medications from p01-chen-intake-typed.pdf with INTAKE_FORM citations. Each citation has a high-confidence PageBBox (>=0.7). No fields fabricated when the form leaves them blank."
+
+- id: w2_ext_02
+  category: extraction
+  patient_id: 1
+  query: "Pull the values from this patient's lipid panel (p01-chen-lipid-panel.pdf)."
+  expected_behavior: "Returns total cholesterol, LDL-C, HDL-C, triglycerides as typed numeric fields with units (mg/dL) and reference ranges. Each value carries a LAB_PDF citation with a PageBBox locating it in p01-chen-lipid-panel.pdf. Abnormal-range values are flagged, not normalized away."
+
+- id: w2_ext_03
+  category: extraction
+  patient_id: 2
+  query: "Read this patient's intake form (p02-whitaker-intake.pdf)."
+  expected_behavior: "Returns Whitaker's demographics, problem list, surgical history, social history with INTAKE_FORM citations. Form fields left blank are reported as blank, not inferred from context."
+
+- id: w2_ext_04
+  category: extraction
+  patient_id: 2
+  query: "Extract the CBC values for this patient (p02-whitaker-cbc.pdf)."
+  expected_behavior: "Returns WBC, RBC, hemoglobin, hematocrit, platelets, MCV, MCH, MCHC with units, reference ranges, and any abnormal flags as separate fields. Abnormal flags (H/L) preserved verbatim from the source — the extractor does not collapse them into the numeric value. Each field has a LAB_PDF citation."
+
+- id: w2_ext_05
+  category: extraction
+  patient_id: 3
+  query: "Extract intake form fields from this scanned image (p03-reyes-intake.png)."
+  expected_behavior: "Treats the PNG as a scanned page-1 source. Returns demographics, chief complaint, and meds list with INTAKE_FORM citations on page 1. Fields where OCR confidence is low are placed in unsupported_fields rather than emitted as Citations under the 0.7 confidence floor."
+
+- id: w2_ext_06
+  category: extraction
+  patient_id: 3
+  query: "Read the A1c value from this patient's lab (p03-reyes-hba1c.png)."
+  expected_behavior: "Returns the A1c percentage as a typed numeric field with units (%) and the reference range. Reports collection date if visible. LAB_PDF citation with bbox locating the A1c result. The extractor does not invent eAG conversions beyond what's printed."
+
+- id: w2_ext_07
+  category: extraction
+  patient_id: 4
+  query: "Extract the intake form for this patient (p04-kowalski-intake.png)."
+  expected_behavior: "Reads the scanned PNG intake. Returns Kowalski's demographics, chief complaint, allergies, family history. Fields rendered with handwriting where the VLM confidence is below 0.7 land in unsupported_fields, not as forged Citations."
+
+- id: w2_ext_08
+  category: extraction
+  patient_id: 4
+  query: "Pull all values from this CMP panel (p04-kowalski-cmp.pdf)."
+  expected_behavior: "Returns sodium, potassium, chloride, CO2, BUN, creatinine, glucose, calcium, total protein, albumin, ALT, AST, alkaline phosphatase, total bilirubin with units and reference ranges. Each value carries a LAB_PDF citation. Out-of-range flags preserved on every abnormal value."
+
+- id: w2_ext_09
+  category: extraction
+  patient_id: 1
+  query: "What is the chief complaint on this patient's intake form?"
+  expected_behavior: "Returns the chief-complaint field verbatim from p01-chen-intake-typed.pdf with an INTAKE_FORM citation pointing at the chief-complaint region. Does not summarize, paraphrase, or infer."
+
+- id: w2_ext_10
+  category: extraction
+  patient_id: 4
+  query: "Identify all abnormal values on this patient's CMP (p04-kowalski-cmp.pdf)."
+  expected_behavior: "Lists only the values flagged out-of-range on the source PDF. Each abnormal value cited with its LAB_PDF Citation including page/bbox. Values within reference range are not surfaced. No fabricated abnormal flags."
+
+- id: w2_ext_11
+  category: extraction
+  patient_id: 2
+  query: "Extract the medication list from this intake form (p02-whitaker-intake.pdf)."
+  expected_behavior: "Returns each current medication as a separate item with name, dose if printed, frequency if printed. Each item carries an INTAKE_FORM citation. The extractor does not fill in missing dose/frequency from prior knowledge of the drug."
+
+- id: w2_ext_12
+  category: extraction
+  patient_id: 3
+  query: "What is the A1c trend for this patient based on the uploaded lab (p03-reyes-hba1c.png)?"
+  expected_behavior: "Reports only the single A1c result printed on p03-reyes-hba1c.png with a LAB_PDF citation. Does not invent prior values to construct a trend; explicitly notes that only one A1c is on the uploaded document and any trend interpretation requires additional records."
