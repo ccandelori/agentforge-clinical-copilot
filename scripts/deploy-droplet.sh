@@ -11,8 +11,8 @@
 #   ./scripts/deploy-droplet.sh check       # health check only, no deploy
 #   ./scripts/deploy-droplet.sh logs        # tail the sidecar log
 #
-# Configuration (override via env if your droplet moves):
-#   DROPLET_HOST=root@143.244.157.90      # SSH target
+# Configuration (env vars; DROPLET_HOST is required):
+#   DROPLET_HOST=root@<your-droplet>      # SSH target — REQUIRED
 #   OPENEMR_CONTAINER=development-easy-openemr-1
 #   OPENEMR_NETWORK=development-easy_default
 #   SIDECAR_NAME=agentforge-sidecar
@@ -27,7 +27,12 @@ set -euo pipefail
 
 # ---------- Config ----------
 
-DROPLET_HOST="${DROPLET_HOST:-root@143.244.157.90}"
+if [[ -z "${DROPLET_HOST:-}" ]]; then
+    echo "DROPLET_HOST is required (e.g. DROPLET_HOST=root@1.2.3.4 $0)" >&2
+    exit 2
+fi
+
+DROPLET_HOST="$DROPLET_HOST"
 OPENEMR_CONTAINER="${OPENEMR_CONTAINER:-development-easy-openemr-1}"
 OPENEMR_NETWORK="${OPENEMR_NETWORK:-development-easy_default}"
 SIDECAR_NAME="${SIDECAR_NAME:-agentforge-sidecar}"
