@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 
 import { mapBBoxToPixels } from '@/components/DocumentViewer/mapBBoxToPixels'
 import {
@@ -105,6 +105,11 @@ async function loadDocument(): Promise<void> {
             height: renderer.height,
             renderer,
         }))
+        // Wait for Vue to render the v-for'd canvases before painting —
+        // canvasRefs is empty until the template re-renders. Without
+        // this, render() paints to a not-yet-mounted canvas and pages
+        // come up blank-white (T38.16 live-test regression).
+        await nextTick()
         await paintPages()
     } catch (caught) {
         loadError.value = caught instanceof Error ? caught : new Error('Failed to load PDF')
