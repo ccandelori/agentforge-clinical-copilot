@@ -495,6 +495,38 @@ the next agent doesn't re-do this discovery.
 
 ---
 
+## 2026-05-08 — Intake-form E2E test models the persist client inline (Task 29)
+
+**Plan:** Task 29's spec assumed the e2e test would call into a production
+sidecar `persist_questionnaire_response` HTTP client and merely stub the
+PHP boundary. Subtasks 29.4 and 29.5 needed a concrete Python client to
+hit `persist_questionnaire_response.php`.
+
+**Deviation:** No production client for that endpoint exists in the sidecar
+yet — the W2 wiring landed the PHP-side controller
+(`InternalIntakePersistController`) and Pydantic schema
+(`IntakeFormExtraction`), but the Python POST-side has not been written.
+Rather than block the e2e test on that wiring, the test models the client
+inline as `_PersistQuestionnaireResponseClient` inside the test file.
+
+**Why:** The headline Task 29 invariant ("intake forms write to
+QuestionnaireResponse, never to clinical tables") manifests as a routing
+constraint at the sidecar/PHP boundary — what URL the sidecar POSTs to.
+The inline client lets the test pin that contract *before* the production
+class lands, so when the Python wiring catches up it has a target shape
+to match. The test asserts the client must POST to exactly
+`persist_questionnaire_response.php` and nowhere else.
+
+**What we learned:** When a follow-up production class is "obvious" from a
+test's structure, modeling it inline in the test file (with a comment that
+flags the missing prod wiring) is preferable to either (a) blocking the
+test on the wiring or (b) writing a production class with no consumer. The
+test captures the contract; the future production class drops in to satisfy
+it. The W2 deadline pressure makes this trade-off worth flagging — under a
+slower cadence we'd write the prod client first.
+
+---
+
 ## 2026-04-30 — Dropped `langchain` from sidecar dependencies
 
 **Plan:** Taskmaster Task 5.1 (`pyproject.toml`) listed both `langgraph` and
