@@ -28,7 +28,6 @@ from agentforge.dashboard_auth.openemr_patient_pid import OpenEMRPatientPidFetch
 from agentforge.dashboard_auth.turn_route import make_agent_turn_router
 from agentforge.gateway.auth_gateway import AuthGateway, RequestContext
 
-
 SECRET = "a-very-long-test-secret-that-is-at-least-32b"
 SESSION_COOKIE = "agentforge_session"
 OPENEMR_BASE = "https://openemr.example"
@@ -231,8 +230,14 @@ async def test_happy_path_round_trips_through_gateway_to_orchestrator() -> None:
     # are extracted; assert the exact shape including the empty list.
     # T38.12 adds the `extraction` field (None for chart-question turns
     # like this one — no INTAKE flow ran, so the orchestrator did not
-    # stash an extraction snapshot).
-    assert resp.json() == {"reply": "ok", "citations": [], "extraction": None}
+    # stash an extraction snapshot). P1.1 adds ``persisted_resource_id``
+    # (None when the orchestrator did not POST a successful persist).
+    assert resp.json() == {
+        "reply": "ok",
+        "citations": [],
+        "extraction": None,
+        "persisted_resource_id": None,
+    }
 
     # Orchestrator received the right ctx — user_id from /me, pid from
     # /patient_pid — both routed through the real AuthGateway.
@@ -327,6 +332,49 @@ async def test_response_extraction_is_none_when_orchestrator_did_not_stash(
     body = resp.json()
     assert "extraction" in body
     assert body["extraction"] is None
+
+
+@pytest.mark.asyncio
+async def test_response_surfaces_persisted_resource_id_when_orchestrator_stashed_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1.1: when the orchestrator's post-extract persist call succeeded,
+    ``get_last_persisted_handle`` returns a :class:`PersistedHandle` and
+    the BFF route surfaces its ``resource_id`` on
+    ``AgentTurnResponse.persisted_resource_id`` so the dashboard's
+    confirm-panel can route a follow-up "open this resource" action
+    without a second round-trip.
+    """
+    from agentforge.persist import PersistedHandle
+
+    fake_handle = PersistedHandle(
+        resource_id="117",
+        kind="questionnaire_response",
+    )
+    monkeypatch.setattr(
+        "agentforge.dashboard_auth.turn_route.get_last_persisted_handle",
+        lambda: fake_handle,
+    )
+
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 7},
+    )
+    sid = await _seed_session(
+        store,
+        fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/u",
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "intake this PDF", "patient_uuid": "p"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["persisted_resource_id"] == "117"
 
 
 @pytest.mark.asyncio

@@ -38,15 +38,15 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 _log = logging.getLogger(__name__)
 
 from agentforge.config import Settings
 from agentforge.dashboard_auth.internal_jwt import (
-    InternalJwtMintError,
     InternalJwtMinter,
+    InternalJwtMintError,
 )
 from agentforge.dashboard_auth.openemr_me import (
     OpenEMRIdentity,
@@ -59,7 +59,11 @@ from agentforge.dashboard_auth.openemr_patient_pid import (
 )
 from agentforge.dashboard_auth.sessions import Session, SessionStore
 from agentforge.gateway.auth_gateway import AuthGateway
-from agentforge.orchestrator import get_last_turn_extraction, get_turn_citation_index
+from agentforge.orchestrator import (
+    get_last_persisted_handle,
+    get_last_turn_extraction,
+    get_turn_citation_index,
+)
 from agentforge.verifier.cache import CitationIndex
 from agentforge.verifier.citation import find_citations
 
@@ -160,6 +164,15 @@ class AgentTurnResponse(BaseModel):
     # types it client-side and renders an extraction-review panel
     # below the assistant bubble when non-null.
     extraction: dict[str, Any] | None = None
+    # Per-turn persisted-resource handle (P1.1). Set when the post-
+    # extract persist call to OpenEMR succeeded; ``None`` for any of:
+    # chart-question turns (no extraction), evidence-only turns,
+    # persister not wired, document_id missing, persistence failure
+    # (logged but swallowed — the synthesis turn still surfaces the
+    # model's reply). The dashboard's confirm-panel uses this to
+    # route a follow-up "open this resource" action without a second
+    # round-trip to look up the just-persisted handle.
+    persisted_resource_id: str | None = None
 
 
 # Map verifier record types → frontend kind enum
@@ -626,10 +639,13 @@ def make_agent_turn_router(
         # ContextVar isolation contract as ``get_turn_citation_index``
         # (see orchestrator/__init__.py). ``None`` for non-INTAKE turns.
         extraction = get_last_turn_extraction()
+        # Same contract for the persisted-resource handle (P1.1).
+        persisted = get_last_persisted_handle()
         return AgentTurnResponse(
             reply=reply,
             citations=_build_citations(reply),
             extraction=extraction,
+            persisted_resource_id=persisted.resource_id if persisted else None,
         )
 
     return router
