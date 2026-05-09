@@ -90,4 +90,18 @@ describe('ExtractionPanel', () => {
     const wrapper = mount(ExtractionPanel, { props: { extraction: ext } })
     expect(wrapper.text()).toContain('72%')
   })
+
+  it('humanizes snake_case demographic field labels', () => {
+    const ext = makeBaseExtraction({
+      demographics: [
+        { field: 'date_of_birth', value: '1980-04-12', citation: makeCitation() },
+        { field: 'mrn', value: 'A-7421', citation: makeCitation() },
+      ],
+    })
+    const wrapper = mount(ExtractionPanel, { props: { extraction: ext } })
+    const text = wrapper.text()
+    expect(text).toContain('Date of Birth')
+    expect(text).toContain('MRN')
+    expect(text).not.toContain('date_of_birth')
+  })
 })

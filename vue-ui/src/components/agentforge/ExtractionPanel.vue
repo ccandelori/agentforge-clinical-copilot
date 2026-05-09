@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 
 import DocumentViewer from '@/components/DocumentViewer.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import { humanizeFieldName } from '@/composables/humanizeFieldName'
 import type { IntakeExtraction } from '@/composables/useAgentTurn'
 import type { PageBBox } from '@/types/citation'
 
@@ -152,7 +153,7 @@ const hasUnsupported = computed<boolean>(
           :key="`${d.field}-${d.value}`"
           class="flex items-baseline gap-2 text-sm"
         >
-          <dt class="shrink-0 text-ink-muted">{{ d.field }}:</dt>
+          <dt class="shrink-0 text-ink-muted">{{ humanizeFieldName(d.field) }}:</dt>
           <dd class="text-ink">{{ d.value }}</dd>
         </div>
       </dl>
