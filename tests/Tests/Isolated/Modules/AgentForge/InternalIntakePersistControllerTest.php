@@ -25,8 +25,8 @@ use OpenEMR\Modules\AgentForge\Services\IntakeQuestionnaireLookup;
 use OpenEMR\Modules\AgentForge\Services\IntakeQuestionnaireResponseWriter;
 use OpenEMR\Modules\AgentForge\Services\SeededIntakeQuestionnaire;
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\TestCase;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -290,6 +290,7 @@ final class InternalIntakePersistControllerTest extends TestCase
         $lookup->method('findCanonicalQuestionnaire')->willReturn(new SeededIntakeQuestionnaire(
             id: 7,
             name: 'AgentForge Intake Form',
+            questionnaireId: 'agentforge-intake-form',
             questionnaireJson: '{"resourceType":"Questionnaire"}',
         ));
 
@@ -299,7 +300,8 @@ final class InternalIntakePersistControllerTest extends TestCase
             ->with(
                 self::equalTo(42),                              // patientId
                 self::equalTo(7),                               // questionnaireForeignId
-                self::equalTo('AgentForge Intake Form'),        // questionnaireName
+                self::equalTo('agentforge-intake-form'),        // questionnaireId (FHIR logical id)
+                self::equalTo('AgentForge Intake Form'),        // questionnaireName (display)
                 self::callback(fn (array $r): bool =>
                     ($r['resourceType'] ?? null) === 'QuestionnaireResponse'),
                 self::equalTo('{"resourceType":"Questionnaire"}'),
@@ -341,6 +343,7 @@ final class InternalIntakePersistControllerTest extends TestCase
         $lookup->method('findCanonicalQuestionnaire')->willReturn(new SeededIntakeQuestionnaire(
             id: 7,
             name: 'AgentForge Intake Form',
+            questionnaireId: 'agentforge-intake-form',
             questionnaireJson: '{}',
         ));
 
@@ -384,6 +387,7 @@ final class InternalIntakePersistControllerTest extends TestCase
         $lookup->method('findCanonicalQuestionnaire')->willReturn(new SeededIntakeQuestionnaire(
             id: 7,
             name: 'AgentForge Intake Form',
+            questionnaireId: 'agentforge-intake-form',
             questionnaireJson: '{}',
         ));
 

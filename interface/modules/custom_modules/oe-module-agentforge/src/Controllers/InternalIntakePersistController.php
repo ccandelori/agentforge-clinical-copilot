@@ -140,6 +140,7 @@ class InternalIntakePersistController
             $responseId = $this->writer->insert(
                 patientId: $claims->patientId,
                 questionnaireForeignId: $seeded->id,
+                questionnaireId: $seeded->questionnaireId,
                 questionnaireName: $seeded->name,
                 questionnaireResponse: $fhirResponse,
                 questionnaireJson: $seeded->questionnaireJson,

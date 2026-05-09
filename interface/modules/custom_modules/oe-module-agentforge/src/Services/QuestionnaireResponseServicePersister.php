@@ -21,14 +21,20 @@ use RuntimeException;
 
 /**
  * The legacy service has a sprawling positional signature; this class
- * collapses it to the four arguments the AgentForge intake-form write
+ * collapses it to the five arguments the AgentForge intake-form write
  * path actually needs and validates the result shape.
  *
  * Crucially, the legacy service:
  *   - fires `ServiceSaveEvent::EVENT_PRE_SAVE` and `EVENT_POST_SAVE`
  *     (the rest of OpenEMR listens for these);
- *   - populates `questionnaire_id` from the FHIR Questionnaire's
- *     logical id (the raw INSERT it replaces did not);
+ *   - persists the value passed as its 7th positional `$q_id` into
+ *     `questionnaire_response.questionnaire_id` and uses it to build
+ *     the FHIR canonical URL `{fhirUrl}/Questionnaire/{q_id}` set on
+ *     `QuestionnaireResponse.questionnaire`. If `$q_id` is null/empty,
+ *     it falls back to the FHIR id parsed from the canonical
+ *     Questionnaire JSON (`$q.id`). We pass it explicitly so the
+ *     persisted id is never coupled to the (potentially absent or
+ *     out-of-sync) `id` field on whatever JSON the lookup returned.
  *   - resolves audit / creator user from the active session (in the
  *     sidecar context the session has no `authUserID`, so both fall
  *     back to null — which is the correct semantics for AI-generated
@@ -40,6 +46,16 @@ use RuntimeException;
  * The legacy service's untyped 10-positional signature is forwarded
  * positionally on purpose — using named arguments would couple us to
  * its parameter names, which are not strictly the public API.
+ *
+ * Note that `$questionnaireName` is NOT passed to the service. The
+ * service derives the row's `questionnaire_name` column from the FHIR
+ * Questionnaire's `title` (or `name` as fallback) — see lines 402-407
+ * of QuestionnaireResponseService::saveQuestionnaireResponse(). We
+ * keep the name on the persister interface for narrative-fallback
+ * purposes (a future caller might need it for logging / display) and
+ * to preserve symmetry with the other identity fields the writer
+ * passes through, but at the legacy-service boundary it would shadow
+ * the title-from-JSON path and produce an inconsistent record.
  */
 final readonly class QuestionnaireResponseServicePersister implements IntakeQuestionnaireResponsePersister
 {
@@ -53,7 +69,10 @@ final readonly class QuestionnaireResponseServicePersister implements IntakeQues
         int $patientId,
         string $questionnaireJson,
         string $questionnaireName,
+        string $questionnaireLogicalId,
     ): string {
+        unset($questionnaireName); // see class docblock — derived from JSON title.
+
         $result = $this->service->saveQuestionnaireResponse(
             $questionnaireResponse,           // $response
             $patientId,                       // $pid
@@ -61,7 +80,9 @@ final readonly class QuestionnaireResponseServicePersister implements IntakeQues
             null,                             // $qr_id — service mints a fresh UUID
             null,                             // $qr_record_id
             $questionnaireJson,               // $q
-            $questionnaireName,               // $q_id (used as title fallback)
+            $questionnaireLogicalId,          // $q_id — FHIR Questionnaire.id, lands
+                                              //         in questionnaire_response.questionnaire_id
+                                              //         and Questionnaire/{id} canonical URL
             null,                             // $form_response
             true,                             // $add_report — generate narrative
         );

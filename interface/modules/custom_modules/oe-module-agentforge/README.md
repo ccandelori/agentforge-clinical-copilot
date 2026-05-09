@@ -90,10 +90,13 @@ can be persisted.
 
 Migration: `db/Migrations/Version20260505000001.php` — seeds one row in
 `questionnaire_repository` with `source_url` set to the canonical URL,
-a name of `AgentForge Intake Form`, status `active`, and a FHIR R4
+a name of `AgentForge Intake Form`, status `active`, the FHIR logical
+id `agentforge-intake-form` in `questionnaire_id`, and a FHIR R4
 Questionnaire JSON whose `item` set mirrors the `IntakeFormExtraction`
 Pydantic model (chief_concern, demographics, medications, allergies,
-family_history).
+family_history). The logical id is also copied onto every persisted
+`questionnaire_response.questionnaire_id` so FHIR clients can resolve
+the canonical `Questionnaire/agentforge-intake-form` reference.
 
 ### Idempotency
 
