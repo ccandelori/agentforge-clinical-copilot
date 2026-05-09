@@ -164,7 +164,13 @@ class _PlannerLike(Protocol):
 
 class _VisionExtractorLike(Protocol):
     """Subset of ``VisionExtractor[IntakeFormExtraction]`` consumed
-    by ``intake_extractor_node``."""
+    by ``intake_extractor_node``.
+
+    The ``trace`` kwarg is optional so the node can hand the per-turn
+    Langfuse handle through; the extractor uses it (when wired with
+    a ``LangfuseClient``) to emit one ``record_extraction_call`` span
+    per call. Stub implementations in tests can ignore the kwarg.
+    """
 
     async def extract(
         self,
@@ -172,6 +178,7 @@ class _VisionExtractorLike(Protocol):
         pages: list[RenderedPage],
         document_id: int,
         patient_id: int,
+        trace: TraceHandle | None = None,
     ) -> VisionExtractionResult[IntakeFormExtraction]: ...
 
 
@@ -388,6 +395,7 @@ async def intake_extractor_node(
         pages=state["pdf_pages"],
         document_id=document_id,
         patient_id=patient_id,
+        trace=state.get("langfuse_trace"),
     )
     return {**last_node_update, "extraction_result": result.extraction}
 
