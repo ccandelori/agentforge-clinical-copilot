@@ -25,7 +25,7 @@
 --
 -- Roles are the canonical option_ids from
 -- `list_options WHERE list_id = 'care_team_roles'`:
---   physician, nurse_practitioner, care_coordinator, social_worker.
+--   physician, nurse_practitioner, case_manager, social_worker.
 -- (Verified against dev-easy at seed time; same set ships in
 -- `sql/database.sql` for fresh installs.)
 --
@@ -93,13 +93,13 @@ FROM patient_data WHERE pubpid = 'MRN-2026-DEMO-04';
 -- `care_teams` row by `team_name`. We don't depend on AUTO_INCREMENT
 -- snapshots, so each member insert is independent and safely re-runnable.
 
--- Chen Care Team — Physician + Nurse Practitioner + Care Coordinator
+-- Chen Care Team — Physician + Nurse Practitioner + Case Manager
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
 SELECT id, 6, 'physician', 'active' FROM care_teams WHERE team_name = 'Chen Care Team';
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
 SELECT id, 5, 'nurse_practitioner', 'active' FROM care_teams WHERE team_name = 'Chen Care Team';
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
-SELECT id, 1, 'care_coordinator', 'active' FROM care_teams WHERE team_name = 'Chen Care Team';
+SELECT id, 1, 'case_manager', 'active' FROM care_teams WHERE team_name = 'Chen Care Team';
 
 -- Whitaker Care Team — Physician + Social Worker + Nurse Practitioner
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
@@ -109,11 +109,11 @@ SELECT id, 1, 'social_worker', 'active' FROM care_teams WHERE team_name = 'Whita
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
 SELECT id, 5, 'nurse_practitioner', 'active' FROM care_teams WHERE team_name = 'Whitaker Care Team';
 
--- Reyes Care Team — Physician + Care Coordinator
+-- Reyes Care Team — Physician + Case Manager
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
 SELECT id, 6, 'physician', 'active' FROM care_teams WHERE team_name = 'Reyes Care Team';
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
-SELECT id, 1, 'care_coordinator', 'active' FROM care_teams WHERE team_name = 'Reyes Care Team';
+SELECT id, 1, 'case_manager', 'active' FROM care_teams WHERE team_name = 'Reyes Care Team';
 
 -- Kowalski Care Team — Physician + Nurse Practitioner
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
