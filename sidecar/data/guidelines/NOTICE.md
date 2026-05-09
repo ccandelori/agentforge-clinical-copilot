@@ -1,5 +1,12 @@
 # AgentForge Clinical Guideline Corpus — Notice and Attribution
 
+> **Status: demo stub only.** This corpus is project-prepared summary
+> material chosen to exercise the retrieval pipeline end-to-end during
+> the W2 demo. It has NOT been clinically reviewed, NOT been approved
+> by any care-delivery organization, and is NOT the corpus a production
+> deployment would ship. Treat it as scaffolding. See "Demo scope vs
+> production" below for what a production corpus would look like.
+
 The markdown documents under this directory are **brief factual
 summaries** of publicly available clinical guidance, prepared for the
 AgentForge Clinical Co-Pilot's evidence-retrieval demo. They are NOT

@@ -1,6 +1,6 @@
-"""Latency-budget tests for /agentforge/turn (Task 47.5).
+"""Latency-budget tests for the JWT-protected internal endpoints.
 
-Two tests, both opt-in via the ``latency`` pytest marker:
+One test, opt-in via the ``latency`` pytest marker:
 
   test_internal_endpoints_p95_under_budget
     Times the JWT-protected internal endpoints directly (5 samples
@@ -10,17 +10,7 @@ Two tests, both opt-in via the ``latency`` pytest marker:
     ceiling. We assert p95 < 1000ms to leave headroom on a
     healthy stack.
 
-  test_uc1_total_turn_p95_under_budget
-    Full end-to-end /turn including LLM synthesis (5 samples).
-    Tagged ``slow`` AND ``latency``. The 7s p95 budget from
-    ARCHITECTURE.md is the PRODUCTION target on the droplet —
-    measured dev-laptop latencies run 12-25s (Anthropic API
-    cumulative cost). The default budget here is 30s p95 (lenient
-    for dev-laptop); override via AGENTFORGE_INT_UC1_P95_BUDGET_MS
-    when running against production-shaped hardware to assert
-    the real 7000ms target.
-
-Default ``uv run pytest`` deselects both markers. Run explicitly::
+Default ``uv run pytest`` deselects the marker. Run explicitly::
 
     uv run pytest -m latency tests/integration/test_latency.py
 
@@ -28,11 +18,15 @@ The :class:`LatencyTracker` context manager records wall-clock
 timings and exposes ``p50``, ``p95``, ``p99`` over the captured
 samples. Sufficient for "is the system in the right ballpark?"
 checks; production SLO monitoring does not run here.
+
+(The legacy ``test_uc1_total_turn_p95_under_budget`` test posted to
+the deleted module-PHP ``turn.php`` route and was removed alongside
+the legacy panel; the equivalent end-to-end latency check now lives
+on the BFF turn-route surface and is a follow-up.)
 """
 
 from __future__ import annotations
 
-import os
 import statistics
 import time
 from collections.abc import Iterator
@@ -48,9 +42,6 @@ import pytest
 pytestmark = pytest.mark.latency
 
 
-_TURN_PATH = (
-    "/interface/modules/custom_modules/oe-module-agentforge/public/turn.php"
-)
 _INTERNAL_PATHS_NO_PARAMS: tuple[str, ...] = (
     "/interface/modules/custom_modules/oe-module-agentforge"
     "/public/internal/demographics.php",
@@ -197,103 +188,3 @@ async def test_internal_endpoints_p95_under_budget(
     )
 
 
-# ---------------------------------------------------------------------
-# LLM tier — full /turn round-trip. Real Anthropic API calls.
-# ---------------------------------------------------------------------
-
-
-@pytest.mark.slow
-async def test_uc1_total_turn_p95_under_budget(
-    authenticated_client: httpx.AsyncClient,
-    patient_context_factory,
-) -> None:
-    """End-to-end /turn p95 stays within the dev-laptop budget.
-
-    Production target is 7s p95 (ARCHITECTURE.md §3). On a dev
-    laptop with host-script sidecar, the same workload runs
-    noticeably slower — Anthropic's TTFB plus the controller's
-    streaming pipe can push the median to 8-12s on a complex
-    chart. We assert 12s p95 here, leaving headroom for the
-    integration test environment without losing the regression-
-    detection signal.
-
-    8 samples is the minimum for a meaningful p95 estimate; more
-    would be better statistically but each sample costs API tokens
-    AND ~15s of wall time.
-    """
-    await patient_context_factory(8)  # Eula — complex chronic patient
-
-    tracker = LatencyTracker(name="uc1_total_turn")
-    sample_count = 5
-    failures = 0
-    statuses: list[int] = []
-
-    for i in range(sample_count):
-        with tracker.sample():
-            try:
-                response = await authenticated_client.post(
-                    _TURN_PATH,
-                    json={"message": "Give me a brief chart overview."},
-                    timeout=httpx.Timeout(
-                        connect=5.0, read=60.0, write=10.0, pool=5.0
-                    ),
-                )
-                statuses.append(response.status_code)
-                if response.status_code != 200:
-                    failures += 1
-                    print(
-                        f"\n  sample {i + 1}: status {response.status_code} "
-                        f"(treating as failure, not skip — transient 503s "
-                        "from controller idle-timeout count toward latency "
-                        "budget)"
-                    )
-            except httpx.HTTPError as exc:
-                failures += 1
-                statuses.append(-1)
-                print(f"\n  sample {i + 1} HTTP error: {exc}")
-
-    print(f"\n  {tracker.summary()}, failures={failures}, statuses={statuses}")
-
-    # If EVERY sample failed the sidecar is fundamentally down;
-    # skip rather than fail (the suite is meant to test latency,
-    # not infrastructure availability).
-    if failures == sample_count:
-        pytest.skip(
-            f"All {sample_count} samples failed (statuses={statuses}). "
-            "Sidecar appears down. Start ./sidecar/scripts/sidecar.sh "
-            "and retry."
-        )
-
-    # Otherwise: more-than-half failures = real problem, surface it.
-    assert failures < sample_count // 2 + 1, (
-        f"More than half the samples failed ({failures}/{sample_count}, "
-        f"statuses={statuses}). Suite is detecting a fundamental "
-        "issue, not a latency one."
-    )
-
-    # Budget: production target is 7s p95 (ARCHITECTURE.md §3,
-    # measured on the droplet). As of week1-gaps Task #8 the
-    # ``total_turn`` budget is enforced inside ``Orchestrator.turn``
-    # via ``asyncio.timeout`` — the test default matches that
-    # enforcement so a regression here surfaces locally rather than
-    # only in staging. Dev-laptop runs that legitimately need slack
-    # (cold sidecar, slow Anthropic round-trip) can override via
-    # ``AGENTFORGE_INT_UC1_P95_BUDGET_MS`` — set higher to skip the
-    # production-tight assertion while still measuring p95.
-    budget_ms_raw = os.environ.get(
-        "AGENTFORGE_INT_UC1_P95_BUDGET_MS", "7000"
-    )
-    try:
-        budget_ms = float(budget_ms_raw)
-    except ValueError:
-        pytest.fail(
-            f"AGENTFORGE_INT_UC1_P95_BUDGET_MS={budget_ms_raw!r} is "
-            "not a valid number; must be parseable as float."
-        )
-    assert tracker.p95 < budget_ms, (
-        f"UC-1 /turn p95 latency {tracker.p95:.0f}ms exceeds "
-        f"{budget_ms:.0f}ms budget (env override "
-        "AGENTFORGE_INT_UC1_P95_BUDGET_MS). Production target is "
-        f"7000ms; default dev-laptop budget is 30000ms. Latencies: "
-        f"{[round(s) for s in tracker.samples_ms]}"
-    )

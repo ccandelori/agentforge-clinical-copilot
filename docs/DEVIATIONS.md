@@ -12,6 +12,56 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — Slow / latency / eval-baseline suites trimmed to remove deleted-route coverage
+
+**What changed:** The legacy panel yank on 2026-05-08 left behind four
+sidecar test files still posting to the deleted
+`/interface/modules/.../public/turn.php` route — `test_use_cases.py`
+(slow), `test_latency.py` (the LLM tier), `test_patient_context.py` (one
+binding probe), and the entire `tests/eval/baseline/` directory (the
+`eval`-marked baseline suite). Wave 5's grep verification was scoped
+to live-code paths and didn't catch them; round 3 punch list flagged
+the residue.
+
+**What we did:**
+
+- Deleted `sidecar/tests/integration/test_use_cases.py` outright (4
+  tests, all hit the deleted route).
+- Deleted `sidecar/tests/eval/baseline/` outright (test + cases +
+  conftest + grader + probe-responses; the `eval`-marked regen CLI at
+  `sidecar/src/agentforge/eval/regenerate_baseline.py` doesn't import
+  from this directory — confirmed via `grep -rln tests.eval.baseline
+  sidecar/src/`).
+- Surgically removed `test_uc1_total_turn_p95_under_budget` from
+  `test_latency.py`; kept `test_internal_endpoints_p95_under_budget`
+  (it probes the surviving `internal/*` routes, no panel dependency).
+- Surgically removed `test_patient_context_factory_sets_pid_for_known_patient`
+  from `test_patient_context.py`; kept the three fixture-validation
+  tests that don't touch `turn.php`.
+
+**Why deletion over retarget:** Retargeting at the BFF
+`/api/agent/turn` requires session-cookie auth (the integration suite
+has session auth via the OpenEMR fixtures, but the BFF route mints its
+own internal JWT off the session and the test scaffolding doesn't
+plug into that). Retargeting at the sidecar's direct `/turn` requires
+JWT minting in the test fixtures. Both are substantial rework on
+suites that are deselected by default; with ~36h to deadline and the
+Vue path covered by `dashboard_auth/turn_route.py`'s integration tests
+plus the regression-locks suite, the cost-benefit lands on deletion.
+A future production-grade latency suite that targets the BFF surface
+is a clear follow-up, not a deadline blocker.
+
+**Corpus framing:** The reviewer also re-flagged
+`sidecar/data/guidelines/NOTICE.md` as project-prepared summary
+material rather than approved source documents. The user's call is
+"leave it" — strengthened the framing one notch by adding an explicit
+"Status: demo stub only" callout block at the top of the NOTICE so the
+demo-vs-production distinction is unmistakable. The corpus contents
+themselves stay as-is; production-grade corpus ingestion is a
+post-W2 follow-up.
+
+---
+
 ## 2026-05-08 — Legacy per-chart AgentForge panel removed
 
 **Background.** The original W1 architecture embedded an AgentForge chat

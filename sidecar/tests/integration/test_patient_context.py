@@ -14,8 +14,6 @@ against the live dev-easy stack to confirm that:
 
 from __future__ import annotations
 
-import httpx
-
 
 async def test_demo_patient_ids_returns_known_pids(
     demo_patient_ids: tuple[int, ...],
@@ -26,42 +24,6 @@ async def test_demo_patient_ids_returns_known_pids(
     for pid in demo_patient_ids:
         assert isinstance(pid, int)
         assert pid > 0
-
-
-async def test_patient_context_factory_sets_pid_for_known_patient(
-    patient_context_factory,
-    demo_patient_ids: tuple[int, ...],
-    authenticated_client: httpx.AsyncClient,
-) -> None:
-    """Setting pid via the factory makes /agentforge/turn see the patient.
-
-    Pre-set: hitting /agentforge/turn with no pid bound returns 400
-    ("no patient context"). Post-set: the same call should fail with
-    a *different* error (likely 400 with a different message, or 200
-    if the LLM responds — depends on whether ANTHROPIC_API_KEY is
-    set in the sidecar). What we assert here is the negative: the
-    response no longer says "no patient context".
-    """
-    pid = demo_patient_ids[0]
-    await patient_context_factory(pid)
-
-    # Post call with empty body — may or may not be valid JSON; we
-    # just want to see whether the controller passes the
-    # patient-context check.
-    response = await authenticated_client.post(
-        "/interface/modules/custom_modules/oe-module-agentforge/public/turn.php",
-        json={"message": "test"},
-    )
-
-    body_excerpt = response.text[:300].lower()
-    # The success criterion: we are NOT getting the
-    # patient-context refusal. We accept any other failure mode
-    # (LLM not configured, sidecar down, etc.) — those are
-    # downstream concerns.
-    assert "no patient context" not in body_excerpt, (
-        f"Patient context not bound after set_pid={pid}; status "
-        f"{response.status_code}, body excerpt: {body_excerpt!r}"
-    )
 
 
 async def test_patient_context_default_fixture_binds_first_demo_pid(

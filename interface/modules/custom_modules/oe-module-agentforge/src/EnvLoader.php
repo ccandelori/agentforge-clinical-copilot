@@ -5,12 +5,13 @@ declare(strict_types=1);
 /**
  * EnvLoader — loads the module's .env file into getenv() / $_ENV.
  *
- * The module's PHP entry points (turn.php, internal/*.php) read shared
- * secrets like AGENTFORGE_JWT_SECRET from getenv(). The Apache/PHP-FPM
- * environment in OpenEMR's dev-easy container doesn't propagate env
- * vars to web requests by default, so we keep a module-local .env that
- * the loader reads on every request. Production deployments can set
- * the same vars at the container/process level and skip this file.
+ * The module's JWT-protected internal/*.php entry points (called by
+ * the sidecar) read shared secrets like AGENTFORGE_JWT_SECRET from
+ * getenv(). The Apache/PHP-FPM environment in OpenEMR's dev-easy
+ * container doesn't propagate env vars to web requests by default, so
+ * we keep a module-local .env that the loader reads on every request.
+ * Production deployments can set the same vars at the container/process
+ * level and skip this file.
  *
  * @package   OpenEMR
  * @link      https://www.open-emr.org
