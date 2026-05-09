@@ -81,6 +81,7 @@ class _OrchestratorProto:
         pdf_pages: list[Any] | None = None,
         document_id: int | None = None,
         doc_type: DocumentType | None = None,
+        evidence_query: str = "",
     ) -> str: ...
 
 
@@ -135,6 +136,14 @@ class AgentTurnRequest(BaseModel):
     # follow-up; the API surface is plumbed through here so callers can
     # opt in without another schema change.
     doc_type: DocumentType | None = None
+    # P1.3: free-text guideline question. Forwarded to the orchestrator
+    # verbatim — the W2 graph routes to the evidence retriever node
+    # when it is non-empty. Either ``evidence_query``, ``document_id``,
+    # both, or neither may be set; the orchestrator falls back to the
+    # W1 iterative loop when neither is present so chart-question turns
+    # are unaffected. Mirrors the legacy /turn route's ``evidence_query``
+    # field (see main.py).
+    evidence_query: str = ""
 
 
 class AgentTurnCitation(BaseModel):
@@ -633,6 +642,7 @@ def make_agent_turn_router(
             pdf_pages=pdf_pages,
             document_id=document_id_int,
             doc_type=body.doc_type,
+            evidence_query=body.evidence_query,
         )
         # Read the extraction snapshot AFTER ``turn`` returns — same
         # ContextVar isolation contract as ``get_turn_citation_index``
