@@ -9,10 +9,12 @@ import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSpinner from '@/components/ui/BaseSpinner.vue'
 import AllergiesCard from '@/components/patients/dashboard/AllergiesCard.vue'
+import CareTeamCard from '@/components/patients/dashboard/CareTeamCard.vue'
 import EncountersCard from '@/components/patients/dashboard/EncountersCard.vue'
 import LabsCard from '@/components/patients/dashboard/LabsCard.vue'
 import MedicationsCard from '@/components/patients/dashboard/MedicationsCard.vue'
 import PatientHeaderBand from '@/components/patients/dashboard/PatientHeaderBand.vue'
+import PrescriptionsCard from '@/components/patients/dashboard/PrescriptionsCard.vue'
 import ProblemListCard from '@/components/patients/dashboard/ProblemListCard.vue'
 import VitalsStrip from '@/components/patients/dashboard/VitalsStrip.vue'
 import { usePatient } from '@/composables/usePatient'
@@ -33,6 +35,7 @@ const {
   allergies,
   encounters,
   labs,
+  careTeams,
   loading,
   error,
   refresh,
@@ -214,10 +217,12 @@ function onEditSave(): void {
         <div class="space-y-5 lg:col-span-7">
           <ProblemListCard :problems="problems" :loading="loading" />
           <MedicationsCard :medications="medications" :loading="loading" />
+          <PrescriptionsCard :medications="medications" :loading="loading" />
           <EncountersCard :encounters="encounters" :loading="loading" />
         </div>
         <div class="space-y-5 lg:col-span-5">
           <AllergiesCard :allergies="allergies" :loading="loading" />
+          <CareTeamCard :care-teams="careTeams" :loading="loading" />
           <LabsCard :labs="labs" :loading="loading" />
         </div>
       </div>

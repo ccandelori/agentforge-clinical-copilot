@@ -2,6 +2,7 @@ import { ref, watch, type Ref } from 'vue'
 
 import {
   getAllergies,
+  getCareTeams,
   getEncounters,
   getLabs,
   getMedications,
@@ -9,6 +10,7 @@ import {
   getProblems,
   getVitals,
   type Allergy,
+  type CareTeam,
   type Encounter,
   type LabResult,
   type Medication,
@@ -35,6 +37,7 @@ interface CachedBundle {
   allergies: readonly Allergy[]
   encounters: readonly Encounter[]
   labs: readonly LabResult[]
+  careTeams: readonly CareTeam[]
   fetchedAt: number
 }
 
@@ -54,6 +57,7 @@ export interface UsePatientResult {
   readonly allergies: Ref<readonly Allergy[]>
   readonly encounters: Ref<readonly Encounter[]>
   readonly labs: Ref<readonly LabResult[]>
+  readonly careTeams: Ref<readonly CareTeam[]>
   readonly loading: Ref<boolean>
   readonly error: Ref<Error | null>
   refresh: () => Promise<void>
@@ -74,6 +78,7 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
   const allergies = ref<readonly Allergy[]>([])
   const encounters = ref<readonly Encounter[]>([])
   const labs = ref<readonly LabResult[]>([])
+  const careTeams = ref<readonly CareTeam[]>([])
   const loading = ref<boolean>(false)
   const error = ref<Error | null>(null)
 
@@ -85,6 +90,7 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
     allergies.value = entry.allergies
     encounters.value = entry.encounters
     labs.value = entry.labs
+    careTeams.value = entry.careTeams
     error.value = null
     loading.value = false
   }
@@ -135,14 +141,16 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
       getAllergies(id),
       getEncounters(id),
       getLabs(id),
+      getCareTeams(id),
     ])
-    const [vR, prR, mR, aR, eR, lR] = settled
+    const [vR, prR, mR, aR, eR, lR, ctR] = settled
     vitals.value = vR.status === 'fulfilled' ? vR.value : []
     problems.value = prR.status === 'fulfilled' ? prR.value : []
     medications.value = mR.status === 'fulfilled' ? mR.value : []
     allergies.value = aR.status === 'fulfilled' ? aR.value : []
     encounters.value = eR.status === 'fulfilled' ? eR.value : []
     labs.value = lR.status === 'fulfilled' ? lR.value : []
+    careTeams.value = ctR.status === 'fulfilled' ? ctR.value : []
 
     // Surface the first failure as a soft warning on the error ref so
     // the page can render a non-blocking notice. Patient + the cards
@@ -166,6 +174,7 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
         allergies: allergies.value,
         encounters: encounters.value,
         labs: labs.value,
+        careTeams: careTeams.value,
         fetchedAt: Date.now(),
       })
     }
@@ -194,6 +203,7 @@ export function usePatient(patientId: Ref<string>): UsePatientResult {
     allergies,
     encounters,
     labs,
+    careTeams,
     loading,
     error,
     refresh,

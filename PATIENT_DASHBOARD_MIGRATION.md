@@ -776,8 +776,8 @@ Things explicitly **not** shipped, with the rationale for each:
 | 38.4 — Allergies card | done |
 | 38.5 — Problem List card | done |
 | 38.6 — Medications card | done |
-| 38.7 — Prescriptions card | deferred (subsumed by `MedicationsCard` filtering `MedicationRequest` by status; no separate prescriptions surface shipped) |
-| 38.8 — Care Team card | deferred (Synthea-imported demo personas have empty CareTeam tables — no data to render; tracked as Taskmaster #39) |
+| 38.7 — Prescriptions card | done — `PrescriptionsCard.vue` filters `MedicationRequest` by `status in ('completed','stopped')` (the closed-end of the same stream `MedicationsCard` consumes) |
+| 38.8 — Care Team card | done — `CareTeamCard.vue` over `GET /api/fhir/CareTeam?patient={uuid}&status=active`; demo personas seeded via `scripts/seed/care_team.sql` |
 | 38.9 — Lab Results card (bonus) | done — `LabsCard.vue` plus `VitalsStrip` + `EncountersCard` ride-alongs |
 | 38.10 — AgentForge drawer | done |
 | 38.11 — Citation overlay re-port | done |

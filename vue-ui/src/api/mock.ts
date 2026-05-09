@@ -199,6 +199,16 @@ declare namespace fhir4 {
       description?: string
     }[]
   }
+  interface CareTeam extends Resource {
+    resourceType: 'CareTeam'
+    status?: string
+    name?: string
+    subject?: Reference
+    participant?: {
+      role?: CodeableConcept[]
+      member?: Reference
+    }[]
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +325,27 @@ export interface LabResult {
   readonly flag?: LabFlag
   readonly collectedAt: string
   readonly resultedAt: string
+}
+
+export type CareTeamStatus =
+  | 'active'
+  | 'inactive'
+  | 'proposed'
+  | 'suspended'
+  | 'entered-in-error'
+
+export interface CareTeamMember {
+  readonly id: string
+  readonly name: string
+  readonly role: string
+}
+
+export interface CareTeam {
+  readonly id: string
+  readonly patientId: string
+  readonly name: string
+  readonly status: CareTeamStatus
+  readonly members: readonly CareTeamMember[]
 }
 
 export interface User {
@@ -447,6 +478,10 @@ function isEncounterResource(r: fhir4.Resource | undefined): r is fhir4.Encounte
 
 function isAppointmentResource(r: fhir4.Resource | undefined): r is fhir4.Appointment {
   return r !== undefined && r.resourceType === 'Appointment'
+}
+
+function isCareTeamResource(r: fhir4.Resource | undefined): r is fhir4.CareTeam {
+  return r !== undefined && r.resourceType === 'CareTeam'
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +935,51 @@ function pickReferenceRange(o: fhir4.Observation): string | undefined {
   return undefined
 }
 
+// ---- Care Team ------------------------------------------------------------
+
+/**
+ * Map a participant's role CodeableConcept onto a short, UI-friendly label.
+ * `OpenEMR\Services\FHIR\FhirCareTeamService::createRoleCodeableConcept`
+ * encodes the role with SNOMED CT but the human description we get back
+ * already lives on the CodeableConcept's `text` or first coding `display`,
+ * so prefer those over the raw SNOMED code.
+ */
+function pickCareTeamRole(
+  participant: NonNullable<fhir4.CareTeam['participant']>[number],
+): string {
+  const role = participant.role?.[0]
+  if (role === undefined) return ''
+  if (role.text !== undefined && role.text !== '') return role.text
+  return role.coding?.[0]?.display ?? ''
+}
+
+function projectCareTeam(c: fhir4.CareTeam): CareTeam {
+  const status: CareTeamStatus =
+    c.status === 'inactive'
+      || c.status === 'proposed'
+      || c.status === 'suspended'
+      || c.status === 'entered-in-error'
+      ? c.status
+      : 'active'
+
+  const members: CareTeamMember[] = []
+  for (const p of c.participant ?? []) {
+    const ref = p.member?.reference
+    if (ref === undefined) continue
+    const id = extractRefId(p.member) ?? ref
+    const name = p.member?.display ?? ''
+    if (name === '') continue
+    members.push({ id, name, role: pickCareTeamRole(p) })
+  }
+  return {
+    id: c.id ?? '',
+    patientId: extractRefId(c.subject) ?? '',
+    name: c.name ?? '',
+    status,
+    members,
+  }
+}
+
 function projectLab(o: fhir4.Observation): LabResult {
   const { value, unit } = pickLabValue(o)
   const refRange = pickReferenceRange(o)
@@ -1149,6 +1229,30 @@ export async function getLabs(patientId: string): Promise<readonly LabResult[]> 
   return bundleEntries<fhir4.Observation>(bundle, 'Observation')
     .filter(isObservation)
     .map(projectLab)
+}
+
+/**
+ * GET /api/fhir/CareTeam?patient={id}&status=active — patient care team(s).
+ *
+ * OpenEMR exposes `CareTeam` per US Core 8.0 (`FhirCareTeamService`); each
+ * entry projects an OpenEMR `care_teams` row plus its `care_team_member`
+ * participants (providers, contacts, facilities). The dashboard card only
+ * needs active teams — Synthea seed data leaves these tables empty by
+ * default; populate them via `scripts/seed/care_team.sql`.
+ */
+export async function getCareTeams(patientId: string): Promise<readonly CareTeam[]> {
+  const params = new URLSearchParams({
+    patient: patientId,
+    status: 'active',
+    _count: '20',
+  })
+  const bundle = await fhirFetch<fhir4.Bundle>(
+    `/api/fhir/CareTeam?${params.toString()}`,
+  )
+  if (!isBundle(bundle)) return []
+  return bundleEntries<fhir4.CareTeam>(bundle, 'CareTeam')
+    .filter(isCareTeamResource)
+    .map(projectCareTeam)
 }
 
 /**
