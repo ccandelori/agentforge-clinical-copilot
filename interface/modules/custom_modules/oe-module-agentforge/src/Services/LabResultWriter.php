@@ -18,6 +18,7 @@ namespace OpenEMR\Modules\AgentForge\Services;
 
 use Doctrine\DBAL\Connection;
 use OpenEMR\Common\Uuid\UuidRegistry;
+use OpenEMR\Modules\AgentForge\Domain\LabValue;
 
 /**
  * Writes one procedure_order, one procedure_report, and N
@@ -71,9 +72,11 @@ class LabResultWriter
     }
 
     /**
-     * @param list<array<string, mixed>> $values LabValue dicts; each
-     *     must have 'test_name' and 'value', and may have 'loinc_code',
-     *     'unit', 'reference_range', 'collection_date', 'abnormal_flag'.
+     * @param list<LabValue> $values Already-parsed lab rows. The
+     *     constructor on {@see LabValue} enforces that test_name and
+     *     value are non-empty strings, so the writer can trust them
+     *     without re-validating — controller-level parsing is the
+     *     single source of truth for "is this row safe to persist?".
      */
     public function persist(
         int $patientId,
@@ -96,7 +99,7 @@ class LabResultWriter
     }
 
     /**
-     * @param list<array<string, mixed>> $values
+     * @param list<LabValue> $values
      */
     private function insertCascade(
         int $patientId,
@@ -157,29 +160,18 @@ class LabResultWriter
         foreach ($values as $value) {
             $resultUuid = (new UuidRegistry(['table_name' => 'procedure_result']))->createUuid();
             [$abnormalCode, $criticalityNote] = self::mapAbnormalFlag(
-                isset($value['abnormal_flag']) && is_string($value['abnormal_flag'])
-                    ? $value['abnormal_flag']
-                    : 'unknown',
+                $value->abnormalFlag ?? 'unknown',
             );
 
-            $resultText = isset($value['test_name']) && is_string($value['test_name'])
-                ? substr($value['test_name'], 0, 255)
-                : '';
-            $resultCode = isset($value['loinc_code']) && is_string($value['loinc_code'])
-                ? substr($value['loinc_code'], 0, 31)
-                : '';
-            $resultValue = isset($value['value']) && is_string($value['value'])
-                ? substr($value['value'], 0, 255)
-                : '';
-            $units = isset($value['unit']) && is_string($value['unit'])
-                ? substr($value['unit'], 0, 31)
-                : '';
-            $range = isset($value['reference_range']) && is_string($value['reference_range'])
-                ? substr($value['reference_range'], 0, 255)
-                : '';
-            $collectionDate = isset($value['collection_date']) && is_string($value['collection_date'])
-                ? $value['collection_date']
-                : null;
+            // test_name and value are guaranteed non-empty by the
+            // LabValue constructor; optional fields fall back to the
+            // empty-string the column historically stores when blank.
+            $resultText = substr($value->testName, 0, 255);
+            $resultCode = $value->loincCode !== null ? substr($value->loincCode, 0, 31) : '';
+            $resultValue = substr($value->value, 0, 255);
+            $units = $value->unit !== null ? substr($value->unit, 0, 31) : '';
+            $range = $value->referenceRange !== null ? substr($value->referenceRange, 0, 255) : '';
+            $collectionDate = $value->collectionDate;
 
             $this->connection->executeStatement(
                 'INSERT INTO procedure_result '

@@ -12,6 +12,30 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Lab persistence controller validation gap closed; LabValue domain primitive added
+
+`InternalLabPersistController` previously validated only the original
+`values` array (count + is_array) and forwarded a normalized
+`list<array<string, mixed>>` to `LabResultWriter`, which silently
+substituted empty strings for missing/non-string `test_name` and
+`value` fields — producing `procedure_result` rows with blank
+`result_text` / `result` columns and no signal back to the caller. Per
+CLAUDE.md "parse, don't validate", introduced
+`OpenEMR\Modules\AgentForge\Domain\LabValue` as a `final readonly`
+primitive whose constructor enforces non-empty `testName` and `value`
+and whose `fromMixed()` factory rejects non-array entries. The
+controller now parses each entry into a `LabValue` at the boundary;
+any `\DomainException` becomes a generic HTTP 400 with no rows
+persisted (no PHI-adjacent payload echoed back). `LabResultWriter`
+now accepts `list<LabValue>` directly, dropping the defensive
+`is_string($value['test_name'])` checks since the type system carries
+the invariant. **What we learned:** schema-level validation on the
+sidecar side isn't a substitute for boundary parsing on the OpenEMR
+side — the contract between the two services is loose enough that
+"silent corruption" was a single missing field away.
+
+---
+
 ## 2026-05-08 — Production W2 SupervisorAdapter ships; measured baseline regen still deferred
 
 **Plan:** Task 18.4 logged a deviation that the W2 eval gate ships with

@@ -18,6 +18,7 @@ use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Signer\Hmac\Sha256;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use OpenEMR\Modules\AgentForge\Controllers\InternalLabPersistController;
+use OpenEMR\Modules\AgentForge\Domain\LabValue;
 use OpenEMR\Modules\AgentForge\Services\AgentJwtValidator;
 use OpenEMR\Modules\AgentForge\Services\DocumentOwnershipVerifier;
 use OpenEMR\Modules\AgentForge\Services\LabPersistAuditWriter;
@@ -131,6 +132,135 @@ final class InternalLabPersistControllerTest extends TestCase
     }
 
     // ---------------------------------------------------------------
+    // 400 — per-entry parse failures (P2 fix: prevent silent corruption
+    // of procedure_result via empty test_name / value fields). The old
+    // controller relied on schema-level validation in the sidecar and
+    // forwarded malformed entries to the writer, which then stored
+    // empty strings into the lab record. The fix parses each entry
+    // into a LabValue at the controller boundary, refusing to write
+    // anything when even one entry is malformed.
+    // ---------------------------------------------------------------
+
+    #[Test]
+    public function returns400AndPersistsNothingWhenEntryMissingValue(): void
+    {
+        $verifier = self::createMock(DocumentOwnershipVerifier::class);
+        $verifier->method('findOwningPatientId')->willReturn(42);
+
+        $writer = $this->expectNeverCalledWriter();
+        $audit = $this->expectNeverCalledAudit();
+        $controller = $this->makeController(
+            verifier: $verifier,
+            writer: $writer,
+            auditWriter: $audit,
+        );
+
+        $body = $this->validBody();
+        $body['values'] = [['test_name' => 'WBC']];
+        $request = $this->makeRequest(token: $this->mintToken(42, 99), body: $body);
+        $response = $controller->persist($request);
+
+        self::assertSame(400, $response->getStatusCode());
+        // Generic copy only — never echo the offending field name (PHI-adjacent).
+        self::assertStringNotContainsString('WBC', (string) $response->getContent());
+    }
+
+    #[Test]
+    public function returns400AndPersistsNothingWhenEntryMissingTestName(): void
+    {
+        $verifier = self::createMock(DocumentOwnershipVerifier::class);
+        $verifier->method('findOwningPatientId')->willReturn(42);
+
+        $writer = $this->expectNeverCalledWriter();
+        $audit = $this->expectNeverCalledAudit();
+        $controller = $this->makeController(
+            verifier: $verifier,
+            writer: $writer,
+            auditWriter: $audit,
+        );
+
+        $body = $this->validBody();
+        $body['values'] = [['value' => '5.2']];
+        $request = $this->makeRequest(token: $this->mintToken(42, 99), body: $body);
+
+        self::assertSame(400, $controller->persist($request)->getStatusCode());
+    }
+
+    #[Test]
+    public function returns400AndPersistsNothingWhenEntryHasEmptyValue(): void
+    {
+        $verifier = self::createMock(DocumentOwnershipVerifier::class);
+        $verifier->method('findOwningPatientId')->willReturn(42);
+
+        $writer = $this->expectNeverCalledWriter();
+        $audit = $this->expectNeverCalledAudit();
+        $controller = $this->makeController(
+            verifier: $verifier,
+            writer: $writer,
+            auditWriter: $audit,
+        );
+
+        $body = $this->validBody();
+        $body['values'] = [['test_name' => 'WBC', 'value' => '']];
+        $request = $this->makeRequest(token: $this->mintToken(42, 99), body: $body);
+
+        self::assertSame(400, $controller->persist($request)->getStatusCode());
+    }
+
+    #[Test]
+    public function returns400AndPersistsNothingWhenEntryNotAnArray(): void
+    {
+        // The pre-fix normalizer silently dropped non-array entries
+        // (and would happily forward a values array of all dropped
+        // entries — leaving zero rows but still creating a dangling
+        // procedure_order/report). With the parser the bad entry
+        // raises DomainException immediately.
+        $verifier = self::createMock(DocumentOwnershipVerifier::class);
+        $verifier->method('findOwningPatientId')->willReturn(42);
+
+        $writer = $this->expectNeverCalledWriter();
+        $audit = $this->expectNeverCalledAudit();
+        $controller = $this->makeController(
+            verifier: $verifier,
+            writer: $writer,
+            auditWriter: $audit,
+        );
+
+        $body = $this->validBody();
+        $body['values'] = ['not an array'];
+        $request = $this->makeRequest(token: $this->mintToken(42, 99), body: $body);
+
+        self::assertSame(400, $controller->persist($request)->getStatusCode());
+    }
+
+    #[Test]
+    public function returns400AndPersistsNothingWhenAnyEntryInListIsMalformed(): void
+    {
+        // One good entry + one bad entry should fail the whole batch
+        // — partial persistence would silently drop the bad entry and
+        // give the caller no signal that data was lost.
+        $verifier = self::createMock(DocumentOwnershipVerifier::class);
+        $verifier->method('findOwningPatientId')->willReturn(42);
+
+        $writer = $this->expectNeverCalledWriter();
+        $audit = $this->expectNeverCalledAudit();
+        $controller = $this->makeController(
+            verifier: $verifier,
+            writer: $writer,
+            auditWriter: $audit,
+        );
+
+        $body = $this->validBody();
+        $body['values'] = [
+            ['test_name' => 'Glucose', 'value' => '180'],
+            ['test_name' => 'A1C'], // missing value
+        ];
+        $request = $this->makeRequest(token: $this->mintToken(42, 99), body: $body);
+
+        self::assertSame(400, $controller->persist($request)->getStatusCode());
+    }
+
+    // ---------------------------------------------------------------
     // 403 — triple-check failures
     // ---------------------------------------------------------------
 
@@ -220,7 +350,9 @@ final class InternalLabPersistControllerTest extends TestCase
                         return false;
                     }
                     $first = $values[0];
-                    return is_array($first) && ($first['test_name'] ?? null) === 'Glucose';
+                    return $first instanceof LabValue
+                        && $first->testName === 'Glucose'
+                        && $first->value === '180';
                 }),
             )
             ->willReturn(new LabResultIds(
