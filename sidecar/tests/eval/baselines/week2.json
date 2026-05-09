@@ -1,14 +1,20 @@
 {
   "_meta": {
-    "status": "stub",
-    "task": "18.4",
-    "rationale": "Initial stub baseline pinned at 1.0 across all five W2 case categories. The runner's production-supervisor adapter is out of scope for Task 18 (the runner takes a callable; tests supply a mock). Generating a 'real' baseline requires (a) wiring the LangGraph supervisor into a SupervisorOutput-shaped adapter and (b) burning real Anthropic + judge-LLM spend across all 50 cases. Both belong to a follow-up regen run by a human; the gate logic ships with a measurable floor in the meantime so threshold + regression arithmetic can be exercised against an honest reference. Once the human runs the suite end-to-end, this file gets overwritten with measured rates and _meta.status flips to 'measured'.",
-    "regenerated_by": "TBD — human-driven first run",
-    "next_steps": "After 18.4 lands, wire a production SupervisorOutput adapter on top of agentforge.orchestrator.graph.build_graph() and run scripts/run_eval_gate.py once. Replace this file with the resulting per-category rates."
+    "status": "measured",
+    "timestamp": "2026-05-09T18:11:02.901227+00:00",
+    "measured_at": "2026-05-09T18:11:02.901227+00:00",
+    "git_sha": "82022f23e7b03dea9c83000a7026a970fa256982",
+    "command": "agentforge.eval.regenerate_baseline --output /tmp/measured-week2.json",
+    "cost_usd": 1.538049,
+    "text_cost_usd": 0.996483,
+    "vision_cost_usd": 0.541566,
+    "text_calls": 142,
+    "vision_calls": 10,
+    "notes": "First measured baseline — replaces the 1.0-across-the-board stub. Numbers reflect current production wiring: LangGraph supervisor + Anthropic vision/text + hybrid-RAG retriever + claude-sonnet-4-6 judge. Two known shortcuts to investigate before tightening thresholds: (1) SupervisorAdapter only wires the intake VisionExtractor today, so lab-PDF extraction cases (lipid panel, CBC, CMP, hba1c) hit the wrong contract and depress the extraction + citations rates; (2) refusal cases now grade through the real LLM judge for the first time, surfacing real false-pass rates the stub hid. Re-measure after the lab-extractor wiring lands and after a judge calibration pass."
   },
-  "extraction": 1.0,
-  "evidence_retrieval": 1.0,
-  "citations": 1.0,
-  "refusal": 1.0,
-  "missing_data": 1.0
+  "citations": 0.5,
+  "evidence_retrieval": 0.5,
+  "extraction": 0.4166666666666667,
+  "missing_data": 0.6,
+  "refusal": 0.375
 }
