@@ -825,3 +825,264 @@ async def test_intake_extractor_propagates_inverted_bbox_validation_error() -> N
             document_id=99,
             patient_id=5,
         )
+
+
+# ---------------------------------------------------------------------------
+# P2-3: VisionExtractor → Langfuse telemetry wiring
+#
+# Production guarantees:
+#   * Successful extracts emit one record_extraction_call(schema_validation="pass")
+#     span carrying redacted metadata only — model, page_count, tokens,
+#     cost_usd, tool_name, extraction_confidence.
+#   * Validation failures emit one record_extraction_call(schema_validation="fail")
+#     span BEFORE re-raising the ValidationError so failed extractions
+#     show up in Langfuse dashboards alongside successes.
+#   * No PHI fields are ever passed into record_extraction_call (no
+#     document_id, no patient_id, no extracted text). The telemetry API
+#     enforces this structurally — these tests assert the call site
+#     passes only the API's PHI-safe parameter set.
+#   * Extract works fine when langfuse=None (no telemetry call, no error).
+#   * Telemetry exceptions are swallowed — the extraction must succeed
+#     even if the Langfuse SDK is unhealthy.
+# ---------------------------------------------------------------------------
+
+
+def _trace_handle_stub() -> Any:
+    """Build a minimal TraceHandle stand-in.
+
+    The Protocol only needs ``trace_id`` / ``route_decisions`` / ``eval_outcome``
+    for downstream consumers; the extractor itself just hands the handle
+    back to ``record_extraction_call`` opaquely. A bare object satisfies
+    the Protocol structurally for our mocked telemetry assertions.
+    """
+    from agentforge.observability.protocols import RouteDecisionRecord
+
+    class _Handle:
+        def __init__(self) -> None:
+            self.trace_id: str | None = "trace-test-1"
+            self.route_decisions: list[RouteDecisionRecord] = []
+            self.eval_outcome: str | None = None
+
+    return _Handle()
+
+
+@pytest.mark.asyncio
+async def test_extractor_records_extraction_call_on_successful_lab_path() -> None:
+    """P2-3: a successful extract fires record_extraction_call with
+    schema_validation='pass' and the metadata Langfuse needs for
+    per-trace cost/token rollups. Asserts only the redacted parameter
+    set — the API itself enforces no-PHI structurally."""
+    payload = _valid_extraction_payload()
+    response = _make_anthropic_response(payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+    langfuse = AsyncMock()
+    # record_extraction_call is sync (the Protocol method has no `async`),
+    # so make sure the spy is a plain MagicMock — not an AsyncMock that
+    # would silently swallow argument errors.
+    from unittest.mock import MagicMock
+    langfuse.record_extraction_call = MagicMock(return_value=None)
+    handle = _trace_handle_stub()
+
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        langfuse=langfuse,
+        model="claude-sonnet-4-5-20250929",
+    )
+    result = await extractor.extract(
+        pages=_rendered_pages(2),
+        document_id=42,
+        patient_id=7,
+        trace=handle,
+    )
+
+    assert result.extraction.document_id == 42  # smoke: extraction still works
+    langfuse.record_extraction_call.assert_called_once()
+    call = langfuse.record_extraction_call.call_args
+    # Trace handle is positional arg 0.
+    assert call.args[0] is handle
+    kwargs = call.kwargs
+    assert kwargs["model"] == "claude-sonnet-4-5-20250929"
+    assert kwargs["tool_name"] == "emit_lab_pdf_extraction"
+    assert kwargs["input_tokens"] == 1234
+    assert kwargs["output_tokens"] == 456
+    assert kwargs["schema_validation"] == "pass"
+    assert kwargs["page_count"] == 2
+    # The lab fixture sets extraction_confidence=0.92 with 0 unsupported_fields.
+    assert kwargs["unsupported_fields_count"] == 0
+    assert kwargs["extraction_confidence"] == pytest.approx(0.92, rel=1e-9)
+    assert isinstance(kwargs["latency_ms"], int)
+    assert kwargs["latency_ms"] >= 0
+    # No PHI keys leaked into the call — the function signature enforces
+    # this structurally, but assert here so a future contract change
+    # surfaces against this site rather than silently breaking the
+    # langfuse_client suite.
+    forbidden = {"document_id", "patient_id", "extraction", "raw_input", "raw_output"}
+    assert not (set(kwargs.keys()) & forbidden), (
+        f"PHI-bearing kwargs leaked: {set(kwargs.keys()) & forbidden!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_extractor_records_extraction_call_on_validation_failure() -> None:
+    """P2-3: a ValidationError on the model's tool_use payload still
+    emits one telemetry span with schema_validation='fail' BEFORE the
+    error propagates. Failed extractions need to show up on dashboards
+    so we can spot a regression in the prompt or the model.
+
+    extraction_confidence is None here — validation failed before the
+    confidence number was meaningful — and unsupported_fields_count
+    is reported as 0 (we never reached the validated extraction)."""
+    bad_payload = _valid_extraction_payload()
+    del bad_payload["values"][0]["citation"]  # required → ValidationError
+    response = _make_anthropic_response(bad_payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+    langfuse = AsyncMock()
+    from unittest.mock import MagicMock
+    langfuse.record_extraction_call = MagicMock(return_value=None)
+    handle = _trace_handle_stub()
+
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        langfuse=langfuse,
+        model="claude-sonnet-4-5-20250929",
+    )
+    with pytest.raises(ValidationError):
+        await extractor.extract(
+            pages=_rendered_pages(),
+            document_id=42,
+            patient_id=7,
+            trace=handle,
+        )
+
+    langfuse.record_extraction_call.assert_called_once()
+    kwargs = langfuse.record_extraction_call.call_args.kwargs
+    assert kwargs["schema_validation"] == "fail"
+    assert kwargs["tool_name"] == "emit_lab_pdf_extraction"
+    assert kwargs["page_count"] == 1
+    assert kwargs["input_tokens"] == 1234
+    assert kwargs["output_tokens"] == 456
+    # No confidence value when validation fails before extraction is built.
+    assert kwargs.get("extraction_confidence") is None
+    assert kwargs["unsupported_fields_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_extractor_skips_telemetry_when_langfuse_is_none() -> None:
+    """P2-3: extract() must work when no langfuse client is wired
+    (local-dev / unit-test default). No exception, no spurious calls."""
+    payload = _valid_extraction_payload()
+    response = _make_anthropic_response(payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        langfuse=None,
+    )
+    # Trace is None too — no telemetry path should be entered.
+    result = await extractor.extract(
+        pages=_rendered_pages(),
+        document_id=42,
+        patient_id=7,
+        trace=None,
+    )
+
+    assert result.extraction.document_id == 42
+
+
+@pytest.mark.asyncio
+async def test_extractor_skips_telemetry_when_trace_is_none() -> None:
+    """P2-3: a configured langfuse client without a per-turn trace
+    handle (e.g. an out-of-band extraction outside the supervisor turn
+    loop) must NOT call record_extraction_call — the span has no parent
+    to attach to. Same null-handle guard the other observability sites
+    use."""
+    payload = _valid_extraction_payload()
+    response = _make_anthropic_response(payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+    langfuse = AsyncMock()
+    from unittest.mock import MagicMock
+    langfuse.record_extraction_call = MagicMock(return_value=None)
+
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        langfuse=langfuse,
+    )
+    await extractor.extract(
+        pages=_rendered_pages(),
+        document_id=42,
+        patient_id=7,
+        trace=None,
+    )
+
+    langfuse.record_extraction_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_extractor_swallows_telemetry_exception_on_success_path() -> None:
+    """P2-3: telemetry must never fail the extraction. If Langfuse is
+    unhealthy (network blip, SDK bug, whatever), the extract() result
+    is still returned — the user-visible flow is unaffected."""
+    payload = _valid_extraction_payload()
+    response = _make_anthropic_response(payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+    langfuse = AsyncMock()
+    from unittest.mock import MagicMock
+    langfuse.record_extraction_call = MagicMock(
+        side_effect=RuntimeError("langfuse SDK exploded"),
+    )
+    handle = _trace_handle_stub()
+
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        langfuse=langfuse,
+    )
+    # Should NOT raise — the RuntimeError from the telemetry call is swallowed.
+    result = await extractor.extract(
+        pages=_rendered_pages(),
+        document_id=42,
+        patient_id=7,
+        trace=handle,
+    )
+    assert result.extraction.document_id == 42
+
+
+@pytest.mark.asyncio
+async def test_extractor_swallows_telemetry_exception_on_failure_path() -> None:
+    """P2-3: even when the failure-path telemetry call itself raises,
+    the original ValidationError must propagate — telemetry never
+    masks the underlying error."""
+    bad_payload = _valid_extraction_payload()
+    del bad_payload["values"][0]["citation"]
+    response = _make_anthropic_response(bad_payload, "emit_lab_pdf_extraction")
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+    langfuse = AsyncMock()
+    from unittest.mock import MagicMock
+    langfuse.record_extraction_call = MagicMock(
+        side_effect=RuntimeError("langfuse SDK exploded"),
+    )
+    handle = _trace_handle_stub()
+
+    extractor = VisionExtractor(
+        contract=LAB_CONTRACT,
+        client=client,
+        langfuse=langfuse,
+    )
+    # Original ValidationError still propagates; telemetry exception is swallowed.
+    with pytest.raises(ValidationError):
+        await extractor.extract(
+            pages=_rendered_pages(),
+            document_id=42,
+            patient_id=7,
+            trace=handle,
+        )

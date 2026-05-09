@@ -45,7 +45,9 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
 from dataclasses import dataclass
+from typing import Literal
 
 import fitz  # type: ignore[import-untyped]  # PyMuPDF; ships without py.typed marker
 from anthropic import AsyncAnthropic
@@ -61,10 +63,20 @@ from anthropic.types import (
 from pydantic import BaseModel, ValidationError
 
 from agentforge.observability.cost import calculate_cost
+from agentforge.observability.protocols import LangfuseClient, TraceHandle
 from agentforge.schemas.intake import IntakeFormExtraction
 from agentforge.schemas.lab import LabPdfExtraction
 
 logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(start: float) -> int:
+    """Convert a ``time.perf_counter()`` start to elapsed milliseconds.
+
+    Mirrors the helper in :mod:`agentforge.orchestrator.__init__` so the
+    Langfuse latency-ms convention is consistent across the codebase.
+    """
+    return int((time.perf_counter() - start) * 1000)
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +520,7 @@ class VisionExtractor[T: BaseModel]:
         client: AsyncAnthropic | None = None,
         model: str | None = None,
         max_tokens: int = 4096,
+        langfuse: LangfuseClient | None = None,
     ) -> None:
         self._contract = contract
         self._client = client or AsyncAnthropic()
@@ -515,6 +528,14 @@ class VisionExtractor[T: BaseModel]:
             "ANTHROPIC_VISION_MODEL", DEFAULT_VISION_MODEL
         )
         self._max_tokens = max_tokens
+        # Optional Langfuse client. When wired alongside a per-turn
+        # ``trace`` handle on :meth:`extract`, every call emits one
+        # ``record_extraction_call`` span with redacted metadata
+        # (model, page count, tokens, cost, schema_validation result).
+        # The telemetry call itself is best-effort — any exception is
+        # swallowed at the call site so observability never breaks
+        # the extraction pipeline.
+        self._langfuse = langfuse
 
     async def extract(
         self,
@@ -522,6 +543,7 @@ class VisionExtractor[T: BaseModel]:
         pages: list[RenderedPage],
         document_id: int,
         patient_id: int,
+        trace: TraceHandle | None = None,
     ) -> VisionExtractionResult[T]:
         if not pages:
             raise ValueError("pages list is empty; nothing to extract from")
@@ -554,6 +576,10 @@ class VisionExtractor[T: BaseModel]:
             MessageParam(role="user", content=content_blocks),
         ]
 
+        # Track wall-clock latency for the Langfuse extraction span so
+        # dashboards can split slow extractions from fast ones without
+        # parsing the SDK's response timestamps.
+        call_start = time.perf_counter()
         response: Message = await self._client.messages.create(
             model=self._model,
             system=self._contract.system_prompt,
@@ -570,6 +596,18 @@ class VisionExtractor[T: BaseModel]:
                 "model may have refused to emit structured output"
             )
 
+        usage = response.usage
+        input_tokens = int(usage.input_tokens)
+        output_tokens = int(usage.output_tokens)
+        # Anthropic's reported input_tokens already incorporates the
+        # vision pricing rule (image pixel area → tokens), so the same
+        # closed-form ``calculate_cost`` works for vision calls without
+        # double-counting. ``calculate_vision_cost`` is reserved for
+        # pre-call projections from page dimensions where we don't yet
+        # have an Anthropic Usage object.
+        cost = calculate_cost(self._model, input_tokens, output_tokens)
+        cost_usd: float | None = cost if cost > 0.0 else None
+
         # Anthropic returns tool_use.input as already-parsed dict.
         try:
             extraction = self._contract.extraction_class.model_validate(tool_use.input)
@@ -584,25 +622,113 @@ class VisionExtractor[T: BaseModel]:
                     "error_count": len(exc.errors()),
                 },
             )
+            # Emit a failure-shaped span before re-raising so failed
+            # extractions show up on Langfuse dashboards alongside
+            # successes. extraction_confidence is None — validation
+            # failed before any confidence number was meaningful — and
+            # unsupported_fields_count is 0 because we never reached a
+            # validated extraction to read it from. No payload echo;
+            # only the parameters the PHI-safe API accepts.
+            self._maybe_record_extraction_call(
+                trace=trace,
+                schema_validation="fail",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=_elapsed_ms(call_start),
+                page_count=len(pages),
+                unsupported_fields_count=0,
+                extraction_confidence=None,
+                cost_usd=cost_usd,
+            )
             raise
 
-        usage = response.usage
-        input_tokens = int(usage.input_tokens)
-        output_tokens = int(usage.output_tokens)
-        # Anthropic's reported input_tokens already incorporates the
-        # vision pricing rule (image pixel area → tokens), so the same
-        # closed-form ``calculate_cost`` works for vision calls without
-        # double-counting. ``calculate_vision_cost`` is reserved for
-        # pre-call projections from page dimensions where we don't yet
-        # have an Anthropic Usage object.
-        cost = calculate_cost(self._model, input_tokens, output_tokens)
+        # Successful extraction — pull the worker's self-rated
+        # confidence and unsupported_fields count off the validated
+        # model so dashboards can see both the structural counts and
+        # the worker's self-assessment in the same span.
+        extraction_confidence: float | None = getattr(
+            extraction, "extraction_confidence", None
+        )
+        unsupported_fields = getattr(extraction, "unsupported_fields", None) or []
+        self._maybe_record_extraction_call(
+            trace=trace,
+            schema_validation="pass",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_ms=_elapsed_ms(call_start),
+            page_count=len(pages),
+            unsupported_fields_count=len(unsupported_fields),
+            extraction_confidence=extraction_confidence,
+            cost_usd=cost_usd,
+        )
+
         return VisionExtractionResult(
             extraction=extraction,
             model=self._model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=cost if cost > 0.0 else None,
+            cost_usd=cost_usd,
         )
+
+    def _maybe_record_extraction_call(
+        self,
+        *,
+        trace: TraceHandle | None,
+        schema_validation: Literal["pass", "fail"],
+        input_tokens: int,
+        output_tokens: int,
+        latency_ms: int,
+        page_count: int,
+        unsupported_fields_count: int,
+        extraction_confidence: float | None,
+        cost_usd: float | None,
+    ) -> None:
+        """Best-effort wrapper around :meth:`LangfuseClient.record_extraction_call`.
+
+        Two short-circuits keep the no-op path zero-cost:
+
+        1. ``self._langfuse is None`` — telemetry isn't wired (local-dev
+           or unit-test default).
+        2. ``trace is None`` — no per-turn handle (e.g. an extraction
+           outside the supervisor turn loop). Mirrors the null-handle
+           guard the other observability sites use.
+
+        Any exception from the SDK is swallowed and logged at debug
+        level so a Langfuse outage never fails a real extraction. We
+        catch :class:`Exception` rather than :class:`BaseException` so
+        :class:`KeyboardInterrupt` and :class:`SystemExit` still
+        propagate during local debugging.
+        """
+        if self._langfuse is None or trace is None:
+            return
+        try:
+            self._langfuse.record_extraction_call(
+                trace,
+                model=self._model,
+                tool_name=self._contract.tool_name,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+                schema_validation=schema_validation,
+                page_count=page_count,
+                unsupported_fields_count=unsupported_fields_count,
+                extraction_confidence=extraction_confidence,
+                cost_usd=cost_usd,
+            )
+        except Exception:
+            # Telemetry is best-effort. A Langfuse SDK exception MUST
+            # NOT fail the extraction. ``exc_info=True`` lets the debug
+            # log include the traceback for triage without leaking PHI:
+            # the surrounding extra={} carries only structural metadata.
+            logger.debug(
+                "record_extraction_call swallowed telemetry exception",
+                extra={
+                    "tool_name": self._contract.tool_name,
+                    "schema_validation": schema_validation,
+                    "page_count": page_count,
+                },
+                exc_info=True,
+            )
 
     def _first_tool_use(self, response: Message) -> ToolUseBlock | None:
         for block in response.content:

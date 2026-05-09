@@ -580,6 +580,12 @@ def create_app(
         vision_extractor_instance = VisionExtractor(
             contract=INTAKE_CONTRACT,
             client=AsyncAnthropic(api_key=settings.anthropic_api_key),
+            # P2-3: wire the Langfuse client so every successful and
+            # failed extract emits a ``record_extraction_call`` span.
+            # The extractor short-circuits to a no-op when called with
+            # no per-turn trace handle, so this is safe even on the
+            # NullLangfuseClient path.
+            langfuse=langfuse,
         )
 
     # EvidenceRetriever build is gated on the feature flag + corpus

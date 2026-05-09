@@ -86,12 +86,14 @@ class _StubVisionExtractor:
         pages: list[RenderedPage],
         document_id: int,
         patient_id: int,
+        trace: Any = None,
     ) -> VisionExtractionResult[IntakeFormExtraction]:
         self.calls.append(
             {
                 "pages": pages,
                 "document_id": document_id,
                 "patient_id": patient_id,
+                "trace": trace,
             }
         )
         return self._result

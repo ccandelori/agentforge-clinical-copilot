@@ -133,12 +133,14 @@ class StubVisionExtractor:
         pages: list[RenderedPage],
         document_id: int,
         patient_id: int,
+        trace: Any = None,
     ) -> VisionExtractionResult[IntakeFormExtraction]:
         self.calls.append(
             {
                 "pages": pages,
                 "document_id": document_id,
                 "patient_id": patient_id,
+                "trace": trace,
             }
         )
         return self._result
@@ -503,8 +505,16 @@ class TestIntakeExtractorNode:
 
         update = await intake_extractor_node(state, extractor)
 
+        # ``trace=None`` because the starter state carries no
+        # langfuse_trace; the node still hands it through so the
+        # extractor's telemetry path is reachable when wired.
         assert extractor.calls == [
-            {"pages": [page], "document_id": 42, "patient_id": 7}
+            {
+                "pages": [page],
+                "document_id": 42,
+                "patient_id": 7,
+                "trace": None,
+            }
         ]
         assert update["extraction_result"] == result.extraction
 
