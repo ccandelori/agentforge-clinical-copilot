@@ -12,6 +12,61 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — Droplet redeploy: deploy script doesn't ship `db/Migrations/` or run them
+
+**What we found:** Mid-deploy, `./cli migrations:migrate` on the
+droplet's openemr container ran only `Version00000000000000` (the
+core no-op placeholder) — neither `Version20260505000001` (the
+canonical AgentForge intake-form Questionnaire seed, W2 Task 5) nor
+`Version20260508000001` (the P4#4 backfill of
+`questionnaire_repository.questionnaire_id = 'agentforge-intake-form'`)
+had ever run there. The `migrations` tracking table had zero 2026
+entries; `questionnaire_repository` had zero AgentForge rows. With
+this morning's P1.1 (sidecar-initiated persistence) and P4#4 (logical
+id wiring), every demo intake-form turn would have written a
+`QuestionnaireResponse` row whose `questionnaire_foreign_id` resolved
+to nothing — silent FK breakage, not a hard error.
+
+**Root cause:** `scripts/deploy-droplet.sh` rsyncs the AgentForge
+module dir, the sidecar source, and the dashboard `dist/` — but it
+**doesn't ship `db/Migrations/`** (those live at the OpenEMR repo
+root, not under the module). It also doesn't invoke the migration
+runner. The redeploy checklist in `docs/NEXT-SESSION.md` documented
+a manual `docker exec` step, but the path it cited
+(`/openemr/vendor/bin/doctrine migrations:migrate`) doesn't exist on
+this OpenEMR image — the binary is `vendor/bin/doctrine-migrations`
+and OpenEMR's preferred entry point is
+`cd /var/www/localhost/htdocs/openemr && ENVIRONMENT=development ./cli
+migrations:migrate --no-interaction`.
+
+**What we did this session:**
+
+- `rsync` the two W2 migration files to the droplet host's `/tmp/`,
+  then `docker cp` into the container's
+  `/var/www/localhost/htdocs/openemr/db/Migrations/`.
+- Re-ran `ENVIRONMENT=development ./cli migrations:migrate
+  --no-interaction`. Both migrations registered in `migrations` table;
+  `questionnaire_repository` row id=1 now exists with
+  `questionnaire_id='agentforge-intake-form'` and a 1430-byte FHIR R4
+  Questionnaire payload.
+
+**Follow-up not done (deferred — last day, risk-vs-reward):** Add a
+`deploy_migrations()` step to `scripts/deploy-droplet.sh` that rsyncs
+`db/Migrations/Version2026*.php` and invokes the runner via the
+correct command. Also fix `docs/NEXT-SESSION.md`'s stale path on the
+next refresh.
+
+**Bonus finding:** the deploy script's `check_health()` polls
+`http://${SIDECAR_NAME}:8000/health` for 30s after `docker run`, which
+is too tight for a fresh sidecar with the `bge-reranker-base`
+sentence-transformers weights to load. The script declares "cannot
+reach sidecar after 30s" and exits non-zero, but the container comes
+up healthy ~30-60s later. Cosmetic for now (the actual deploy works,
+the script just lies about the outcome) but should be lifted to
+~120s.
+
+---
+
 ## 2026-05-09 — Slow / latency / eval-baseline suites trimmed to remove deleted-route coverage
 
 **What changed:** The legacy panel yank on 2026-05-08 left behind four

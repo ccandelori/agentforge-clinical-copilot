@@ -7573,7 +7573,7 @@
           "25",
           "26"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -7637,7 +7637,8 @@
         ],
         "complexity": 6,
         "recommendedSubtasks": 5,
-        "expansionPrompt": "Break down into: 1) Update deployment scripts for W2 changes (module + sidecar + Docker image), 2) Deploy to droplet (<droplet>:9300) with database migrations, 3) Run smoke test cohort (lab PDF, intake form, RAG query), 4) Verify audit events in production logs, 5) Verify Langfuse traces show route_decisions, retrieval_hits, PHI redaction. Document verification checklist."
+        "expansionPrompt": "Break down into: 1) Update deployment scripts for W2 changes (module + sidecar + Docker image), 2) Deploy to droplet (<droplet>:9300) with database migrations, 3) Run smoke test cohort (lab PDF, intake form, RAG query), 4) Verify audit events in production logs, 5) Verify Langfuse traces show route_decisions, retrieval_hits, PHI redaction. Document verification checklist.",
+        "updatedAt": "2026-05-09T14:53:09.215Z"
       },
       {
         "id": "31",
@@ -8041,7 +8042,7 @@
         "description": "Build a standalone Vue 3 patient dashboard (dashboard/ at repo root) consuming OpenEMR REST + FHIR APIs with OAuth2/OpenID Connect auth, displaying a persistent patient header and 6 clinical cards (Allergies, Problems, Medications, Prescriptions, Care Team, Lab Results), plus an integrated AgentForge Co-Pilot drawer with Chart/Intake/Research mode tabs and per-patient conversation scoping.",
         "details": "## Project Structure\n\n```\ndashboard/\n├── package.json              # Vue 3 + Vite + TypeScript + BootstrapVueNext\n├── vite.config.ts\n├── tsconfig.json\n├── src/\n│   ├── main.ts               # App entry, Pinia + Router setup\n│   ├── App.vue               # Root layout with persistent header + drawer\n│   ├── router/\n│   │   └── index.ts          # Patient-scoped routes\n│   ├── stores/\n│   │   ├── auth.ts           # oidc-client-ts wrapper, token state\n│   │   ├── patient.ts        # Current patient context (pid, uuid)\n│   │   └── copilot.ts        # AgentForge conversation state, mode tabs\n│   ├── services/\n│   │   ├── fhirClient.ts     # Native fetch + @types/fhir, token injection\n│   │   ├── restClient.ts     # OpenEMR REST API client\n│   │   └── authService.ts    # oidc-client-ts UserManager facade\n│   ├── components/\n│   │   ├── PatientHeader.vue           # Persistent: name, DOB, sex, MRN, status\n│   │   ├── cards/\n│   │   │   ├── AllergiesCard.vue       # FHIR AllergyIntolerance\n│   │   │   ├── ProblemsCard.vue        # FHIR Condition (problem-list-item)\n│   │   │   ├── MedicationsCard.vue     # FHIR MedicationStatement\n│   │   │   ├── PrescriptionsCard.vue   # FHIR MedicationRequest\n│   │   │   ├── CareTeamCard.vue        # FHIR CareTeam\n│   │   │   └── LabResultsCard.vue      # FHIR Observation category=laboratory\n│   │   └── copilot/\n│   │       ├── CoPilotDrawer.vue       # Right-edge slide-out, 3 mode tabs\n│   │       ├── ModeTab.vue             # Chart / Intake / Research\n│   │       ├── ChatMessages.vue        # Conversation display\n│   │       └── PatientSwitchOverlay.vue # Stay-and-prompt on chart change\n│   └── views/\n│       └── PatientDashboard.vue        # Main dashboard layout\n├── tests/\n│   └── unit/                           # Vitest specs\n└── PATIENT_DASHBOARD_MIGRATION.md      # Graded defense document\n```\n\n## OAuth2/OpenID Connect Authentication (oidc-client-ts)\n\n1. Configure UserManager with OpenEMR's OIDC discovery endpoint: `{baseUrl}/oauth2/default/.well-known/openid-configuration`\n2. Request scopes: `openid`, `patient/AllergyIntolerance.read`, `patient/Condition.read`, `patient/MedicationStatement.read`, `patient/MedicationRequest.read`, `patient/CareTeam.read`, `patient/Observation.read`\n3. Handle silent token refresh and logout flows\n4. Store tokens in Pinia auth store (memory-only, no localStorage for tokens)\n\n## FHIR API Endpoints (from existing OpenEMR implementation)\n\nBased on `apis/routes/_rest_routes_fhir_r4_us_core_3_1_0.inc.php`:\n\n- **AllergyIntolerance**: `GET /fhir/AllergyIntolerance?patient={uuid}`\n- **Condition**: `GET /fhir/Condition?patient={uuid}&category=problem-list-item`\n- **MedicationStatement**: Not available directly — use MedicationRequest or document-based medications\n- **MedicationRequest**: `GET /fhir/MedicationRequest?patient={uuid}` (FhirMedicationRequestService)\n- **CareTeam**: `GET /fhir/CareTeam?patient={uuid}&status=active` (FhirCareTeamService)\n- **Observation (Lab)**: `GET /fhir/Observation?patient={uuid}&category=http://terminology.hl7.org/CodeSystem/observation-category|laboratory` (FhirObservationLaboratoryService)\n\n## Patient Header Fields\n\nSource from FHIR Patient resource or OpenEMR REST `/api/patient/{uuid}`:\n- `name`: Patient.name[0].text or given + family\n- `birthDate`: Patient.birthDate (formatted as DOB)\n- `gender`: Patient.gender\n- `identifier.value` where system contains MRN\n- `active`: Patient.active boolean\n\n## AgentForge Co-Pilot Integration\n\nWire into existing sidecar turn endpoint (`/modules/custom_modules/oe-module-agentforge/public/turn.php`):\n\n1. **Three mode tabs**: Chart (clinical Q&A), Intake (extraction review), Research (guideline retrieval)\n2. **Per-patient conversation scoping**: Store thread_id keyed by patient UUID in Pinia\n3. **Stay-and-prompt overlay**: When user switches patients, show modal asking to continue or clear conversation\n4. **Citation chips**: Reuse citation overlay pattern from `agent_panel.js` walkCitations() and citationPdfUrl()\n\n## Visual Parity with OpenEMR May 2025 Redesign\n\n- Use BootstrapVueNext (Bootstrap 5 components for Vue 3)\n- Match existing Bootstrap 4.6.2 card styles from `interface/patient_file/summary/`\n- Cards should be collapsible with headers matching PHP-rendered `demographics.php` card patterns\n\n## Dependencies (package.json)\n\n```json\n{\n  \"dependencies\": {\n    \"vue\": \"^3.5\",\n    \"vue-router\": \"^4.4\",\n    \"pinia\": \"^2.2\",\n    \"bootstrap-vue-next\": \"^0.24\",\n    \"bootstrap\": \"^5.3\",\n    \"oidc-client-ts\": \"^3.0\",\n    \"@types/fhir\": \"^0.0.41\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^6.0\",\n    \"typescript\": \"^5.6\",\n    \"vitest\": \"^2.1\",\n    \"@vue/test-utils\": \"^2.4\",\n    \"eslint\": \"^9\",\n    \"@typescript-eslint/parser\": \"^8\",\n    \"eslint-plugin-vue\": \"^9\"\n  }\n}\n```\n\n## PATIENT_DASHBOARD_MIGRATION.md Defense Structure\n\n1. **Framework Choice**: Vue 3 vs React/Angular/Svelte/Qwik/HTMX\n   - Vue 3 Composition API: superior TypeScript integration, reactivity system simpler than React hooks\n   - BootstrapVueNext: direct Bootstrap 5 component library (React-Bootstrap is 3 years ahead but Vue alternative is mature)\n   - Bundle size: Vue 3 (~40KB) vs React (~45KB) + ReactDOM; Angular is 130KB+\n   - Learning curve: team familiarity, existing AngularJS in OpenEMR is migration debt not benefit\n\n2. **Gain over PHP-Rendered Dashboard**\n   - SPA navigation: instant patient switches without full page reload\n   - Parallel FHIR fetches: cards load independently vs sequential PHP\n   - Offline capability potential with service workers\n   - Testability: Vitest unit tests vs PHPUnit integration tests\n   - Type safety: TypeScript catches API contract drift\n\n3. **Tradeoffs Accepted**\n   - Duplicate state: patient context exists in both PHP session and Vue store\n   - OAuth complexity: token refresh adds failure modes vs session cookies\n   - SEO: not applicable for authenticated clinical dashboard\n   - Initial load: Vue runtime (~40KB) + OIDC client overhead\n   - Accessibility: must manually audit vs PHP templates with established patterns",
         "testStrategy": "## Unit Tests (Vitest)\n\n1. **Auth Store Tests**\n   - Token storage/retrieval from UserManager\n   - Silent refresh triggers on token expiry\n   - Logout clears all state\n\n2. **FHIR Client Tests**\n   - Authorization header injection\n   - Error handling for 401 (trigger refresh) and 403 (scope denied)\n   - Response parsing into typed FHIR resources\n\n3. **Component Tests**\n   - PatientHeader renders all 5 fields from mock Patient resource\n   - Each clinical card renders loading, error, and data states\n   - CoPilotDrawer mode tab switching preserves conversation state\n\n4. **Integration Tests**\n   - Patient switch triggers PatientSwitchOverlay when conversation exists\n   - Citation chip click opens overlay with correct document_id\n\n## End-to-End Verification\n\n1. **OAuth Flow**\n   - Navigate to dashboard unauthenticated → redirects to OpenEMR login\n   - After login → redirects back with valid tokens\n   - Token refresh before expiry (verify no 401 errors)\n\n2. **FHIR Data Display**\n   - Load patient with known allergies → AllergiesCard shows entries\n   - Load patient with labs → LabResultsCard shows Observation resources with laboratory category\n   - Verify MRN, DOB, name, sex, active status in header match OpenEMR database\n\n3. **Co-Pilot Integration**\n   - Send chart question → response appears in drawer\n   - Switch modes → UI reflects mode change\n   - Switch patient with active conversation → overlay prompts for action\n\n## Manual QA Checklist\n\n- [ ] Visual parity with existing PHP dashboard cards\n- [ ] Bootstrap 5 styling consistent with OpenEMR May 2025 redesign\n- [ ] Responsive layout on mobile viewports\n- [ ] Keyboard navigation for accessibility\n- [ ] Error states display user-friendly messages (not raw FHIR errors)\n\n## Defense Document Grading\n\nVerify PATIENT_DASHBOARD_MIGRATION.md contains:\n- [ ] Framework comparison table with Vue 3, React, Angular, Svelte, Qwik, HTMX\n- [ ] Quantified benefits (load time, bundle size, parallel fetch gains)\n- [ ] Explicit tradeoff acknowledgments with mitigations",
-        "status": "in-progress",
+        "status": "done",
         "dependencies": [
           "10",
           "11"
@@ -8208,10 +8209,11 @@
             "title": "PATIENT_DASHBOARD_MIGRATION.md defense doc",
             "description": "Graded artifact. Three legs: (1) gain over PHP-rendered (state on client, optimistic UI, FHIR contract decoupling, AgentForge drawer as first-class component, strong FHIR typing); (2) Vue specifically vs alternatives (React, Angular, Svelte, Qwik, HTMX) — with honest comparison table and Qwik called out as the road-not-taken with concrete reasons; (3) tradeoffs accepted (~30KB runtime, SPA cold-load, ecosystem smaller than React, novelty traded for shipping reliability). Narrative arc: predictability is a clinical-software value, not a hedge. Reference the May 2025 capminds.com OpenEMR redesign as the parity target. Include defense for the in-dashboard AgentForge drawer architecture (per-patient scoping, FHIR API for chart writes, no new backend). Update DEVIATIONS.md with key choices that diverged from the original W2 plan (panel placement → drawer; commit path → FHIR not PHP).",
             "details": "",
-            "status": "pending",
+            "status": "done",
             "dependencies": [],
             "parentTaskId": 38,
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-05-09T14:53:07.972Z"
           },
           {
             "id": 14,
@@ -8258,7 +8260,7 @@
             "updatedAt": "2026-05-08T02:52:57.997Z"
           }
         ],
-        "updatedAt": "2026-05-08T02:52:57.997Z"
+        "updatedAt": "2026-05-09T14:53:07.972Z"
       },
       {
         "id": "39",
@@ -8291,9 +8293,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-08T22:49:57.390Z",
+      "lastModified": "2026-05-09T14:53:09.216Z",
       "taskCount": 40,
-      "completedCount": 33,
+      "completedCount": 35,
       "tags": [
         "week2"
       ]
