@@ -32,14 +32,13 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from agentforge.breakglass import BreakglassAuditTool
+from agentforge.config import Settings, get_settings
 from agentforge.dashboard_auth import (
     OAuthClient,
     SessionStore,
     make_dashboard_routers,
 )
-
-from agentforge.breakglass import BreakglassAuditTool
-from agentforge.config import Settings, get_settings
 from agentforge.gateway.auth_gateway import (
     AuthGateway,
     RequestContext,
@@ -65,6 +64,7 @@ from agentforge.orchestrator.graph import build_graph
 from agentforge.orchestrator.memory import ConversationMemory
 from agentforge.orchestrator.planner import Planner
 from agentforge.orchestrator.truncation import SynthesisInputTruncator
+from agentforge.persist import ExtractionPersister
 from agentforge.rag import (
     BM25Retriever,
     DenseRetriever,
@@ -369,6 +369,7 @@ def create_app(
     vision_extractor_lab: VisionExtractor[Any] | None = None,
     evidence_retriever: EvidenceRetriever | None = None,
     agent_graph: _AgentGraphLike | None = None,
+    extraction_persister: ExtractionPersister | None = None,
 ) -> FastAPI:
     """Construct the FastAPI application.
 
@@ -463,6 +464,13 @@ def create_app(
                 await dashboard_fhir_http.aclose()
             if dashboard_me_http is not None:
                 await dashboard_me_http.aclose()
+            # P1.1: ExtractionPersister owns its own long-lived
+            # httpx.AsyncClient — release it on shutdown. Stashed on
+            # app.state because the instance isn't constructed until
+            # later in create_app, after lifespan is defined.
+            persister_instance = getattr(_app.state, "extraction_persister", None)
+            if persister_instance is not None:
+                await persister_instance.aclose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -645,6 +653,31 @@ def create_app(
         agent_graph if agent_graph is not None else _LazyAgentGraph(_compile_graph)
     )
 
+    # P1.1: shared InternalJwtMinter + ExtractionPersister so both the
+    # orchestrator (post-extract persist hook) and the BFF turn-route
+    # block (mints the user-bound JWT for inbound turns) sign with the
+    # same secret + clock. Built unconditionally — the orchestrator
+    # short-circuits the persist call when either dep is None, so a
+    # local-dev configuration without an OpenEMR target still runs the
+    # synthesis turn cleanly. The BFF block below re-uses this minter
+    # instead of constructing a fresh one.
+    from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
+
+    class _SystemClock:
+        def now(self) -> datetime:
+            return datetime.now(UTC)
+
+    bridge_clock = _SystemClock()
+    internal_jwt_minter = InternalJwtMinter(
+        jwt_secret=settings.jwt_secret,
+        clock=bridge_clock,
+    )
+    extraction_persister_instance = (
+        extraction_persister
+        if extraction_persister is not None
+        else ExtractionPersister(base_url=settings.openemr_base_url)
+    )
+
     orchestrator = Orchestrator(
         llm=llm,
         demographics_fetcher=demographics,
@@ -676,6 +709,13 @@ def create_app(
         identity_guard_enabled=True,
         agent_graph=agent_graph_instance,
         timeout_policy=production_timeout_policy,
+        # P1.1: post-extract persistence hook. Both deps must be
+        # non-None for the hook to fire — we always pass them here
+        # because they're built unconditionally above; the orchestrator
+        # itself decides whether to call them based on the
+        # extraction's presence + document_id availability.
+        persister=extraction_persister_instance,
+        jwt_minter=internal_jwt_minter,
     )
 
     app.state.auth_gateway = auth_gateway
@@ -688,6 +728,11 @@ def create_app(
     # consumes by chaining fetcher → renderer.
     app.state.pdf_renderer = pdf_renderer_instance
     app.state.document_bytes_fetcher = document_bytes_fetcher_instance
+    # P1.1: stashed for the lifespan teardown — the ExtractionPersister
+    # owns its own long-lived httpx.AsyncClient and needs to be aclose'd
+    # on shutdown to flush in-flight connections.
+    app.state.extraction_persister = extraction_persister_instance
+    app.state.internal_jwt_minter = internal_jwt_minter
     # Dashboard BFF state — surfaced for tests / introspection.
     app.state.dashboard_session_store = session_store
     app.state.dashboard_oauth_client = dashboard_oauth_client
@@ -714,7 +759,6 @@ def create_app(
         from agentforge.dashboard_auth.document_route import (
             make_agent_document_router,
         )
-        from agentforge.dashboard_auth.internal_jwt import InternalJwtMinter
         from agentforge.dashboard_auth.openemr_me import OpenEMRMeFetcher
         from agentforge.dashboard_auth.openemr_patient_pid import (
             OpenEMRPatientPidFetcher,
@@ -725,11 +769,6 @@ def create_app(
         )
         from agentforge.tools.document_upload import DocumentUploadWriter
 
-        class _SystemClock:
-            def now(self) -> datetime:
-                return datetime.now(UTC)
-
-        bridge_clock = _SystemClock()
         me_fetcher = OpenEMRMeFetcher(
             http=dashboard_me_http,
             base_url=settings.openemr_base_url,
@@ -745,10 +784,14 @@ def create_app(
             jwt_secret=settings.jwt_secret,
             clock=bridge_clock,
         )
-        jwt_minter = InternalJwtMinter(
-            jwt_secret=settings.jwt_secret,
-            clock=bridge_clock,
-        )
+        # P1.1: re-use the same InternalJwtMinter the orchestrator's
+        # post-extract persist hook signs with, so a fresh /turn
+        # request and the orchestrator's downstream persist call hit
+        # the controllers' :class:`AgentJwtValidator` with tokens
+        # signed by the same secret + clock instance. Reusing one
+        # minter across both surfaces also keeps the audit log
+        # coherent — both sides emit ``iss=openemr-agentforge``.
+        jwt_minter = internal_jwt_minter
         app.include_router(
             make_agent_turn_router(
                 settings=settings,

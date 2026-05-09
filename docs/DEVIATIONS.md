@@ -12,6 +12,66 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Sidecar-initiated persistence after graph extraction (P1.1)
+
+**Plan:** Until this slice the W2 graph's intake/lab extraction lived
+only on the per-turn `_TURN_EXTRACTION_VAR` ContextVar — the dashboard
+saw it once in `AgentTurnResponse.extraction` and the structured EHR
+side never heard about it. We chose **Option A: sidecar POSTs after
+extraction succeeds** (single round-trip from the dashboard's POV;
+sidecar already has document_id/patient_id/extraction in hand) over
+Option B (dashboard-driven persist on user "approve"). Option A keeps
+the persist transparent — the user's first turn already lands the
+QuestionnaireResponse / procedure_order cascade, the confirm-panel
+later moves data from "extracted but unapproved" into structured
+tables, not from "in-memory" into "stored".
+
+**What shipped:**
+
+- `sidecar/src/agentforge/persist/` — new top-level package matching
+  the established sibling pattern (`tools/`, `dashboard_auth/`).
+  `ExtractionPersister` mirrors `DocumentBytesFetcher` shape: long-
+  lived `httpx.AsyncClient`, JWT bearer auth, narrow typed
+  `ExtractionPersistError(status_code, message)`. Methods
+  `persist_intake(IntakeFormExtraction, ...)` and
+  `persist_lab(LabPdfExtraction, ...)` POST to the existing W2 P2.1 /
+  P2.2 controllers — the PHP controller surface required no changes,
+  the Pydantic `model_dump(mode="json")` shape lined up cleanly with
+  the controllers' field expectations.
+- `Orchestrator._maybe_persist_extraction(...)` — new post-extract
+  block in `_run_graph_turn` (orchestrator/__init__.py around
+  line 511). Dispatches by `isinstance(extraction, LabPdfExtraction)`
+  vs `IntakeFormExtraction`; mints a fresh internal JWT off the
+  ctx's user/role + patient_id so the controllers' triple-check has
+  a current bearer to validate. Failures log via PSR-3-style
+  `extra=` kwargs (status_code, patient_id, document_id; never PHI
+  in the message body) and continue — the synthesis turn always
+  surfaces the model's reply.
+- `_TURN_PERSISTED_VAR` ContextVar parallel to `_TURN_EXTRACTION_VAR`.
+  The BFF turn route reads it via `get_last_persisted_handle()` and
+  surfaces `persisted_resource_id: str | None` on
+  `AgentTurnResponse` so the dashboard's confirm-panel can route a
+  follow-up "open this resource" action without a second round-trip.
+- `main.py` builds a single `InternalJwtMinter` instance shared by
+  the orchestrator's persist hook and the BFF turn-route block —
+  both surfaces sign with the same secret + clock so the
+  controllers' `AgentJwtValidator` sees a consistent issuer.
+
+**What's intentionally not in this slice:**
+
+- The graph today only emits `IntakeFormExtraction`; the lab
+  dispatch path is wired but unreachable until a future lab worker
+  lands in `agentforge.orchestrator.graph`. Forward-compatible by
+  design — `isinstance` dispatch means the lab path "just works"
+  once the graph's `extraction_result` field accepts the lab shape.
+- The persister's failure surface intentionally swallows errors
+  rather than retrying. A retry policy here would compete with the
+  per-turn timeout envelope; better to log the upstream status and
+  let the dashboard's later confirm-step retry the persist (out of
+  scope for P1.1).
+
+---
+
 ## 2026-05-08 — Intake QuestionnaireResponse writer now routes through QuestionnaireResponseService (P2 punch-list)
 
 **What changed:** `IntakeQuestionnaireResponseWriter` previously did a raw

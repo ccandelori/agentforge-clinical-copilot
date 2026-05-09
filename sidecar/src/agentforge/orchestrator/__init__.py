@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -35,6 +36,11 @@ if TYPE_CHECKING:
     from agentforge.orchestrator.graph import DocumentType
 
 from agentforge.breakglass import BreakglassAuditTool
+from agentforge.dashboard_auth.internal_jwt import (
+    InternalJwtMinter,
+    InternalJwtMintError,
+)
+from agentforge.dashboard_auth.openemr_me import OpenEMRIdentity
 from agentforge.gateway.auth_gateway import RequestContext
 from agentforge.llm.client import LLMClient
 from agentforge.llm.types import (
@@ -52,7 +58,14 @@ from agentforge.orchestrator.identity_guard import IdentityGuard
 from agentforge.orchestrator.memory import HARD_CAP, ConversationMemory
 from agentforge.orchestrator.planner import Planner
 from agentforge.orchestrator.truncation import SynthesisInputTruncator
+from agentforge.persist import (
+    ExtractionPersister,
+    ExtractionPersistError,
+    PersistedHandle,
+)
 from agentforge.prompts import load_prompt
+from agentforge.schemas.intake import IntakeFormExtraction
+from agentforge.schemas.lab import LabPdfExtraction
 from agentforge.storage.redis_client import AgentRedisClient
 from agentforge.timeouts import (
     GracefulDegradation,
@@ -113,6 +126,8 @@ from agentforge.verifier import (
     build_citation_index,
 )
 from agentforge.verifier.data_quality import DataQualityChecker
+
+logger = logging.getLogger(__name__)
 
 # The model name we report on Langfuse spans. The actual SDK model
 # string is decided by the LLMClient implementation; surfacing a
@@ -187,6 +202,18 @@ _TURN_CITATION_INDEX_VAR: ContextVar[Any] = ContextVar(
     "agentforge_turn_citation_index", default=None
 )
 
+# Per-turn persisted-resource handle (P1.1 — sidecar-initiated persist).
+# ``_run_graph_turn`` populates this after a successful POST to the
+# OpenEMR persist controllers; the BFF's /api/agent/turn route reads it
+# to surface ``persisted_resource_id`` on the response so the dashboard's
+# confirm-panel can route a follow-up "open this resource" action.
+# ``None`` for any of: chart-question turns (no extraction), evidence-
+# only turns, persister not wired, document_id missing, persistence
+# failure (logged but swallowed — the synthesis turn still succeeds).
+_TURN_PERSISTED_VAR: ContextVar[PersistedHandle | None] = ContextVar(
+    "agentforge_turn_persisted", default=None
+)
+
 
 def get_turn_citation_index() -> Any:
     """Return the CitationIndex from the current asyncio task's most
@@ -229,6 +256,19 @@ def get_last_turn_extraction() -> dict[str, Any] | None:
     trace-id getters.
     """
     return _TURN_EXTRACTION_VAR.get()
+
+
+def get_last_persisted_handle() -> PersistedHandle | None:
+    """Return the persisted-resource handle from the most recent turn.
+
+    Set by ``_run_graph_turn`` after a successful POST to the OpenEMR
+    persist controllers; ``None`` for any path that did not reach a
+    successful persist (no extraction, no persister wired, no
+    document_id, persist failed). Read AFTER :meth:`Orchestrator.turn`
+    returns and within the same asyncio task — same ContextVar
+    isolation contract as the other turn-scoped getters.
+    """
+    return _TURN_PERSISTED_VAR.get()
 
 
 class _AgentGraphLike(Protocol):
@@ -274,6 +314,8 @@ class Orchestrator:
         data_quality: DataQualityChecker | None = None,
         identity_guard_enabled: bool = False,
         agent_graph: _AgentGraphLike | None = None,
+        persister: ExtractionPersister | None = None,
+        jwt_minter: InternalJwtMinter | None = None,
     ) -> None:
         self._llm = llm
         self._demographics = demographics_fetcher
@@ -346,6 +388,20 @@ class Orchestrator:
         # startup; tests inject a stub via the constructor kwarg.
         self._agent_graph = agent_graph
 
+        # Optional sidecar→OpenEMR persistence client (P1.1). When wired
+        # AND ``_run_graph_turn`` produces a structured extraction
+        # (``LabPdfExtraction`` or ``IntakeFormExtraction``), the
+        # orchestrator POSTs the extraction to the matching persist
+        # controller after the graph completes. Both deps must be
+        # present for persistence to fire — the JWT minter shapes the
+        # bearer token the controller's :class:`AgentJwtValidator`
+        # consumes. Either ``None`` keeps the legacy behavior intact
+        # (no persistence, extraction stays transient on the per-turn
+        # ContextVar). Failures during the POST are logged + swallowed
+        # so the synthesis turn still surfaces the model's reply text.
+        self._persister = persister
+        self._jwt_minter = jwt_minter
+
     async def turn(
         self,
         ctx: RequestContext,
@@ -392,6 +448,10 @@ class Orchestrator:
         # follow-up turn doesn't surface stale records from the
         # previous turn back to the browser.
         _TURN_CITATION_INDEX_VAR.set(None)
+        # Reset the per-turn persisted-resource handle so a turn that
+        # didn't successfully persist doesn't surface a stale handle
+        # from a previous turn on the same asyncio task.
+        _TURN_PERSISTED_VAR.set(None)
 
         # W2 cutover: route through the graph when its surface is wired
         # AND the caller has W2 inputs. Same total-turn timeout envelope
@@ -508,9 +568,128 @@ class Orchestrator:
         if extraction is not None and hasattr(extraction, "model_dump"):
             _TURN_EXTRACTION_VAR.set(extraction.model_dump(mode="json"))
 
+        # P1.1: persist the extraction to OpenEMR so the structured
+        # data outlives this HTTP turn. Best-effort — a persist
+        # failure logs but does NOT propagate, so the synthesis turn
+        # still returns the model's reply text. The dispatch is by
+        # ``isinstance`` on the extraction shape: lab vs intake live
+        # on different controllers, and the graph's state today
+        # carries only intake but the wiring is forward-compatible
+        # with a future lab worker.
+        await self._maybe_persist_extraction(
+            ctx,
+            extraction,
+            document_id=document_id,
+        )
+
         final_text = _last_assistant_text(result.get("messages") or [])
         await self._maybe_persist_turn(session_id, user_message, final_text)
         return final_text
+
+    async def _maybe_persist_extraction(
+        self,
+        ctx: RequestContext,
+        extraction: object,
+        *,
+        document_id: int | None,
+    ) -> None:
+        """Persist a graph extraction to the matching OpenEMR controller.
+
+        The function is intentionally tolerant of the "nothing to do"
+        cases: missing persister / minter, no extraction, missing
+        document_id all short-circuit to a no-op. The only failure
+        path that produces a log line is a real upstream failure —
+        and that line uses PSR-3-style structured kwargs so PHI never
+        rides into the log message body.
+        """
+        if self._persister is None or self._jwt_minter is None:
+            return
+        if extraction is None:
+            return
+        if document_id is None:
+            # The controllers' triple-check requires document_id; an
+            # extraction without one cannot pass scope verification.
+            # Log the skip so the deviation is observable, then return.
+            logger.warning(
+                "skipping extraction persist: missing document_id",
+                extra={"patient_id": ctx.patient_id},
+            )
+            return
+
+        # Mint a fresh internal JWT bound to (this user, this patient)
+        # so the controller's triple-check has the JWT's patient_id
+        # claim to compare against the body's patient_id and the
+        # document's owning patient. Constructing the identity from
+        # the validated ``RequestContext`` rather than re-fetching is
+        # safe — the gateway already validated the same fields off
+        # the inbound token before we got here.
+        identity = OpenEMRIdentity(
+            user_id=ctx.user_id,
+            username=ctx.username,
+            role=ctx.role,
+        )
+        try:
+            internal_jwt = self._jwt_minter.mint(
+                identity=identity,
+                patient_id=ctx.patient_id,
+            )
+        except InternalJwtMintError:
+            logger.warning(
+                "skipping extraction persist: JWT mint failed",
+                extra={
+                    "patient_id": ctx.patient_id,
+                    "document_id": document_id,
+                },
+            )
+            return
+
+        try:
+            if isinstance(extraction, LabPdfExtraction):
+                handle = await self._persister.persist_lab(
+                    extraction,
+                    patient_id=ctx.patient_id,
+                    document_id=document_id,
+                    internal_jwt=internal_jwt,
+                )
+            elif isinstance(extraction, IntakeFormExtraction):
+                handle = await self._persister.persist_intake(
+                    extraction,
+                    patient_id=ctx.patient_id,
+                    document_id=document_id,
+                    internal_jwt=internal_jwt,
+                )
+            else:
+                # The graph emitted some other shape we don't have a
+                # controller for. Surface as a structured warning so
+                # the gap is observable, then return — the synthesis
+                # turn is unaffected.
+                logger.warning(
+                    "extraction shape has no persist target",
+                    extra={
+                        "patient_id": ctx.patient_id,
+                        "document_id": document_id,
+                        "extraction_type": type(extraction).__name__,
+                    },
+                )
+                return
+        except ExtractionPersistError as exc:
+            # Best-effort contract: the synthesis turn must still
+            # surface its reply. Log via PSR-3-style kwargs (no PHI
+            # in the message body, no string interp). ``status_code``
+            # rides as a structured field so log search can split
+            # "OpenEMR rejected our payload" (4xx) from "OpenEMR is
+            # broken" (5xx) from "OpenEMR is unreachable" (0).
+            logger.warning(
+                "extraction persist failed",
+                extra={
+                    "status_code": exc.status_code,
+                    "patient_id": ctx.patient_id,
+                    "document_id": document_id,
+                },
+            )
+            return
+
+        _TURN_PERSISTED_VAR.set(handle)
 
     async def _turn_inner(
         self,
