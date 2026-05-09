@@ -12,6 +12,49 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Guideline-RAG opt-in is a chat-composer toggle, not auto-detection
+
+**Plan:** P4 punch-list bug 2 said "the dashboard guideline RAG is
+unreachable — `useAgentTurn` never includes `evidence_query`." The
+straight-line fix is "forward `req.message` as `evidence_query` on
+every turn."
+
+**Why we deviated:** That fix mis-routes every chart-Q&A turn through
+the W2 evidence retriever. Per `sidecar/src/agentforge/orchestrator/__init__.py`
+the graph reaches the retriever node when `state["query"]` is non-empty
+and either `pdf_pages` or `evidence_query` is set. Forwarding the
+message verbatim trips the second condition for every turn — even
+"summarize last visit" — which a) pays the RAG round-trip latency we
+don't need, and b) emits guideline citations alongside chart citations
+even when the clinician didn't ask.
+
+**What shipped:** An "Ask guidelines" toggle in `AgentChatPane.vue`'s
+composer toolbar (next to the attach button), backed by
+`agentforge.guidelineMode` (default `false`). When the toggle is on
+the store mirrors the user's text into both `message` and
+`evidence_query`; when off, neither field is sent and the W1 chart-Q&A
+loop runs as before. Visible affordance > heuristic intent
+classification: the user can demo "watch me toggle 'Guidelines' and
+ask a clinical question" without surprising the audience by guessing
+intent from message text.
+
+**What we learned:** "Forward the existing field" punches like this
+one are usually 3-line client diffs, but when the BFF has a graph node
+behind the field the shape needs a UX gate. Document the decision
+even though the plumbing diff is small — a reader would otherwise
+wonder why the obvious one-liner wasn't taken.
+
+**Alternatives considered:**
+
+- **Slash-command (`/ask <question>`)** — discoverable to power users,
+  invisible to demo audiences. Punted as a fallback if the toolbar
+  ever runs out of room.
+- **Auto-detect from message text ("guideline", "according to",
+  "evidence for")** — too brittle. False positives turn chart-Q&A into
+  RAG; false negatives strand the feature.
+
+---
+
 ## 2026-05-08 — P4 questionnaire logical id; threaded through the P2.1 seam
 
 **Extends the P2.1 entry below.** P2.1 routed
