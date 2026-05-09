@@ -1,9 +1,9 @@
 <?php
 
 /**
- * IntakeQuestionnaireResponseWriter — single-purpose INSERT into the
- * `questionnaire_response` table for the AgentForge intake-form
- * persistence flow.
+ * IntakeQuestionnaireResponseWriter — single-purpose persistence shim
+ * for the AgentForge intake-form FHIR QuestionnaireResponse write
+ * path.
  *
  * @package   OpenEMR
  * @link      https://www.open-emr.org
@@ -16,39 +16,57 @@ declare(strict_types=1);
 
 namespace OpenEMR\Modules\AgentForge\Services;
 
-use Doctrine\DBAL\Connection;
-use OpenEMR\Common\Uuid\UuidRegistry;
-
 /**
  * Writes the QuestionnaireResponse row produced by the intake-form
  * persistence endpoint. Deliberately narrow surface — the controller
  * has already done JWT validation, the triple-check, and the FHIR
- * mapping before calling here. This class is a single INSERT.
+ * mapping before calling here.
  *
- * What this writer does NOT do:
+ * History: an earlier revision did a raw INSERT against the
+ * `questionnaire_response` table. That bypassed
+ * `OpenEMR\Services\QuestionnaireResponseService::saveQuestionnaireResponse()`
+ * and therefore:
+ *   - did not fire `ServiceSaveEvent::EVENT_PRE_SAVE` /
+ *     `EVENT_POST_SAVE` (other parts of OpenEMR listen for these);
+ *   - did not populate `questionnaire_id` (the FHIR Questionnaire
+ *     logical id, separate from the FK into `questionnaire_repository`);
+ *   - did not wire creator / audit user fields;
+ *   - did not generate the narrative HTML the overlay UI reads.
+ *
+ * The current implementation routes through the OpenEMR-blessed entry
+ * point via the {@see IntakeQuestionnaireResponsePersister} seam (see
+ * that interface for why it exists).
+ *
+ * What this writer still does NOT do:
  *
  * - It does not touch the structured EHR tables (`patient_data`,
  *   `lists`, `medications`, `allergies`, `family_history`). Those
  *   only get populated when a clinician explicitly approves on the
  *   overlay UI; the QuestionnaireResponse is the unapproved record.
- * - It does not fire the audit event — that's a separate concern
- *   the controller orchestrates so a write failure doesn't double-
- *   audit and a successful write always pairs with exactly one event.
+ * - It does not fire the AgentForge audit event — that's a separate
+ *   concern the controller orchestrates so a write failure doesn't
+ *   double-audit and a successful write always pairs with exactly
+ *   one event.
  *
  * The returned response_id is the string-form UUID, suitable for
  * surfacing back to the caller as the new resource handle.
  */
 readonly class IntakeQuestionnaireResponseWriter
 {
-    public const STATUS_COMPLETED = 'completed';
-
     public function __construct(
-        private Connection $connection,
+        private IntakeQuestionnaireResponsePersister $persister,
     ) {
     }
 
     /**
      * @param array<string, mixed> $questionnaireResponse FHIR R4 JSON
+     * @param int $questionnaireForeignId Retained for backward
+     *        compatibility with the caller; the persister derives the
+     *        FK linkage from the canonical Questionnaire JSON, so this
+     *        value is currently unused but kept to preserve the
+     *        external API. Removing it would force a same-PR change to
+     *        the controller call site for no functional benefit.
+     *
      * @return string Newly assigned `response_id` (string-form UUID).
      */
     public function insert(
@@ -58,31 +76,13 @@ readonly class IntakeQuestionnaireResponseWriter
         array $questionnaireResponse,
         string $questionnaireJson,
     ): string {
-        $qrUuidBinary = (new UuidRegistry(['table_name' => 'questionnaire_response']))->createUuid();
-        $responseId = UuidRegistry::uuidToString($qrUuidBinary);
+        unset($questionnaireForeignId); // see docblock above.
 
-        $this->connection->executeStatement(
-            'INSERT INTO questionnaire_response '
-            . '(uuid, response_id, questionnaire_foreign_id, questionnaire_name, '
-            . 'patient_id, create_time, last_updated, version, status, '
-            . 'questionnaire, questionnaire_response) '
-            . 'VALUES (:uuid, :response_id, :q_fk, :q_name, :pid, '
-            . 'CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, :status, :q_json, :qr_json)',
-            [
-                'uuid' => $qrUuidBinary,
-                'response_id' => $responseId,
-                'q_fk' => $questionnaireForeignId,
-                'q_name' => $questionnaireName,
-                'pid' => $patientId,
-                'status' => self::STATUS_COMPLETED,
-                'q_json' => $questionnaireJson,
-                'qr_json' => json_encode(
-                    $questionnaireResponse,
-                    JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES,
-                ),
-            ],
+        return $this->persister->save(
+            $questionnaireResponse,
+            $patientId,
+            $questionnaireJson,
+            $questionnaireName,
         );
-
-        return $responseId;
     }
 }

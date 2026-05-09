@@ -12,6 +12,38 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Intake QuestionnaireResponse writer now routes through QuestionnaireResponseService (P2 punch-list)
+
+**What changed:** `IntakeQuestionnaireResponseWriter` previously did a raw
+`INSERT INTO questionnaire_response` against an injected `Doctrine\DBAL\Connection`.
+That bypassed `OpenEMR\Services\QuestionnaireResponseService::saveQuestionnaireResponse()`
+and therefore skipped `ServiceSaveEvent::EVENT_PRE_SAVE` /
+`EVENT_POST_SAVE` firing, `questionnaire_id` linkage, creator/audit user
+wiring, and generated narrative HTML. The writer now delegates through a
+new `IntakeQuestionnaireResponsePersister` interface seam whose production
+binding (`QuestionnaireResponseServicePersister`) wraps the legacy service.
+The writer's external `insert()` signature is unchanged so the controller
+call site keeps working.
+
+**Why the seam exists:** `QuestionnaireResponseService` extends
+`BaseService`, which `require_once`s `custom/code_types.inc.php` at file-
+include time. That include calls `sqlStatement()`, so even autoloading the
+class fails in the isolated-test harness. The thin interface lets the
+writer remain unit-testable while production wires through the legacy
+class.
+
+**What we learned:** OpenEMR's modern PSR-4 service classes still ride on
+top of legacy ADODB file-include side effects. Any new module code that
+wants both isolated test coverage and audit-event participation needs an
+adapter seam; injecting the legacy class directly drags the side-effect
+chain into the test loader. The Connection injection in the original
+writer was a tempting shortcut for the same reason — DBAL is mockable in
+isolation and `QuestionnaireResponseService` is not — but the cost is
+silent audit-log bypass, which is exactly the failure mode AUDIT.md C1
+warns about.
+
+---
+
 ## 2026-05-08 — Production W2 SupervisorAdapter ships; measured baseline regen still deferred
 
 **Plan:** Task 18.4 logged a deviation that the W2 eval gate ships with

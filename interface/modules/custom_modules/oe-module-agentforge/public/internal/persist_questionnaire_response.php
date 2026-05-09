@@ -39,6 +39,8 @@ use OpenEMR\Modules\AgentForge\Services\DocumentOwnershipVerifier;
 use OpenEMR\Modules\AgentForge\Services\IntakePersistAuditWriter;
 use OpenEMR\Modules\AgentForge\Services\IntakeQuestionnaireLookup;
 use OpenEMR\Modules\AgentForge\Services\IntakeQuestionnaireResponseWriter;
+use OpenEMR\Modules\AgentForge\Services\QuestionnaireResponseServicePersister;
+use OpenEMR\Services\QuestionnaireResponseService;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -78,7 +80,9 @@ $controller = new InternalIntakePersistController(
     new AgentJwtValidator($secret, ServiceContainer::getClock()),
     new DocumentOwnershipVerifier($connection),
     new IntakeQuestionnaireLookup($connection),
-    new IntakeQuestionnaireResponseWriter($connection),
+    new IntakeQuestionnaireResponseWriter(
+        new QuestionnaireResponseServicePersister(new QuestionnaireResponseService()),
+    ),
     new IntakePersistAuditWriter($connection, EventAuditLogger::getInstance()),
 );
 
