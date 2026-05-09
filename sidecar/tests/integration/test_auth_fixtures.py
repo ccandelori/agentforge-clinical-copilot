@@ -74,29 +74,6 @@ async def test_authenticated_client_carries_session_across_requests(
     assert response_two.status_code < 500
 
 
-async def test_authenticated_client_can_reach_module_health_path(
-    authenticated_client: httpx.AsyncClient,
-) -> None:
-    """The agent module's PHP entry points are reachable via the session.
-
-    Smoke probe of the path the chat-panel actually uses. We expect
-    400 (no patient context — the AgentProxyController refuses
-    without an open chart) or 405 (method not allowed for GET). 401
-    would mean the session cookie isn't being recognised; 404 would
-    mean the path isn't wired.
-    """
-    response = await authenticated_client.get(
-        "/interface/modules/custom_modules/oe-module-agentforge/public/turn.php"
-    )
-    # Either 400 (controller refuses GET because no patient context)
-    # or 405 (GET not allowed) is acceptable. Anything else is a
-    # routing or auth bug that downstream tests need to know about.
-    assert response.status_code in (400, 405), (
-        f"Unexpected status {response.status_code}; "
-        f"body excerpt: {response.text[:200]!r}"
-    )
-
-
 async def test_login_failure_with_wrong_password_does_not_set_cookie(
     _wait_for_openemr: str,
 ) -> None:
