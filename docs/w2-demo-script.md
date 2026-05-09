@@ -19,9 +19,9 @@
 | # | Range       | Surface                     | One-line purpose                                 |
 |---|-------------|-----------------------------|--------------------------------------------------|
 | 1 | 0:00 – 0:30 | Browser, full-screen        | Thesis cold open over the live URL               |
-| 2 | 0:30 – 1:30 | Patient dashboard (Chen)    | "What you're looking at" — the Vue port itself   |
-| 3 | 1:30 – 2:45 | AgentForge drawer + chat    | Chart Q&A → guideline RAG via "Guidelines" toggle |
-| 4 | 2:45 – 4:30 | Drawer + DocumentViewer modal | Doc-upload pipeline → bbox citation overlay      |
+| 2 | 0:30 – 1:30 | Patient dashboard (Synthea persona pid 22) | "What you're looking at" — the Vue port itself, against a chart with real data |
+| 3 | 1:30 – 2:45 | AgentForge drawer + chat (still pid 22)    | Chart Q&A → guideline RAG via "Guidelines" toggle |
+| 4 | 2:45 – 4:30 | **Switch to Chen** + Drawer + DocumentViewer modal | Doc-upload pipeline → bbox citation overlay      |
 | 5 | 4:30 – 5:30 | Terminal (full-screen)      | Eval gate self-test as the correctness claim     |
 | 6 | 5:30 – 6:00 | Browser (live URL again)    | Close + repo pointer                             |
 
@@ -62,22 +62,28 @@ the demo script assumes a warm system.
       record so the OAuth bounce doesn't burn 8 seconds of the cold
       open. Park the browser on the dashboard's patient list view.
 
-- [ ] **Demo personas seeded.** Confirm Margaret Chen
-      (`MRN-2026-04481`, pid 29) is searchable. If not:
+- [ ] **Personas seeded — both pools.**
+      - **Pool A (Synthea-rich, used for dashboard tour + chart Q&A):**
+        Confirm pid 22 (Nichelle912 Johnston597) is searchable —
+        Synthea-imported patients are loaded by the dev-easy bake;
+        no separate seed step. Backup persona: pid 8 (Eula461 Crist667).
+      - **Pool B (W2 demo personas, used for upload demo + Care Team):**
+        Confirm Margaret Chen (`MRN-2026-04481`, pid 29) is searchable.
+        If not:
+        ```bash
+        ssh root@143.244.157.90 \
+          'docker exec development-easy-openemr-1 \
+           php /openemr/scripts/seed-demo-patients.php'
+        ```
+        The script is idempotent on `pubpid`. Chen's chart will be
+        empty by design — that's the point of the upload segment.
 
-      ```bash
-      ssh root@143.244.157.90 \
-        'docker exec development-easy-openemr-1 \
-         php /openemr/interface/modules/custom_modules/oe-module-agentforge/scripts/seed-demo-patients.php'
-      ```
-
-      The script is idempotent on `pubpid`.
-
-- [ ] **Conversation context cleared.** Open Margaret Chen's chart,
-      open the AgentForge drawer, and click the conversation menu →
+- [ ] **Conversation context cleared.** Open pid 22 (Nichelle Johnston),
+      open the AgentForge drawer, click the conversation menu →
       **Reset context** so the recording starts on a fresh thread.
-      A drawer carrying eight prior turns is visually noisy and
-      raises questions the script doesn't answer.
+      A drawer carrying eight prior turns is visually noisy and raises
+      questions the script doesn't answer. Repeat for Chen so segment
+      4 starts clean too.
 
 - [ ] **Terminal window prepped.** Open a single terminal at
       `~/Desktop/Gauntlet/openemr/sidecar` (or whichever working copy
@@ -132,41 +138,49 @@ parked on the patient list view (logged in, no chart open yet).
 
 ## 0:30 – 1:30 · The dashboard itself
 
-**Surface.** Click into Margaret Chen's chart
-(`MRN-2026-04481`, pid 29). The shipped surface is one scroll: header
-band → vitals strip → five cards (Allergies, Problem list,
-Medications, Recent encounters, Lab results).
+**Surface.** Click into the Synthea-rich persona at pid 22
+(Nichelle912 Johnston597 — the numeric suffix is a Synthea-import
+artifact; spoken as "Nichelle Johnston"). The shipped surface is
+one scroll: header band → vitals strip → seven cards (Allergies,
+Problem list, Medications, Prescriptions, Care Team, Recent
+encounters, Lab results).
 
 **Action.**
 
-1. Search "Chen" in the patient list, click Margaret Chen.
+1. Search "Johnston" in the patient list, click into pid 22.
 2. Let the dashboard paint. Hover over a card briefly so the cursor
    shows what's interactive.
 3. Scroll once, slowly, top to bottom — header → VitalsStrip →
-   Allergies → Problem list → Medications → Recent encounters → Lab
-   results. Don't click into anything; the next segment opens the
-   drawer.
+   Allergies (≥6 rows) → Problem list (deep) → Medications →
+   Prescriptions → Care Team → Recent encounters → Lab results.
+   Don't click into anything; the next segment opens the drawer.
 
 > "This is the patient dashboard, ported from PHP-rendered server
 > pages to Vue 3 against the existing FHIR R4 API. The OpenEMR
 > backend is untouched apart from a thin backend-for-frontend on the
 > AgentForge sidecar — it brokers OAuth so the access token never
-> touches JavaScript, and forwards FHIR calls. Five required cards,
-> a vitals strip, and the patient header band, all driven from the
-> same FHIR queries OpenEMR's own API already exposes. The defense
-> doc walks through *why Vue 3 specifically* over React, Svelte,
-> and Qwik — the headline is that the architectural win is the
-> separation, not the framework."
+> touches JavaScript, and forwards FHIR calls. Seven cards — Allergies,
+> Problem list, Medications, Prescriptions, Care Team, Recent
+> Encounters, Labs — plus a vitals strip and the patient header band,
+> all driven from the same FHIR queries OpenEMR's own API already
+> exposes. The defense doc walks through *why Vue 3 specifically*
+> over React, Svelte, and Qwik — the headline is that the
+> architectural win is the separation, not the framework."
 
 **Watch out for.**
 
-- The brief lists "Care Team" and "Prescriptions" cards. Those are
-  *not* shipped — current cards are Allergies, Problem list,
-  Medications, Recent encounters, Lab results, plus the VitalsStrip
-  ride-along. Narrate what's on screen, don't claim cards that
-  aren't there.
-- Some lab / vitals tables on Synthea-imported personas render
-  empty ranges (no `referenceRange` / `interpretation`). Don't dwell;
+- Synthea-imported names carry numeric suffixes (`Nichelle912`,
+  `Johnston597`). On screen they look synthetic; narrate the
+  patient as "Nichelle Johnston" without spelling out the numbers.
+  Optional polish: `UPDATE patient_data SET fname='Nichelle',
+  lname='Johnston' WHERE pid=22;` on the droplet before recording
+  (cosmetic; no functional impact).
+- Synthea Problem List items are all `category=encounter-diagnosis`
+  rather than `problem-list-item`; if the card filter is strict you
+  may see fewer rows than expected. The card still demonstrates the
+  FHIR-renderer point.
+- Lab / vitals tables on Synthea-imported personas render empty
+  ranges (no `referenceRange` / `interpretation`). Don't dwell;
   the cards-as-FHIR-renderers point lands either way.
 - If the EncountersCard is slow to paint, scroll past it — the
   narration is generic and doesn't depend on a specific row.
@@ -181,7 +195,7 @@ Medications, Recent encounters, Lab results).
 **Action.**
 
 1. Click the AgentForge handle on the right edge → drawer slides in.
-2. Type into the composer: **"Summarize Margaret's last visit and
+2. Type into the composer: **"Summarize Nichelle's last visit and
    any active problems."**
 3. Press Send. Wait for the streamed reply — should be ~3-5s.
 4. Point (cursor hover) at a citation pill in the bubble. Click it
@@ -229,30 +243,44 @@ Medications, Recent encounters, Lab results).
 
 ## 2:45 – 4:30 · Doc-upload pipeline (the headline)
 
-**Surface.** Drawer is already open from the previous segment. The
-`DocumentViewer` modal opens at the end.
+**Surface.** Switch patients first (Nichelle → Margaret Chen). Drawer
+re-mounts on the new chart. The `DocumentViewer` modal opens at the
+end.
 
 **Action.**
 
-1. Click the paperclip in the composer toolbar (`data-test="attach-button"`).
-2. In the file picker, attach
+1. Patient picker → search "Chen" → click Margaret Chen
+   (`MRN-2026-04481`, pid 29). The dashboard paints — and the cards
+   are mostly empty. **That's the point.** Brief pause; let the
+   visual land before the narration.
+2. Click the paperclip in the composer toolbar (`data-test="attach-button"`).
+3. In the file picker, attach
    `week2/example-documents/intake-forms/p01-chen-intake-typed.pdf`.
    (Pre-stage the path in your file dialog's recents.)
-3. The composer shows a pending-attachment chip. Type:
+4. The composer shows a pending-attachment chip. Type:
    **"Extract this intake form."** Send.
-4. The reply takes ~12-15s on a warm sidecar. **Don't fill the
+5. The reply takes ~12-15s on a warm sidecar. **Don't fill the
    silence with rambling** — the script below is paced to fill it.
    The chat reply lists extracted fields; below the bubble,
    `<ExtractionPanel>` renders with extracted demographics, allergies,
    medications, etc.
-5. Click **"View source (18)"** at the foot of the panel. The
+6. Click **"View source (18)"** at the foot of the panel. The
    `DocumentViewer` modal opens.
-6. The PDF renders inside the modal, with blue rectangles overlaying
+7. The PDF renders inside the modal, with blue rectangles overlaying
    the regions the model attributed each field to.
-7. Hover over one rectangle so the cursor lands on it; the
+8. Hover over one rectangle so the cursor lands on it; the
    corresponding field highlights in the side list.
-8. Close the modal (Esc or the X).
+9. Close the modal (Esc or the X).
 
+> *(opening Chen's empty chart)*
+>
+> "Now switching to Margaret Chen — a brand-new patient with no
+> chart history yet. The cards are empty. This is the second use
+> case: the agent doesn't just synthesize *existing* charts, it
+> ingests *new* clinical context."
+>
+> *(attach + send)*
+>
 > "Now the headline. I'm attaching a scanned intake form — typed PDF,
 > handwritten signature — and asking the agent to extract it. The
 > sidecar runs Claude Haiku as a vision model against rendered page

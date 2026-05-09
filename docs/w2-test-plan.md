@@ -9,14 +9,29 @@ to run end-to-end in ~2 hours; each section stands alone.
 
 **Live URL:** [https://143.244.157.90:9300/dashboard/](https://143.244.157.90:9300/dashboard/)
 **Login:** `admin` / `LESZoHXpasV3LL9LP5uQjWs2`
-**Demo personas:**
+
+**Two persona pools — they exercise different code paths:**
+
+**Pool A — Synthea-rich personas** (use for dashboard cards, chart Q&A, guideline RAG; have full pre-loaded clinical data):
+
+| Persona | pubpid | pid | Allergies | Problems | Meds | Vitals | Encounters |
+|---|---|---|---|---|---|---|---|
+| Eula461 Crist667 | `8` | 8 | 11 | 55 | 13 | 6 | 92 |
+| Nichelle912 Johnston597 | `22` | 22 | 6 | 43 | 12 | 1 | 55 |
+| Ed239 Reilly981 | `7` | 7 | 9 | 42 | 10 | 1 | 53 |
+
+(Synthea names carry numeric suffixes — that's a Synthea convention, not a bug. Live patient_data names can be `UPDATE`d if you want polished display names for recording.)
+
+**Pool B — W2 demo personas** (use for intake-form / lab-PDF upload + Care Team card; intentionally have **no pre-loaded clinical data** — they're fresh-patient shells per `scripts/seed-demo-patients.php`. Empty AllergyIntolerance / Condition / MedicationRequest cards are correct behavior, not a bug):
 
 | Persona | MRN | pid | Notes |
 |---|---|---|---|
-| Margaret Chen | `MRN-2026-04481` | 29 | Typed PDF — primary demo |
-| James Whitaker | `MRN-2026-04492` | 30 | Typed PDF — fallback |
-| Sofia Reyes | `MRN-2026-DEMO-03` | 31 | PNG — chart-only, no bbox-overlay demo |
-| Robert Kowalski | `MRN-2026-DEMO-04` | 32 | PNG — chart-only |
+| Margaret Chen | `MRN-2026-04481` | 29 | Typed PDF — primary demo + Care Team seeded |
+| James Whitaker | `MRN-2026-04492` | 30 | Typed PDF — fallback + Care Team seeded |
+| Sofia Reyes | `MRN-2026-DEMO-03` | 31 | PNG — chart-only, no bbox-overlay demo + Care Team seeded |
+| Robert Kowalski | `MRN-2026-DEMO-04` | 32 | PNG — chart-only + Care Team seeded |
+
+**Critical distinction:** the **intake-form upload persists a `QuestionnaireResponse`** but does NOT promote into `AllergyIntolerance` / `Condition` / `MedicationStatement` (the "promote to chart" pipeline is the deferred T38.12 gap). So uploading an intake form for Chen will show up in `questionnaire_response` but won't populate the standard FHIR cards. To see populated cards, you must use a Pool A persona.
 
 **Mapping legend** (right column of each table):
 `[D]` deployed app · `[I]` ingestion · `[R]` retrieval · `[C]` citations ·
@@ -44,10 +59,13 @@ red-flags.
 
 ---
 
-## 2. Dashboard surface — 10 min   `[D]`
+## 2. Dashboard surface — 15 min   `[D]`
 
-Click into Chen, then Whitaker. For each, confirm every card renders
-with data:
+**Two passes — different code paths.**
+
+### 2a. Standard FHIR cards (Pool A — Synthea-rich) — 10 min
+
+Open **pid 22** (Nichelle912 Johnston597) — recommended; or pid 8 if you want maximum data. For each card, confirm it renders populated:
 
 | Card | Source | Pass criteria |
 |---|---|---|
@@ -56,17 +74,34 @@ with data:
 | Problem List | FHIR `Condition` (problem-list) | ≥1 row |
 | Medications | FHIR `MedicationRequest` (active) | ≥1 row |
 | **Prescriptions** (P1.3) | FHIR `MedicationRequest` (completed/stopped/on-hold) | ≥1 row OR honest empty state |
-| **Care Team** (P1.3) | FHIR `CareTeam` + members | Chen=3 members, Whitaker=3 members; roles render (Physician / Nurse Practitioner / Case Manager / Social Worker) |
 | Lab Results | FHIR `Observation` (laboratory) | ≥1 row |
 | Vitals (ride-along) | FHIR `Observation` (vital-signs) | ≥1 row |
-| Encounters (ride-along) | FHIR `Encounter` | ≥1 row |
+| Encounters (ride-along) | FHIR `Encounter` | ≥1 row (Pool A pid 22 has 55) |
 
-Then on Reyes + Kowalski: confirm Care Team renders with 2 members each.
+**Known Synthea data quirks (per `project_dashboard_data_gaps` memory — correct behavior):**
+- Problem List items are all `category=encounter-diagnosis` rather than `problem-list-item` for Synthea data; if the dashboard filters strictly on the latter you'll see fewer rows than the raw count
+- Active Meds may render fewer rows than expected because Synthea data is mostly `status=completed` (these flow into Prescriptions instead)
+- Lab observations have no `interpretation` / `referenceRange` — render plain values
+- **Don't loosen filters reflexively** — the empty/sparse state IS the data
 
-**Fail mode:** if Care Team is empty, the seed didn't take — re-run:
+### 2b. Demo personas — empty-by-design verification + Care Team — 5 min
+
+Open Chen (pid 29), then Whitaker (pid 30). For each, confirm:
+
+| Card | Pass criteria |
+|---|---|
+| Patient header | Renders with the persona's name/DOB/MRN |
+| Allergies / Problem List / Medications / Prescriptions / Labs / Vitals / Encounters | **EMPTY — that's correct.** These personas are fresh-patient shells; no FHIR data was ever loaded. (`scripts/seed-demo-patients.php` docstring: "Creates four minimal patient shells.") |
+| **Care Team** (P1.3 seed) | Chen=3 members, Whitaker=3 members; roles render (Physician / Nurse Practitioner / Case Manager / Social Worker) |
+
+Then on Reyes (pid 31) + Kowalski (pid 32): confirm Care Team renders with 2 members each.
+
+**Fail mode for Care Team:** if it's empty, the seed didn't take — re-run:
 ```bash
 ssh root@143.244.157.90 'docker exec development-easy-mysql-1 mariadb -uopenemr -popenemr openemr -e "source /tmp/care_team.sql"'
 ```
+
+**Fail mode for FHIR cards on Pool A (pid 22):** if cards are empty for a Synthea-rich persona, that IS a regression — check sidecar logs + FHIR endpoint directly.
 
 ---
 
@@ -75,7 +110,7 @@ ssh root@143.244.157.90 'docker exec development-easy-mysql-1 mariadb -uopenemr 
 **Hard reload first** (Cmd+Shift+R) — first turn after the citation-shape
 merge.
 
-On Chen, with **"Ask guidelines" toggle OFF**, in the drawer ask:
+**Use a Pool A persona (pid 22 or pid 8)** — Chen has no chart data so chart Q&A would have nothing to cite. With **"Ask guidelines" toggle OFF**, in the drawer ask:
 
 1. *"What allergies does this patient have?"*
 2. *"Summarize this patient's active medications."*
@@ -99,7 +134,7 @@ on droplet.
 
 ## 4. Guideline RAG — 10 min   `[R][C][S]`
 
-On Chen, **toggle "Ask guidelines" ON**. Ask:
+Stay on the Pool A persona, **toggle "Ask guidelines" ON**. Ask:
 
 1. *"How should I manage CKD stage 3?"*
 2. *"What are the JNC8 / ACC-AHA blood-pressure targets for this patient?"*
