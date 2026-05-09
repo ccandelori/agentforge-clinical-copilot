@@ -78,6 +78,7 @@ class _CapturingOrchestrator:
         session_id: str | None = None,
         pdf_pages: Any = None,
         document_id: int | None = None,
+        evidence_query: str = "",
         **_: Any,
     ) -> str:
         self.captured = {
@@ -86,6 +87,7 @@ class _CapturingOrchestrator:
             "session_id": session_id,
             "pdf_pages": pdf_pages,
             "document_id": document_id,
+            "evidence_query": evidence_query,
         }
         return self.reply
 
@@ -791,3 +793,108 @@ async def test_document_id_must_be_positive() -> None:
             },
         )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------
+# P1.3 — evidence_query forwarding
+#
+# The dashboard turn route MUST accept ``evidence_query`` and forward it
+# to ``orchestrator.turn``. Without this, the W2 graph's evidence
+# retriever node never fires from dashboard turns (it only fires when
+# ``state["query"]`` is non-empty), so guideline RAG can only be
+# triggered from the legacy /turn route. See
+# sidecar/src/agentforge/orchestrator/__init__.py:357 for the
+# orchestrator-side kwarg that this route now plumbs through.
+# ---------------------------------------------------------------------
+
+
+def test_agent_turn_request_accepts_evidence_query() -> None:
+    """The request schema must accept ``evidence_query`` as an optional
+    string. Without this field, dashboard turns can never trigger the W2
+    evidence retriever."""
+    from agentforge.dashboard_auth.turn_route import AgentTurnRequest
+
+    req = AgentTurnRequest(
+        message="dapagliflozin in CKD?",
+        patient_uuid="p-uuid",
+        evidence_query="dapagliflozin in CKD",
+    )
+    assert req.evidence_query == "dapagliflozin in CKD"
+
+
+def test_agent_turn_request_evidence_query_defaults_to_empty_string() -> None:
+    """Back-compat: existing dashboard JS will not send the field yet, so
+    omitting it must default to ``""`` (matches the legacy /turn route's
+    contract — empty string means "no RAG" rather than "unset")."""
+    from agentforge.dashboard_auth.turn_route import AgentTurnRequest
+
+    req = AgentTurnRequest(message="hi", patient_uuid="p-uuid")
+    assert req.evidence_query == ""
+
+
+def test_agent_turn_request_extra_fields_still_forbidden() -> None:
+    """Regression guard: adding ``evidence_query`` must not relax the
+    ``extra="forbid"`` model_config — bogus fields should still 422 at
+    parse time."""
+    from pydantic import ValidationError
+
+    from agentforge.dashboard_auth.turn_route import AgentTurnRequest
+
+    with pytest.raises(ValidationError):
+        AgentTurnRequest(  # type: ignore[call-arg]
+            message="hi",
+            patient_uuid="p-uuid",
+            bogus_field="nope",
+        )
+
+
+@pytest.mark.asyncio
+async def test_evidence_query_is_forwarded_to_orchestrator() -> None:
+    """End-to-end: when the request carries ``evidence_query``, the route
+    must pass it through to ``orchestrator.turn`` so the W2 graph's
+    evidence retriever node fires."""
+    app, orch, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={
+                "message": "dapagliflozin in CKD?",
+                "patient_uuid": "p",
+                "evidence_query": "dapagliflozin in CKD",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert orch.captured["evidence_query"] == "dapagliflozin in CKD"
+
+
+@pytest.mark.asyncio
+async def test_evidence_query_defaults_to_empty_when_omitted() -> None:
+    """Back-compat: when the dashboard does not send ``evidence_query``,
+    the orchestrator must receive ``""`` so the W2 evidence node stays
+    quiet (matches current chart-question behavior)."""
+    app, orch, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 42},
+    )
+    sid = await _seed_session(
+        store, fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/x"
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "what's the dx?", "patient_uuid": "p"},
+        )
+
+    assert resp.status_code == 200
+    assert orch.captured["evidence_query"] == ""
