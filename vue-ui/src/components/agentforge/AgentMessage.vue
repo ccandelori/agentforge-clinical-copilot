@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import type { ChatMessage, Citation, IntakeExtraction } from '@/stores/agentforge'
+import type {
+  ChatMessage,
+  Citation,
+  ExtractionResult,
+} from '@/stores/agentforge'
 
 import CitationPill from './CitationPill.vue'
 import ExtractionPanel from './ExtractionPanel.vue'
+import LabPanel from './LabPanel.vue'
 
 interface Props {
   message: ChatMessage
@@ -26,7 +31,7 @@ const citations = computed<readonly Citation[]>(() => {
   return props.message.citations ?? []
 })
 
-const extraction = computed<IntakeExtraction | null>(() => {
+const extraction = computed<ExtractionResult | null>(() => {
   return props.message.extraction ?? null
 })
 
@@ -95,7 +100,21 @@ function onCitationClick(id: string): void {
       </div>
 
       <div v-if="!isUser && extraction !== null" class="w-full max-w-md">
-        <ExtractionPanel :extraction="extraction" />
+        <!--
+          Discriminated dispatch (P1.2): the ``kind`` tag is set at the
+          parser boundary in ``useAgentTurn`` so we mount the panel that
+          knows the matching shape. Lab and intake snapshots have
+          disjoint schemas; rendering the wrong panel would silently
+          discard the other side's structured rows.
+        -->
+        <LabPanel
+          v-if="extraction.kind === 'lab'"
+          :extraction="extraction"
+        />
+        <ExtractionPanel
+          v-else-if="extraction.kind === 'intake'"
+          :extraction="extraction"
+        />
       </div>
 
       <div

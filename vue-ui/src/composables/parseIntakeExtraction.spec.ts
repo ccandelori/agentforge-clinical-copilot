@@ -183,6 +183,45 @@ describe('parseIntakeExtraction', () => {
     expect(out.chiefConcernCitation?.pageBbox).toBeUndefined()
   })
 
+  it('returns null on lab-shaped payloads (P1.2 discriminator regression)', () => {
+    // P1.2 fix — a lab-PDF extraction snapshot satisfies the loose
+    // document_id / patient_id / extraction_confidence triple this
+    // parser used to require, but its `values[]` rows would have been
+    // silently discarded. Confirm the discriminator now rejects the
+    // payload so the dashboard's parser dispatch can fall through to
+    // `parseLabExtraction` and render an actual lab panel with bbox
+    // overlays in the source-document modal.
+    const labShaped = {
+      document_id: 1,
+      patient_id: 1,
+      extraction_confidence: 0.88,
+      values: [
+        {
+          test_name: 'HbA1c',
+          value: '6.7',
+          unit: '%',
+          citation: {
+            source_type: 'lab_pdf',
+            source_id: 'doc-1',
+            page_or_section: 'page 1',
+            field_or_chunk_id: 'value-0',
+            quote_or_value: 'HbA1c 6.7 %',
+            page_bbox: {
+              page: 1,
+              x0: 0.1,
+              y0: 0.2,
+              x1: 0.4,
+              y1: 0.3,
+              bbox_confidence: 0.92,
+            },
+          },
+        },
+      ],
+      unsupported_fields: [],
+    }
+    expect(parseIntakeExtraction(labShaped)).toBeNull()
+  })
+
   it('preserves unsupported_fields', () => {
     const raw = {
       document_id: 1,

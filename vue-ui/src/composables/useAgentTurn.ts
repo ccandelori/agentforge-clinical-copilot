@@ -4,6 +4,10 @@ import {
   parseIntakeExtraction,
   type IntakeExtraction,
 } from './parseIntakeExtraction'
+import {
+  parseLabExtraction,
+  type LabExtraction,
+} from './parseLabExtraction'
 import type { DocumentType } from './useDocumentUpload'
 
 // Wave 3 wiring: replaces vue-ui's canned typewriter with the real BFF
@@ -124,6 +128,22 @@ export interface AgentTurnRequest {
 }
 
 /**
+ * Discriminated union covering the two structured extractions the W2
+ * graph can produce. Lab and intake snapshots have disjoint Pydantic
+ * shapes on the sidecar; the parsers below pick the matching one and
+ * the dashboard panel dispatches off the discriminator field.
+ *
+ * `kind` is added at the parser boundary, NOT on the wire — the BFF
+ * route ships the raw `model_dump(mode="json")` of either
+ * `IntakeFormExtraction` or `LabPdfExtraction`. Tagging here keeps the
+ * dispatch in `AgentMessage.vue` to a single literal-union check
+ * without revisiting the wire shape.
+ */
+export type ExtractionResult =
+  | ({ readonly kind: 'intake' } & IntakeExtraction)
+  | ({ readonly kind: 'lab' } & LabExtraction)
+
+/**
  * Resolved agent turn — what `send()` returns to the caller.
  *
  * Citations are always normalised to an array (empty when the sidecar
@@ -133,14 +153,17 @@ export interface AgentTurnResult {
   readonly reply: string
   readonly citations: readonly Citation[]
   /**
-   * Structured intake extraction surfaced when the turn included a
-   * scanned form. Null when the turn was a chart Q&A (no document
-   * attached) or when the W2 graph chose not to extract.
+   * Structured extraction surfaced when the turn included a scanned
+   * document. ``undefined`` when the turn was a chart Q&A (no document
+   * attached) or when the W2 graph chose not to extract. Tagged so the
+   * dashboard can render the matching panel (`ExtractionPanel` for
+   * intake, `LabPanel` for lab) without re-sniffing the shape.
    */
-  readonly extraction?: IntakeExtraction
+  readonly extraction?: ExtractionResult
 }
 
 export type { IntakeExtraction } from './parseIntakeExtraction'
+export type { LabExtraction } from './parseLabExtraction'
 
 interface AgentTurnResponseBody {
   reply: string
@@ -260,12 +283,26 @@ export function useAgentTurn(): UseAgentTurn {
         throw new Error('Agent response was malformed.')
       }
       const citations = parseCitations(parsed.citations)
-      const extraction = parseIntakeExtraction(parsed.extraction)
+      // P1.2: try the lab parser first — its discriminator is strict
+      // (requires `values[]`, rejects intake-shaped payloads) so a
+      // successful lab parse is unambiguous. Fall through to intake
+      // for the demo's primary path. Both parsers return `null` on
+      // shape mismatch; if neither claims the payload we emit no
+      // extraction and the chat bubble renders without a panel.
+      const lab = parseLabExtraction(parsed.extraction)
+      const intake = lab === null
+        ? parseIntakeExtraction(parsed.extraction)
+        : null
+      const extraction: ExtractionResult | undefined = lab !== null
+        ? { kind: 'lab', ...lab }
+        : intake !== null
+          ? { kind: 'intake', ...intake }
+          : undefined
       status.value = 'success'
       return {
         reply: parsed.reply,
         citations,
-        ...(extraction !== null ? { extraction } : {}),
+        ...(extraction !== undefined ? { extraction } : {}),
       }
     } catch (caught) {
       let friendly: Error

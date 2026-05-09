@@ -233,8 +233,41 @@ function parseList<T>(
   return out
 }
 
+/**
+ * The sidecar's `LabPdfExtraction` Pydantic model carries a `values`
+ * list (one row per parsed lab result). `IntakeFormExtraction` has no
+ * such field — so a payload whose only list-shaped marker is `values`
+ * is a lab extraction, not an intake one.
+ *
+ * P1.2 fix: the previous version of this parser only checked the loose
+ * `document_id` / `patient_id` / `extraction_confidence` triple, which
+ * a lab payload satisfies trivially. The discriminator below tightens
+ * the parse so a lab-shaped payload returns `null` and the dashboard
+ * dispatch falls through to `parseLabExtraction` instead of mounting
+ * an empty intake panel that silently discards `values[]`.
+ */
+function looksLikeLabExtraction(raw: Record<string, unknown>): boolean {
+  if (!Array.isArray(raw.values)) return false
+  // If any intake-only list/field is present alongside `values`, treat
+  // the payload as ambiguous and let the intake parse proceed (the
+  // intake-only keys win the tie). In practice the two Pydantic shapes
+  // are disjoint so this branch is defence-in-depth.
+  if (Array.isArray(raw.demographics)) return false
+  if (Array.isArray(raw.medications)) return false
+  if (Array.isArray(raw.allergies)) return false
+  if (Array.isArray(raw.family_history)) return false
+  if (typeof raw.chief_concern === 'string') return false
+  return true
+}
+
 export function parseIntakeExtraction(raw: unknown): IntakeExtraction | null {
   if (!isObject(raw)) return null
+
+  // P1.2 discriminator — reject lab-shaped payloads up front so the
+  // dashboard's parser dispatch can hand them to `parseLabExtraction`
+  // instead of accepting them as a stripped intake snapshot whose
+  // `values[]` rows would be silently discarded.
+  if (looksLikeLabExtraction(raw)) return null
 
   const documentId = raw.document_id
   const patientId = raw.patient_id

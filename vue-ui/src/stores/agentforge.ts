@@ -2,7 +2,11 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { useAgentTurn, type Citation } from '@/composables/useAgentTurn'
+import {
+  useAgentTurn,
+  type Citation,
+  type ExtractionResult,
+} from '@/composables/useAgentTurn'
 import type { DocumentType } from '@/composables/useDocumentUpload'
 
 /**
@@ -30,9 +34,12 @@ const STORAGE_KEY = 'agentforge-conversations'
 
 export type MessageRole = 'user' | 'assistant'
 
-export type { Citation, IntakeExtraction } from '@/composables/useAgentTurn'
-
-import type { IntakeExtraction } from '@/composables/useAgentTurn'
+export type {
+  Citation,
+  ExtractionResult,
+  IntakeExtraction,
+  LabExtraction,
+} from '@/composables/useAgentTurn'
 
 export interface ChatMessage {
   readonly id: string
@@ -41,11 +48,13 @@ export interface ChatMessage {
   readonly createdAt: string
   readonly citations?: readonly Citation[]
   /**
-   * Structured intake-form extraction snapshot the sidecar attaches when
-   * the turn included a scanned document. Drives the
-   * <ExtractionPanel> rendered below the assistant bubble.
+   * Structured extraction snapshot the sidecar attaches when the turn
+   * included a scanned document. Discriminated union (`kind: 'intake' |
+   * 'lab'`) so the chat bubble can mount the matching panel
+   * (`ExtractionPanel` for intake, `LabPanel` for lab) without a
+   * second pass at the wire shape.
    */
-  readonly extraction?: IntakeExtraction
+  readonly extraction?: ExtractionResult
   /**
    * Set when the assistant turn failed (network error, timeout, non-2xx
    * from the sidecar). The chat pane styles error bubbles distinctly
