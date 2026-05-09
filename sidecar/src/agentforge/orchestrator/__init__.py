@@ -25,7 +25,14 @@ import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
+
+if TYPE_CHECKING:
+    # Importing graph at module top would pull in langgraph; keep the
+    # W1-only deployments langgraph-free per the existing _run_graph_turn
+    # local-import pattern. Annotations are evaluated lazily thanks to
+    # ``from __future__ import annotations`` so this is type-only.
+    from agentforge.orchestrator.graph import DocumentType
 
 from agentforge.breakglass import BreakglassAuditTool
 from agentforge.gateway.auth_gateway import RequestContext
@@ -348,6 +355,7 @@ class Orchestrator:
         pdf_pages: list[RenderedPage] | None = None,
         document_id: int | None = None,
         evidence_query: str = "",
+        doc_type: DocumentType | None = None,
     ) -> str:
         """Run one user turn through the model + tools, return final text.
 
@@ -399,6 +407,7 @@ class Orchestrator:
                         pdf_pages=pdf_pages or [],
                         document_id=document_id,
                         evidence_query=evidence_query,
+                        doc_type=doc_type,
                     )
             except TimeoutError:
                 return _TURN_BUDGET_EXCEEDED_TEXT
@@ -429,6 +438,7 @@ class Orchestrator:
         pdf_pages: list[RenderedPage],
         document_id: int | None,
         evidence_query: str,
+        doc_type: DocumentType | None = None,
     ) -> str:
         """Drive the W2 graph for one turn and return the final assistant text.
 
@@ -482,6 +492,7 @@ class Orchestrator:
             "query": evidence_query,
             "langfuse_trace": trace,
             "last_node": HANDOFF_START_NODE,
+            "doc_type": doc_type,
         }
 
         assert self._agent_graph is not None  # narrowed by caller

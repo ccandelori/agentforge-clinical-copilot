@@ -60,6 +60,7 @@ from agentforge.dashboard_auth.openemr_patient_pid import (
 from agentforge.dashboard_auth.sessions import Session, SessionStore
 from agentforge.gateway.auth_gateway import AuthGateway
 from agentforge.orchestrator import get_last_turn_extraction, get_turn_citation_index
+from agentforge.orchestrator.graph import DocumentType
 from agentforge.verifier.cache import CitationIndex
 from agentforge.verifier.citation import find_citations
 
@@ -79,6 +80,7 @@ class _OrchestratorProto:
         session_id: str | None = None,
         pdf_pages: list[Any] | None = None,
         document_id: int | None = None,
+        doc_type: DocumentType | None = None,
     ) -> str: ...
 
 
@@ -124,6 +126,15 @@ class AgentTurnRequest(BaseModel):
     # can carry the value as a string in JSON without lossy precision
     # at very large ids; we parse to int at the boundary.
     document_id: str | None = None
+    # P1.2: optional vision contract dispatch. ``intake_form`` (default
+    # when None) routes through ``INTAKE_CONTRACT``; ``lab_pdf`` routes
+    # through ``LAB_CONTRACT``. Pydantic validates against the
+    # ``DocumentType`` enum's closed value set so a bogus payload is a
+    # 422 at the BFF, never a misrouted call into the wrong extractor.
+    # The dashboard UI work to actually send this field is the next-wave
+    # follow-up; the API surface is plumbed through here so callers can
+    # opt in without another schema change.
+    doc_type: DocumentType | None = None
 
 
 class AgentTurnCitation(BaseModel):
@@ -621,6 +632,7 @@ def make_agent_turn_router(
             session_id=body.session_id,
             pdf_pages=pdf_pages,
             document_id=document_id_int,
+            doc_type=body.doc_type,
         )
         # Read the extraction snapshot AFTER ``turn`` returns — same
         # ContextVar isolation contract as ``get_turn_citation_index``

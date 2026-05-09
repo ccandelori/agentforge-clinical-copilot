@@ -90,6 +90,7 @@ def _starter_state(user_message: str = "hello") -> AgentState:
         query="",
         langfuse_trace=None,
         last_node=HANDOFF_START_NODE,
+        doc_type=None,
     )
 
 
