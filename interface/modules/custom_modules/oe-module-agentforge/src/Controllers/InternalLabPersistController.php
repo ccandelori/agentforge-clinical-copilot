@@ -18,8 +18,10 @@ declare(strict_types=1);
 namespace OpenEMR\Modules\AgentForge\Controllers;
 
 use Doctrine\DBAL\Exception as DbalException;
+use DomainException;
 use JsonException;
 use Lcobucci\JWT\Exception as JwtException;
+use OpenEMR\Modules\AgentForge\Domain\LabValue;
 use OpenEMR\Modules\AgentForge\Services\AgentJwtValidator;
 use OpenEMR\Modules\AgentForge\Services\DocumentOwnershipVerifier;
 use OpenEMR\Modules\AgentForge\Services\LabPersistAuditWriter;
@@ -114,6 +116,20 @@ class InternalLabPersistController
         $orderingProvider = self::optString($body['ordering_provider'] ?? null);
         $accessionNumber = self::optString($body['accession_number'] ?? null);
 
+        // Parse, don't validate: turn each raw entry into a LabValue
+        // and let the constructor enforce the test_name/value
+        // invariants. Anything malformed becomes a generic 400 — we do
+        // NOT echo back the malformed payload because lab values are
+        // PHI-adjacent.
+        try {
+            $parsedValues = self::parseValues($values);
+        } catch (DomainException) {
+            return new JsonResponse(
+                ['error' => 'values entries are malformed'],
+                Response::HTTP_BAD_REQUEST,
+            );
+        }
+
         try {
             $ids = $this->writer->persist(
                 patientId: $claims->patientId,
@@ -121,7 +137,7 @@ class InternalLabPersistController
                 documentId: $documentId,
                 orderingProvider: $orderingProvider,
                 accessionNumber: $accessionNumber,
-                values: self::normalizeValues($values),
+                values: $parsedValues,
             );
         } catch (DbalException | JsonException | RuntimeException) {
             // Same narrow catch as the intake controller — Error
@@ -193,28 +209,23 @@ class InternalLabPersistController
     }
 
     /**
-     * Coerce the values list into list<array<string, mixed>> for the
-     * writer. Anything that isn't a dict is dropped — the writer expects
-     * to read named keys like 'test_name' off each entry.
+     * Parse the raw values list into a typed list<LabValue>. The
+     * predecessor `normalizeValues` silently dropped non-array entries
+     * and forwarded dicts with missing test_name/value to the writer,
+     * which then stored empty strings into procedure_result — a silent
+     * corruption of the patient's lab record. Now every entry must
+     * survive {@see LabValue::fromMixed}; anything that doesn't raises
+     * DomainException and the controller turns that into HTTP 400 with
+     * no rows persisted.
      *
      * @param array<array-key, mixed> $values
-     * @return list<array<string, mixed>>
+     * @return list<LabValue>
      */
-    private static function normalizeValues(array $values): array
+    private static function parseValues(array $values): array
     {
         $out = [];
-        foreach ($values as $v) {
-            if (!is_array($v)) {
-                continue;
-            }
-            // Filter to string keys so the writer's @param contract holds.
-            $row = [];
-            foreach ($v as $k => $val) {
-                if (is_string($k)) {
-                    $row[$k] = $val;
-                }
-            }
-            $out[] = $row;
+        foreach ($values as $entry) {
+            $out[] = LabValue::fromMixed($entry);
         }
         return $out;
     }
