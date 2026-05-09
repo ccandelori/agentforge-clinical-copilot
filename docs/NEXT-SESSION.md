@@ -1,45 +1,119 @@
-# Where we left off — 2026-05-08 evening (eval pipeline shipped, ~30 hours to deadline)
+# Where we left off — 2026-05-09 morning (3 punch-list rounds closed + pushed, ~26 hours to deadline)
 
 Read me first when picking the project back up. Update or delete me
 when the state captured here goes stale.
 
 ## Headline
 
-Two threads are now shipped end-to-end, both pushed to both remotes
+Three threads now shipped end-to-end and pushed to both remotes
 (`labs.gauntletai.com/cameroncandelori/openemr` and the public mirror
 at `github.com/ccandelori/agentforge-clinical-copilot`):
 
 1. **W2 doc-upload + citation overlay** (shipped morning of 2026-05-08).
    Live on the droplet at
    [https://143.244.157.90:9300/dashboard/](https://143.244.157.90:9300/dashboard/).
-2. **W2 eval pipeline** (shipped this evening). 11 tasks merged in two
-   parallel-agent waves: hybrid-RAG-backed evidence-retriever node,
-   50-case YAML suite, programmatic + LLM-as-judge graders, eval gate
-   with baseline + thresholds, gate self-test, GitLab CI agent-eval
-   job, GitHub Actions mirror, eval-smoke pre-commit hook, observability
-   extensions, the W2 evaluation report, and the production
-   SupervisorAdapter that closes the loop. Sidecar suite: **1313 passed,
-   30 deselected** (gate_validation + eval_smoke marker tags).
+2. **W2 eval pipeline** (shipped evening of 2026-05-08). 11 tasks
+   merged in two parallel-agent waves. Gate runs on GitLab CI + GitHub
+   Actions; production `SupervisorAdapter` closes the loop.
+3. **Three rounds of code-review punch lists** (shipped 2026-05-08
+   evening through 2026-05-09 morning, **20 commits**). Server-side
+   gaps closed in round 1, client-side gaps closed in round 2, stale
+   tests trimmed in round 3. Sidecar suite: **1335 passed, 18
+   deselected.** PHP module: **384/384** green. PHPStan level 10 clean.
 
-W2 deadline: Sun 2026-05-10 noon. **~30 hours left.**
+W2 deadline: Sun 2026-05-10 noon. **~26 hours left.**
 
 **Open priorities** (in rough order):
 
 1. **T38.13 — `PATIENT_DASHBOARD_MIGRATION.md` defense doc.** Graded
    artifact for the W2 surprise challenge. Some content is already in
    `PATIENT_DASHBOARD_MIGRATION.md` at the repo root; needs a refresh
-   against current shipped state.
+   against current shipped state including the punch-list rounds.
 2. **Defense slides refresh** (`docs/w2-defense-slides.html`). Still
    has the pre-session edits sitting in stash (`presession-slides-WIP`).
    Pop, then update for the doc-upload pipeline + bbox overlay
    trust-artifact story AND the eval-pipeline-as-correctness-claim story.
-3. **Manual baseline regen** so the eval gate has a measured baseline,
-   not a stub. See "Eval pipeline state" below.
+3. **Droplet deploy + manual baseline regen.** See "Droplet redeploy
+   checklist" below — includes the new `Version20260508000001`
+   migration backfill, Apache reload, and sidecar restart that the
+   2026-05-09 punch fixes require. Manual baseline regen lives on top.
 4. **Live-demo dry run.** End-to-end on Chen + Whitaker (typed PDFs);
    time it, note flakes. The chat-reply-duplicates-panel and
    snake_case demographics labels are the visible papercuts.
 5. **Operational deferreds** for the new CI surface (`GLAB_TOKEN`,
    GitHub branch protection). See "CI / operational deferreds" below.
+
+## What shipped this session — punch-list rounds
+
+**Round 1 (server-side gaps, 6 items, all merged):**
+
+| Item | What |
+|---|---|
+| P1.1 | Sidecar persists extractions to OpenEMR after graph turn (Option A — sidecar-initiated, single round-trip from dashboard's POV). New `sidecar/src/agentforge/persist/` package + `_TURN_PERSISTED_VAR` ContextVar + `persisted_resource_id` on `AgentTurnResponse`. |
+| P1.2 | Lab PDF routing through correct extraction contract. New `DocumentType` enum, two-extractor build at startup, dispatch in `intake_extractor_node` on `state["doc_type"]`. |
+| P1.3 | Dashboard `evidence_query` plumbed from `AgentTurnRequest` → `orchestrator.turn(...)` (the orchestrator already accepted the kwarg; gap was BFF schema + forwarding). |
+| P2.1 | `IntakeQuestionnaireResponseWriter` now routes through `QuestionnaireResponseService::saveQuestionnaireResponse()` via `IntakeQuestionnaireResponsePersister` interface seam — service events fire, audit trail intact. |
+| P2.2 | `LabValue` final readonly domain primitive added; `InternalLabPersistController` parses-not-validates at the boundary. Closes silent-corruption gap. |
+| P2.3 | `VisionExtractor` emits `record_extraction_call` Langfuse spans on success + failure paths; both intake and lab extractors get telemetry parity. |
+
+**Round 2 (client-side + bug fixes, 4 items, all merged):**
+
+| Item | What |
+|---|---|
+| P4#1 | Vue carries `doc_type` through `PendingAttachment` and the turn request body. `inferDocType.ts` extracted as a composable. |
+| P4#2 | Vue forwards `evidence_query` when an "Ask guidelines" toggle is on (visible affordance > heuristic intent classification — see DEVIATIONS for the alternatives-considered). Default off; toggle next to attach button. |
+| P4#3 | Legacy per-chart panel yanked. 15 deletions (panel JS + Twig + panel-only PHP routes/controllers + Bootstrap class + their tests) + 12 modifications. Vue dashboard + Internal* controllers preserved. |
+| P4#4 | `QuestionnaireResponse.questionnaire_id` column was being persisted as `NULL`. New `IntakeQuestionnaireLookup` + `SeededIntakeQuestionnaire` DTO + stable kebab-case logical id `agentforge-intake-form` threaded through writer and persister. Two Doctrine migrations (seed update + production backfill). |
+
+**Round 3 (stale-test cleanup + corpus framing, 3 items, all merged):**
+
+| Item | What |
+|---|---|
+| Round 3.1 | Sidecar test suites still posting to the deleted `turn.php`: deleted `tests/integration/test_use_cases.py` and `tests/eval/baseline/` outright; surgically pruned the LLM-tier latency test from `test_latency.py` and the patient-context binding probe from `test_patient_context.py`. |
+| Round 3.2 | Strengthened `sidecar/data/guidelines/NOTICE.md` framing with an explicit "Status: demo stub only" callout. Corpus contents kept per "leave it" decision. |
+| Round 3.3 | Stale `EnvLoader.php` docblock referencing the deleted `turn.php` — fixed. |
+
+Full detail: `docs/DEVIATIONS.md` (every entry from 2026-05-08 onwards).
+
+## Droplet redeploy checklist (REQUIRED for the punch-list fixes to take effect)
+
+Before the demo dry-run, the droplet needs to absorb this session's
+work. None of these are optional — the round-1/2/3 fixes touch all
+three deploy surfaces.
+
+```bash
+# 1. Sidecar — picks up P1.1 persister, P1.2 lab dispatch, P2.3 telemetry,
+#    P1.3 evidence_query plumb, and P4#4 logical id.
+./scripts/deploy-droplet.sh sidecar
+
+# 2. Vue dashboard — picks up P4#1+P4#2 (doc_type + evidence_query +
+#    "Ask guidelines" toggle).
+./scripts/deploy-droplet.sh dashboard
+
+# 3. PHP module — picks up P2.1 persister seam, P2.2 LabValue,
+#    P4#3 panel yank, P4#4 logical id lookup + writer changes.
+./scripts/deploy-droplet.sh module
+
+# 4. Run the new Doctrine migration on the droplet — backfills
+#    questionnaire_response.questionnaire_id on the seeded canonical row.
+#    Version20260505000001 is already applied; the new
+#    Version20260508000001 will not auto-replay.
+ssh root@<droplet> 'docker exec development-easy-openemr-1 \
+  /openemr/vendor/bin/doctrine migrations:migrate --no-interaction'
+
+# 5. Apache reload — the panel yank dropped the /agentforge/turn alias
+#    from the vhost. Sidecar/dashboard/module deploys above don't
+#    bounce Apache; do it explicitly.
+ssh root@<droplet> 'docker exec development-easy-openemr-1 httpd -k graceful'
+
+# 6. Sanity check.
+./scripts/deploy-droplet.sh check
+```
+
+If the migration step fails because the `migrations` table is in a
+weird state (it shouldn't be, but if dev-easy was partial-cleaned at
+some point), drop it and re-run `migrations:migrate`. The two
+migrations are both idempotent on their target rows.
 
 ## Eval pipeline state
 
@@ -119,6 +193,11 @@ rather than a *no-regression* check:
 6. Send "Extract this intake form."
 7. Wait ~12-15s (Haiku vision; cold first call). Chat reply lists extracted fields; `<ExtractionPanel>` renders below bubble.
 8. Click **"View source (18)"** — modal opens, PDF renders, blue rectangles overlay extracted-field regions.
+9. **(NEW after this session)** To exercise the guideline-RAG path:
+   toggle **"Ask guidelines"** in the composer toolbar (next to the
+   attach button) and ask a clinical question — e.g. "How should I
+   manage CKD stage 3?" The graph routes to the evidence-retriever
+   node and citations from `sidecar/data/guidelines/` appear inline.
 
 Three other personas seeded for additional test runs:
 
@@ -287,56 +366,77 @@ W2-deadline-relevant (worth deciding before Sunday noon):
    HALLUCINATION/REFUSAL categories; W2 cases use five different ones.
    Programmatic `citation_present` grader carries the load-bearing
    assertion in the gate self-test.
+8. **Lab graph worker not yet wired.** P1.2 added the doc_type
+   dispatch in `intake_extractor_node` so a `LabPdfExtraction` *can*
+   route through the lab contract; P1.1's persister is `isinstance`-
+   typed so it'll fire when one arrives. But the graph's
+   `extraction_result` field is still typed around `IntakeFormExtraction`
+   in practice. Wiring a lab-extractor flow end-to-end is a forward-
+   compat-ready follow-up, not a deadline blocker.
+9. **Demo corpus is project-prepared summaries.** Round 3 strengthened
+   the framing in `sidecar/data/guidelines/NOTICE.md` to call this
+   out explicitly. Production-grade corpus ingestion (real source
+   PDFs) is post-W2.
 
 Post-deadline / future:
 
-8. **No vue-ui tests at the SFC integration level.** Unit tests for
-   composables and pure helpers are in. Drawer-flow integration
-   tests are not.
-9. **Sign & Finalize / Edit demographics are preview-only.** Same gap
-   as W1 — needs `POST /api/fhir/Encounter` and `PATCH /Patient`.
-   Tracked in DEVIATIONS.md.
-10. **Token refresh not implemented.** OAuth access_token expires
+10. **No vue-ui tests at the SFC integration level.** Unit tests for
+    composables, pure helpers, and the new `inferDocType` /
+    `agentforge` store coverage are in. Drawer-flow integration
+    tests are not.
+11. **Sign & Finalize / Edit demographics are preview-only.** Same gap
+    as W1 — needs `POST /api/fhir/Encounter` and `PATCH /Patient`.
+    Tracked in DEVIATIONS.md.
+12. **Token refresh not implemented.** OAuth access_token expires
     ~1 hr; FHIR returns 401; SPA bounces to /login.
-11. **CalendarView / SettingsView are mocked** — not wired to real FHIR.
-12. **Apache proxy conf is not persisted** across openemr container
+13. **CalendarView / SettingsView are mocked** — not wired to real FHIR.
+14. **Apache proxy conf is not persisted** across openemr container
     recreation — recipe above to re-inject.
-13. **bge-reranker-base image cost.** Pre-baked at fp32 = ~1.1 GB
+15. **bge-reranker-base image cost.** Pre-baked at fp32 = ~1.1 GB
     (not the spec's ~280 MB — that was a parameter-count-as-MB
     confusion). Mitigations available (fp16 / smaller cross-encoder /
     int8-quantized variant) but not blocking. Logged in DEVIATIONS.
 
 ## Things to focus on next session
 
-In priority order with ~30 hours left:
+In priority order with ~26 hours left:
 
-1. **T38.13 — `PATIENT_DASHBOARD_MIGRATION.md` defense doc.** Graded
+1. **Droplet redeploy + migration backfill + Apache reload + sidecar
+   restart.** See "Droplet redeploy checklist" above. Required before
+   any demo dry-run can exercise the punch-list fixes.
+2. **T38.13 — `PATIENT_DASHBOARD_MIGRATION.md` defense doc.** Graded
    W2-surprise artifact. Refresh the existing doc against
-   currently-shipped state. (Gates Task 38 finishing in Taskmaster.)
-2. **Defense slides refresh** (`docs/w2-defense-slides.html`). Pop
+   currently-shipped state including this session's three rounds.
+3. **Defense slides refresh** (`docs/w2-defense-slides.html`). Pop
    `stash@{0} presession-slides-WIP` first. Land doc-upload + bbox +
-   eval-pipeline trust-artifact story.
-3. **Live-demo dry run** on Chen + Whitaker. Time it, note flakes,
+   eval-pipeline + persistence-layer-correctness story.
+4. **Live-demo dry run** on Chen + Whitaker. Time it, note flakes,
    decide papercut fixes (snake_case labels, chat-duplicates-panel).
-4. **Decision pass on the gaps above (1–7).** Most are noted but
+   Also exercise the new "Ask guidelines" toggle path.
+5. **Decision pass on the gaps above (1–9).** Most are noted but
    undecided. Quick fixes vs. defense narrative — judgment call.
-5. (Optional) **Manual baseline regen.** Edit
+6. (Optional) **Manual baseline regen.** Edit
    `_build_real_supervisor_and_harness` in
    `sidecar/src/agentforge/eval/regenerate_baseline.py`, run on droplet,
    commit measured `baselines/week2.json`. ~2-4 hours including cost
    review. The defense narrative is stronger with measured numbers
    than with stub-pinned ones, but the gate self-test (Task 19) carries
    the correctness claim either way.
-6. (Optional) **Operational deferreds.** `GLAB_TOKEN` masked variable,
+7. (Optional) **Operational deferreds.** `GLAB_TOKEN` masked variable,
    GitHub branch protection. ~30 min total.
 
 ## Branch state at this commit
 
 - Branch: `main` (clean)
-- HEAD: `50c867e67`
+- HEAD: `c66b3b279`
 - Origin: GitLab (`labs.gauntletai.com/cameroncandelori/openemr`) — synced
 - Mirror: GitHub (`github.com/ccandelori/agentforge-clinical-copilot`) — synced
-- Sidecar suite: 1313 passed, 30 deselected (gate_validation + eval_smoke)
+- Sidecar suite: 1335 passed, 18 deselected (was 1313/30 pre-session;
+  net +22 default-run tests, -12 deselected tests due to slow/eval/
+  latency suite trim in round 3)
+- PHP module: 384/384 (was 380; net +4 from new lookup + persister
+  + logical-id tests)
+- PHPStan level 10: clean
 
 ## Taskmaster state (`week2` tag)
 
@@ -351,19 +451,19 @@ In priority order with ~30 hours left:
 
 - `stash@{0} presession-slides-WIP` — pre-session edits to
   `docs/w2-defense-slides.html`. Pop before the slides refresh in
-  priority 2.
+  priority 3.
 
 ## What shipped this session — summary index
 
-For full detail see `docs/DEVIATIONS.md` (every entry from 2026-05-08)
-and `git log --since=2026-05-08`.
+For full detail see `docs/DEVIATIONS.md` (every entry from 2026-05-08
+onwards) and `git log --since=2026-05-08`.
 
-**Morning round** — W2 doc-upload thread (MR !40, ~22 commits): the
-upload composable, BFF route, JWT-authed PHP upload endpoint, document
-viewer with bbox overlay, ExtractionPanel, "View source" modal, OAuth
-client rotation, droplet env hygiene.
+**2026-05-08 morning** — W2 doc-upload thread (MR !40, ~22 commits):
+the upload composable, BFF route, JWT-authed PHP upload endpoint,
+document viewer with bbox overlay, ExtractionPanel, "View source"
+modal, OAuth client rotation, droplet env hygiene.
 
-**Evening round** — W2 eval pipeline (~95 commits, 14 tasks):
+**2026-05-08 evening** — W2 eval pipeline (~95 commits, 14 tasks):
 
 | Task | What |
 |---|---|
@@ -383,3 +483,8 @@ client rotation, droplet env hygiene.
 | #31 | W2 evaluation report (`docs/eval-report-2026-05-08.md`) |
 | #35 | Defense Q&A primer (`docs/defense-qa-w2.md`) |
 | #40 | Production W2 SupervisorAdapter + regenerate_baseline CLI |
+
+**2026-05-08 evening through 2026-05-09 morning** — punch-list
+rounds 1–3 (20 commits): server-side, client-side, and stale-test
+cleanup. See "What shipped this session — punch-list rounds" near
+the top of this doc for the per-item breakdown.
