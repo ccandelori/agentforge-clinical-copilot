@@ -1,7 +1,7 @@
 {
     "synthesizer": "v1",
     "planner": "v1",
-    "graph_synthesizer": "v1",
+    "graph_synthesizer": "v2",
     "judge_factually_consistent": "v1",
     "judge_safe_refusal": "v1"
 }
