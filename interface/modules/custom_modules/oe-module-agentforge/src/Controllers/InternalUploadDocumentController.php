@@ -4,11 +4,10 @@
  * InternalUploadDocumentController — sidecar-facing JWT-authed multipart
  * upload endpoint (T38.15). Receives PDF bytes from the BFF (vue-ui →
  * sidecar BFF → here) and lands them in the OpenEMR document store via
- * the existing :class:`DocumentUploadWriter`, then fires the
+ * :class:`DocumentUploadWriter`, then fires the
  * ``agentforge.document_ingest`` audit event on success.
  *
- * The session-authed sibling is :class:`UploadDocumentController`; both
- * delegate the actual write to :class:`DocumentUploadWriter` so the
+ * Delegates the actual write to :class:`DocumentUploadWriter` so the
  * legacy ``Document::createDocument`` quirks are confined to one place.
  *
  * **Patient-scope authority lives on the JWT, not the multipart
@@ -64,9 +63,9 @@ use Symfony\Component\HttpFoundation\Response;
 class InternalUploadDocumentController
 {
     /**
-     * Mirrors :class:`UploadDocumentController`'s allowed set so the
-     * two upload paths accept the same documents. Adding a third
-     * type is a coordinated change with the sidecar's vision tools.
+     * Allowed document types accepted by this upload path. Adding a
+     * third type is a coordinated change with the sidecar's vision
+     * tools.
      */
     private const ALLOWED_DOC_TYPES = ['lab_pdf', 'intake_form'];
 
@@ -169,10 +168,9 @@ class InternalUploadDocumentController
             );
         }
 
-        // PDF magic-byte check mirrors UploadDocumentController. A
-        // misconfigured ``finfo`` would otherwise turn every legitimate
-        // upload into a 400; reading 5 bytes from the temp file is the
-        // unambiguous answer.
+        // PDF magic-byte check. A misconfigured ``finfo`` would otherwise
+        // turn every legitimate upload into a 400; reading 5 bytes from
+        // the temp file is the unambiguous answer.
         $tmpPath = $file->getRealPath();
         if (!is_string($tmpPath) || $tmpPath === '') {
             return new JsonResponse(
@@ -232,10 +230,10 @@ class InternalUploadDocumentController
                 encounterId: $encounterId,
             );
         } catch (RuntimeException) {
-            // Mirror UploadDocumentController: the legacy class's error
-            // message can include filesystem paths or storage backend
-            // details, both PHI exposure risks. The exception chain is
-            // preserved in the global handler's logs.
+            // The writer's underlying error message can include filesystem
+            // paths or storage backend details, both PHI exposure risks.
+            // The exception chain is preserved in the global handler's
+            // logs.
             return new JsonResponse(
                 ['error' => 'Upload failed; the document store rejected the request.'],
                 Response::HTTP_INTERNAL_SERVER_ERROR,

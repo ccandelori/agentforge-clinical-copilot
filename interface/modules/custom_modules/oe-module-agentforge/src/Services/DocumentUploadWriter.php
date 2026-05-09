@@ -2,10 +2,11 @@
 
 /**
  * DocumentUploadWriter — wraps the legacy ``Document`` class for the
- * AgentForge browser-upload flow (Task 6). Translates the
- * ``createDocument()`` "empty string on success" convention into a
- * typed return / throw, looks up the right category by name, and
- * keeps the caller (UploadDocumentController) free of legacy quirks.
+ * AgentForge upload flow (Task 6). Translates the ``createDocument()``
+ * "empty string on success" convention into a typed return / throw,
+ * looks up the right category by name, and keeps the caller (the
+ * sidecar-facing :class:`InternalUploadDocumentController`) free of
+ * legacy quirks.
  *
  * @package   OpenEMR
  * @link      https://www.open-emr.org

@@ -3,10 +3,12 @@
 OpenEMR custom module for the **AgentForge Clinical Co-Pilot**.
 
 This is the OpenEMR-side half of the integration. It registers the
-`OpenEMR\Modules\AgentForge` namespace, mints the JWT used to call the
-sidecar, and renders the agent panel inside the patient summary view.
-The Python sidecar (FastAPI + LangGraph orchestrator) lives in
-[`/sidecar/`](../../../../sidecar/) at the repository root. See
+`OpenEMR\Modules\AgentForge` namespace and exposes JWT-authed
+`public/internal/*.php` endpoints the sidecar calls into for FHIR/clinical
+data and persistence. The Python sidecar (FastAPI + LangGraph
+orchestrator) lives in [`/sidecar/`](../../../../sidecar/) at the
+repository root, and the user-facing UI is the Vue dashboard at
+[`/vue-ui/`](../../../../vue-ui/). See
 [`/ARCHITECTURE.md`](../../../../ARCHITECTURE.md) for the full system
 topology.
 
@@ -108,9 +110,9 @@ place rather than producing a duplicate. `down()` deletes by
 
 ## Frontend dependencies
 
-The citation overlay component (`public/js/citation_overlay.js`, Task 24)
-renders PDFs using **pdf.js**. We consume it as an OpenEMR-level npm
-dependency, not as a module-local vendor — pinned in the repository-root
+The Vue dashboard's `DocumentViewer.vue` (in `/vue-ui/`) renders attached
+PDFs using **pdf.js**. We consume it as an OpenEMR-level npm dependency,
+not as a module-local vendor — pinned in the repository-root
 `package.json` and copied to `/public/assets/pdfjs-dist/` by the gulp
 install task.
 
@@ -127,30 +129,29 @@ the dependency lives in the lockfile, not in the tree.
 than the modern build but still ships as ECMAScript modules — `<script
 type="module">` is required to load it.
 
-**Why npm-managed instead of module-local vendor:** `W2_ARCHITECTURE.md` §3
-called for a "vendored pdf.js bundle" because the alternative considered
-was bundling pdf.js as part of a *sidecar-side* React/JSX component, which
-would have required adding a Node toolchain to the Python sidecar. OpenEMR
-already has a Node toolchain (gulp/npm) for its other vendored JS, so
-adding pdf.js as a project-level npm dep matches the established
-convention without contradicting the original ADR's intent. See
-`docs/DEVIATIONS.md` (2026-05-06) for the longer rationale.
+**Why npm-managed instead of a Vue-local vendor:** `W2_ARCHITECTURE.md` §3
+called for a "vendored pdf.js bundle." OpenEMR already has a Node
+toolchain (gulp/npm) for its other vendored JS, so pinning pdf.js as a
+project-level npm dep matches the established convention without
+contradicting the original ADR's intent. See `docs/DEVIATIONS.md`
+(2026-05-06) for the longer rationale.
 
 ## Layout
 
 ```
 oe-module-agentforge/
-├── openemr.bootstrap.php       # OpenEMR module entry point
+├── openemr.bootstrap.php       # OpenEMR module entry point (PSR-4 namespace registration)
 ├── moduleConfig.php            # Module Manager config hook
 ├── info.txt                    # Module display name
 ├── src/
-│   ├── Bootstrap.php           # Event subscription + Twig wiring
-│   ├── Controllers/            # Request handlers (Task 2+)
-│   ├── Services/               # Module service classes (Task 6+)
-│   └── Events/                 # Custom event definitions
-├── templates/
-│   └── agent_panel.html.twig   # Patient-summary chat panel
-├── public/                     # Public-facing entry points and JS
+│   ├── EnvLoader.php           # Lazy reader for the module's .env file
+│   ├── Controllers/            # Internal* request handlers (sidecar-facing JWT-authed)
+│   ├── Services/               # Module service classes (intake/lab persistence, lookup, DTOs)
+│   ├── Domain/                 # Domain primitives (e.g. LabValue)
+│   ├── Events/                 # (reserved; no current event subscribers)
+│   └── Http/                   # HTTP helpers (auth header bridge, JWT, etc.)
+├── public/
+│   └── internal/               # Sidecar-facing JWT-authed PHP entry points
 └── tests/                      # Module-scoped PHPUnit tests
 ```
 

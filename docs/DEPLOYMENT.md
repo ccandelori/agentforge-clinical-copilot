@@ -195,9 +195,9 @@ those are part of the one-time setup below.
 the script's `check_health` function emits — they're documented inline in
 `scripts/deploy-droplet.sh`.)
 
-Open `https://<droplet>:9300/`, log in (admin / pass), open Susan
-Underwood's chart (pid=2), expand the **Clinical Co-Pilot** panel, and ask
-*"summarize this patient including problems and meds."*
+Open the Vue dashboard at `https://<droplet>:9300/dashboard/`, sign in
+(admin / pass), and either attach a test document or send a question
+like *"summarize this patient including problems and meds."*
 
 ## Known gotchas (also documented in `docs/DEVIATIONS.md`)
 
@@ -389,6 +389,6 @@ there from a fresh droplet:
 7. **Enable module in OpenEMR UI:** open the OpenEMR site → Admin → Modules
    → Manage Modules → find "AgentForge Clinical Co-Pilot" → Install → Enable.
    (One-time per droplet; the modules table persists across deploys.)
-8. **Smoke test:** open a patient chart, expand the Clinical Co-Pilot panel,
-   send a question. First `/turn` after a fresh sidecar start may 503
-   (cold-start). Retry once.
+8. **Smoke test:** open the Vue dashboard at `https://<droplet>:9300/dashboard/`,
+   sign in, and either attach a test document or send a question. First
+   `/turn` after a fresh sidecar start may 503 (cold-start). Retry once.

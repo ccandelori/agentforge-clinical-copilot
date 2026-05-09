@@ -12,6 +12,89 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — Legacy per-chart AgentForge panel removed
+
+**Background.** The original W1 architecture embedded an AgentForge chat
+panel directly inside the OpenEMR per-chart patient summary view: a
+Twig template (`agent_panel.html.twig`), an Angular-style JS bundle
+(`public/js/agent_panel.js`), a citation-overlay widget
+(`public/js/citation_overlay.js`), and two PHP route entry points
+(`public/turn.php` for chat turns, `public/upload_document.php` for
+document uploads) backed by `AgentProxyController` and
+`UploadDocumentController`. A `Bootstrap` class wired the panel into
+OpenEMR's event dispatcher so it rendered on the patient summary.
+
+**The 2026-05-06 placement decision.** When the W2 surprise (Vue dashboard
+port) landed, we decided the per-chart embed was "dangerously wrong" —
+a top-level co-pilot drawer in the new dashboard is the correct
+placement, and the live MVP surface moved to `vue-ui/` accordingly. From
+that point the legacy panel was deprecated but still wired in.
+
+**The 2026-05-08 code review.** A code review on 2026-05-08 surfaced
+that the legacy panel still had latent bugs: the upload path
+hard-coded `doc_type=intake_form` (so a lab PDF dropped into the panel
+would route through the intake schema and silently mis-extract), and
+the citation-overlay-to-document plumbing the panel needed had never
+been finished. Two paths: fix the bugs, or delete the surface. With
+~36h to the deadline and the Vue dashboard already serving every demo
+path, fixing dead code is pure carrying cost.
+
+**Decision: yank it.** Removed the legacy panel surface in one atomic
+commit (`chore/yank-legacy-agent-panel`):
+
+- **Legacy JS panel + Twig template:** `public/js/agent_panel.js`,
+  `public/js/citation_overlay.js`,
+  `templates/agent_panel.html.twig` — the user-facing UI surface.
+- **Panel-only PHP routes + controllers:** `public/turn.php`,
+  `public/upload_document.php`, `src/Controllers/AgentProxyController.php`,
+  `src/Controllers/UploadDocumentController.php` — the chat-turn and
+  document-upload entry points the panel posted to.
+- **Bootstrap class:** `src/Bootstrap.php` — the event subscriber that
+  rendered the panel on the patient summary; `openemr.bootstrap.php`
+  now only registers the PSR-4 namespace (still required to autoload
+  the `Internal*` controllers from `public/internal/*.php`).
+- **Panel tests:** `tests/js/agent_panel*.test.js`,
+  `tests/js/citation_overlay.test.js`, plus the three isolated PHP
+  tests (`AgentProxyControllerTest`, `UploadDocumentControllerTest`,
+  `BootstrapTest`).
+
+Doc fallout: `deploy/apache-agentforge.conf` lost its `/agentforge/turn`
+clean-URL Alias (the `LocationMatch` ACL on `internal/*` stayed —
+that's still defending the live BFF path); `deploy/README.md`,
+`README.md`, `public/index.php`, `.env.example`, and
+`docs/DEPLOYMENT.md` lost their references to the panel surface and
+were re-pointed at the Vue dashboard where appropriate.
+
+**What remains.** The live MVP path is unchanged:
+
+- `vue-ui/` — the Vue dashboard, hosted same-origin as OpenEMR on
+  `:9300/dashboard/`, where the AgentForge co-pilot drawer lives.
+- `sidecar/` — the FastAPI + LangGraph orchestrator the dashboard
+  talks to.
+- `interface/modules/custom_modules/oe-module-agentforge/public/internal/*.php`
+  + `src/Controllers/Internal*.php` — the JWT-authed inbound endpoints
+  the sidecar calls into for FHIR/clinical data and intake/lab
+  persistence. These were never touched by the panel cleanup.
+
+**What we learned.** Once a placement decision is made, the deprecated
+surface is carrying cost — both maintenance (PHPStan/PHPCS need to keep
+seeing it clean) and review attention (the 2026-05-08 review burned
+cycles on dead code). Deleting deprecated surfaces immediately, the
+same day the placement flips, would have saved that round-trip.
+Kept here as a reminder for future placement pivots.
+
+**Alternatives considered.**
+
+- **Fix the panel's bugs and keep it as a fallback UI.** Punted: no
+  current demo path uses the panel, the Vue dashboard is already the
+  live surface, and "ship a redundant UI before the deadline" is
+  pure carrying cost.
+- **Move the legacy files to an `archive/` directory instead of
+  deleting.** Punted: git history preserves them; an archive directory
+  invites resurrection and confuses static analysis.
+
+---
+
 ## 2026-05-08 — Guideline-RAG opt-in is a chat-composer toggle, not auto-detection
 
 **Plan:** P4 punch-list bug 2 said "the dashboard guideline RAG is

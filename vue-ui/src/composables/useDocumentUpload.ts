@@ -5,23 +5,18 @@ import { ref, type Ref } from 'vue'
  *
  * The clinician picks a PDF (or image) from the chat composer's file
  * picker; this composable POSTs the bytes to the BFF, which in turn
- * brokers the OpenEMR session-authenticated upload + audit
- * (:class:`UploadDocumentController`). The successful response carries
- * a numeric ``document_id``; the dashboard surfaces it as a string so
- * downstream code does not have to think about JSON-number rounding
- * for IDs that happen to fit in a double.
+ * brokers the JWT-authed upload + audit into OpenEMR (the
+ * :class:`InternalUploadDocumentController` PHP entry point). The
+ * successful response carries a numeric ``document_id``; the dashboard
+ * surfaces it as a string so downstream code does not have to think
+ * about JSON-number rounding for IDs that happen to fit in a double.
  *
- * **Why we go via the BFF, not directly to OpenEMR.** OpenEMR's
- * `/agentforge/upload_document` route is session-authenticated against
- * the OpenEMR PHP session cookie. The vue-ui SPA holds only the BFF's
- * HttpOnly cookie — the OpenEMR session cookie lives at a different
- * origin (the OpenEMR PHP host) and is not in the SPA's cookie jar in
- * dev or production. The BFF endpoint at ``/api/agent/upload`` is
- * therefore expected to either (a) re-authenticate the session via the
- * existing internal-JWT bridge and call OpenEMR's upload route
- * server-side, or (b) speak directly to the document store using the
- * same writer the PHP route uses. Either way, the SPA never has to
- * surface the OpenEMR session cookie.
+ * **Why we go via the BFF, not directly to OpenEMR.** The vue-ui SPA
+ * holds only the BFF's HttpOnly cookie. The BFF mints a short-lived
+ * internal JWT (with the resolved patient_id baked in) and forwards
+ * the multipart payload to ``InternalUploadDocumentController`` over
+ * the docker network. The SPA never has to surface OpenEMR-specific
+ * session credentials.
  *
  * **No PHI in browser storage.** The composable does not persist the
  * file or any returned id. It returns the ``document_id`` to the

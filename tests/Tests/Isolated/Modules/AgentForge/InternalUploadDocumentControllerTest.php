@@ -33,7 +33,7 @@ use Symfony\Component\HttpFoundation\Request;
 /**
  * Behavior tests for InternalUploadDocumentController (T38.15).
  *
- * The controller is the JWT-authed sibling of UploadDocumentController:
+ * The controller is the sidecar-facing JWT-authed upload entry point:
  * the BFF (sidecar) forwards a user-bound internal JWT plus a
  * ``patient_uuid`` multipart field, and we resolve the UUID against
  * :class:`PatientPidRepository`, then enforce that the resolved pid
