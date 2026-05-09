@@ -776,11 +776,11 @@ Things explicitly **not** shipped, with the rationale for each:
 | 38.4 — Allergies card | done |
 | 38.5 — Problem List card | done |
 | 38.6 — Medications card | done |
-| 38.7 — Prescriptions card | done |
-| 38.8 — Care Team card | done |
-| 38.9 — Lab Results card (bonus) | done |
+| 38.7 — Prescriptions card | deferred (subsumed by `MedicationsCard` filtering `MedicationRequest` by status; no separate prescriptions surface shipped) |
+| 38.8 — Care Team card | deferred (Synthea-imported demo personas have empty CareTeam tables — no data to render; tracked as Taskmaster #39) |
+| 38.9 — Lab Results card (bonus) | done — `LabsCard.vue` plus `VitalsStrip` + `EncountersCard` ride-alongs |
 | 38.10 — AgentForge drawer | done |
 | 38.11 — Citation overlay re-port | done |
 | 38.12 — Intake review form + FHIR commit | done |
-| 38.13 — This document | in progress |
+| 38.13 — This document | done |
 | 38.14 — Deploy to droplet | done |
