@@ -179,4 +179,66 @@ describe('useAgentTurn', () => {
 
     expect('extraction' in result).toBe(false)
   })
+
+  // P4 — bug 1 (doc_type) + bug 2 (evidence_query): the BFF accepts both
+  // optional fields but the client never sent them. The composable now
+  // forwards each only when the caller passes a value; omission keeps
+  // the existing chart-Q&A path untouched.
+
+  it('forwards doc_type when supplied', async () => {
+    const { calls, respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({
+      message: 'extract this',
+      patient_uuid: 'p1',
+      document_id: '42',
+      doc_type: 'lab_pdf',
+    })
+    respond({ reply: 'ok', citations: [] })
+    await promise
+
+    const body = parseBody(calls[0]!.init)
+    expect(body.doc_type).toBe('lab_pdf')
+  })
+
+  it('omits doc_type by default', async () => {
+    const { calls, respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'hi', patient_uuid: 'p1' })
+    respond({ reply: 'ok', citations: [] })
+    await promise
+
+    const body = parseBody(calls[0]!.init)
+    expect('doc_type' in body).toBe(false)
+  })
+
+  it('forwards evidence_query when supplied', async () => {
+    const { calls, respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({
+      message: 'How should I manage CKD stage 3?',
+      patient_uuid: 'p1',
+      evidence_query: 'How should I manage CKD stage 3?',
+    })
+    respond({ reply: 'guidelines say...', citations: [] })
+    await promise
+
+    const body = parseBody(calls[0]!.init)
+    expect(body.evidence_query).toBe('How should I manage CKD stage 3?')
+  })
+
+  it('omits evidence_query by default', async () => {
+    const { calls, respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'hi', patient_uuid: 'p1' })
+    respond({ reply: 'ok', citations: [] })
+    await promise
+
+    const body = parseBody(calls[0]!.init)
+    expect('evidence_query' in body).toBe(false)
+  })
 })

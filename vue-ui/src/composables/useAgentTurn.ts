@@ -4,6 +4,7 @@ import {
   parseIntakeExtraction,
   type IntakeExtraction,
 } from './parseIntakeExtraction'
+import type { DocumentType } from './useDocumentUpload'
 
 // Wave 3 wiring: replaces vue-ui's canned typewriter with the real BFF
 // `/api/agent/turn` round-trip. The sidecar owns identity, JWT minting,
@@ -85,6 +86,41 @@ export interface AgentTurnRequest {
    * this id.
    */
   document_id?: string
+  /**
+   * Optional vision-extractor dispatch hint paired with ``document_id``.
+   *
+   * - ``'intake_form'`` → BFF graph routes through ``INTAKE_CONTRACT``
+   *   (the demo's primary path).
+   * - ``'lab_pdf'`` → BFF graph routes through ``LAB_CONTRACT``.
+   *
+   * Omitted when no document is attached, or when the caller wants the
+   * BFF default (``intake_form``). The dashboard derives this from the
+   * filename via :func:`inferDocType` at upload time and stamps it on
+   * the {@link PendingAttachment}; the store then forwards it here.
+   *
+   * See ``sidecar/src/agentforge/dashboard_auth/turn_route.py``
+   * (``AgentTurnRequest.doc_type``) for the BFF contract.
+   */
+  doc_type?: DocumentType
+  /**
+   * Optional free-text guideline question. When non-empty, the BFF's
+   * W2 graph routes the turn to the evidence retriever node (RAG over
+   * clinical guidelines) and produces guideline citations alongside
+   * the assistant reply.
+   *
+   * Empty / omitted is the chart-Q&A path: the W2 graph falls back to
+   * the W1 iterative loop and never fires the retriever, so chart-only
+   * questions don't pay the RAG round-trip.
+   *
+   * The dashboard exposes this via the "Ask guidelines" toggle in the
+   * chat composer (``useAgentForgeStore.guidelineMode``); when on, the
+   * store forwards the user's message verbatim as both ``message`` and
+   * ``evidence_query``.
+   *
+   * See ``sidecar/src/agentforge/dashboard_auth/turn_route.py``
+   * (``AgentTurnRequest.evidence_query``) for the BFF contract.
+   */
+  evidence_query?: string
 }
 
 /**
@@ -183,6 +219,12 @@ export function useAgentTurn(): UseAgentTurn {
     }
     if (req.document_id !== undefined) {
       body.document_id = req.document_id
+    }
+    if (req.doc_type !== undefined) {
+      body.doc_type = req.doc_type
+    }
+    if (req.evidence_query !== undefined) {
+      body.evidence_query = req.evidence_query
     }
 
     const controller = new AbortController()

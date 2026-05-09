@@ -2,25 +2,8 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import {
-  useDocumentUpload,
-  type DocumentType,
-} from '@/composables/useDocumentUpload'
-
-/**
- * Filename → BFF doc_type heuristic.
- *
- * The BFF route's `_ALLOWED_DOC_TYPES` is currently `{lab_pdf,
- * intake_form}`. The picker in the composer is doc-type-agnostic, so
- * we sniff the filename for lab markers; everything else falls back to
- * intake_form (the demo's primary path). This is a deliberate
- * shortcut — a future iteration will surface a doc-type select next
- * to the attach button.
- */
-const _LAB_FILENAME_PATTERN = /\b(lab|panel|cbc|cmp|lipid|hba1c|results?)\b/i
-function inferDocType(filename: string): DocumentType {
-  return _LAB_FILENAME_PATTERN.test(filename) ? 'lab_pdf' : 'intake_form'
-}
+import { inferDocType } from '@/composables/inferDocType'
+import { useDocumentUpload } from '@/composables/useDocumentUpload'
 import { useAgentForgeStore, type ChatMessage } from '@/stores/agentforge'
 
 import AgentMessage from './AgentMessage.vue'
@@ -169,7 +152,14 @@ async function onFileSelected(ev: Event): Promise<void> {
   try {
     const docType = inferDocType(file.name)
     const { document_id } = await uploadDocument(file, uuid, docType)
-    store.setPendingAttachment({ documentId: document_id, filename: file.name })
+    // The same ``docType`` rides one chat turn as ``doc_type`` so the
+    // BFF graph dispatches the extractor on the right schema (lab vs
+    // intake). Without this, lab PDFs silently default to intake.
+    store.setPendingAttachment({
+      documentId: document_id,
+      filename: file.name,
+      docType,
+    })
     uploadError.value = null
   } catch (caught) {
     uploadError.value
@@ -181,6 +171,14 @@ async function onFileSelected(ev: Event): Promise<void> {
 
 function removePendingAttachment(): void {
   store.clearPendingAttachment()
+}
+
+function onGuidelineToggle(): void {
+  if (store.isSending) return
+  store.toggleGuidelineMode()
+  // Keep focus on the composer after toggling so the clinician can
+  // type their question without an extra click.
+  void nextTick(() => composerEl.value?.focus())
 }
 </script>
 
@@ -311,6 +309,24 @@ function removePendingAttachment(): void {
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
             <path d="M21 12.5 12.5 21a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 1 1-3-3L15 8.5" />
           </svg>
+        </button>
+
+        <button
+          type="button"
+          :class="[
+            'shrink-0 rounded-md px-2 py-1 text-[11px] font-medium uppercase tracking-wide transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50',
+            store.guidelineMode
+              ? 'bg-primary-600 text-white hover:bg-primary-700'
+              : 'bg-transparent text-ink-muted hover:bg-surface hover:text-ink',
+          ]"
+          :aria-pressed="store.guidelineMode ? 'true' : 'false'"
+          :aria-label="store.guidelineMode ? 'Guidelines mode on (toggle off)' : 'Ask guidelines (toggle on)'"
+          :title="store.guidelineMode ? 'Guidelines mode on — your message also runs against the guideline RAG.' : 'Toggle to ask a clinical-guideline question; the next turn will retrieve and cite guidelines.'"
+          :disabled="store.isSending"
+          data-test="guideline-toggle"
+          @click="onGuidelineToggle"
+        >
+          Guidelines
         </button>
 
         <textarea

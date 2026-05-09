@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useAgentTurn, type Citation } from '@/composables/useAgentTurn'
+import type { DocumentType } from '@/composables/useDocumentUpload'
 
 /**
  * AgentForge co-pilot store (Wave 3 — real /api/agent/turn wiring).
@@ -162,10 +163,16 @@ const ERROR_FALLBACK_TEXT
  * In-memory state for an attachment the clinician has uploaded but not
  * yet sent with a chat message. Held in component-light store state
  * (no persistence — by design, per the no-PHI-in-storage rule).
+ *
+ * ``docType`` is set at upload time from the filename heuristic
+ * (:func:`inferDocType`); the store forwards it as ``doc_type`` on the
+ * next turn so the BFF graph dispatches lab PDFs through
+ * ``LAB_CONTRACT`` rather than silently defaulting them to intake.
  */
 export interface PendingAttachment {
   readonly documentId: string
   readonly filename: string
+  readonly docType: DocumentType
 }
 
 export const useAgentForgeStore = defineStore('agentforge', () => {
@@ -185,6 +192,18 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
    * persisted — this is transient session state by design.
    */
   const pendingAttachment = ref<PendingAttachment | null>(null)
+  /**
+   * "Ask guidelines" mode. When ``true``, ``sendMessage`` mirrors the
+   * user's text into ``evidence_query`` so the BFF's W2 graph fires
+   * the evidence retriever (RAG over clinical guidelines). When
+   * ``false`` we send only ``message``; the orchestrator falls back to
+   * the W1 iterative chart-Q&A loop and the retriever stays cold —
+   * cheaper and faster for chart questions that don't need guidelines.
+   *
+   * Driven from the toggle next to the attach button in
+   * ``AgentChatPane``.
+   */
+  const guidelineMode = ref<boolean>(false)
 
   // useRoute() is safe in setup-store callbacks because the store is
   // instantiated lazily by Pinia — by the time a component calls
@@ -335,7 +354,13 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
           : {}),
         session_id: conv.id,
         ...(attachmentForTurn !== null
-          ? { document_id: attachmentForTurn.documentId }
+          ? {
+              document_id: attachmentForTurn.documentId,
+              doc_type: attachmentForTurn.docType,
+            }
+          : {}),
+        ...(guidelineMode.value
+          ? { evidence_query: trimmed }
           : {}),
       })
       const assistantMsg: ChatMessage = {
@@ -378,6 +403,14 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
     pendingAttachment.value = null
   }
 
+  function setGuidelineMode(on: boolean): void {
+    guidelineMode.value = on
+  }
+
+  function toggleGuidelineMode(): void {
+    guidelineMode.value = !guidelineMode.value
+  }
+
   return {
     conversations,
     sortedConversations,
@@ -386,11 +419,14 @@ export const useAgentForgeStore = defineStore('agentforge', () => {
     messages,
     isSending,
     pendingAttachment,
+    guidelineMode,
     hydrate,
     newConversation,
     selectConversation,
     sendMessage,
     setPendingAttachment,
     clearPendingAttachment,
+    setGuidelineMode,
+    toggleGuidelineMode,
   }
 })
