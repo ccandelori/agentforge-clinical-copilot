@@ -39,6 +39,7 @@ def _starter_state(query: str = "") -> AgentState:
         query=query,
         langfuse_trace=None,
         last_node=HANDOFF_START_NODE,
+        doc_type=None,
     )
 
 

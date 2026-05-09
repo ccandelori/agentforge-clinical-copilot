@@ -57,6 +57,7 @@ from agentforge.rag.evidence_retriever import RetrievalStats
 from agentforge.rag.types import RetrievalResult
 from agentforge.schemas.citation import Citation as W2Citation
 from agentforge.schemas.intake import IntakeFormExtraction
+from agentforge.schemas.lab import LabPdfExtraction
 from agentforge.tools.attach_and_extract import (
     RenderedPage,
     VisionExtractionResult,
@@ -102,6 +103,24 @@ class RouteDecision(StrEnum):
     SYNTHESIZE = "synthesize"
 
 
+class DocumentType(StrEnum):
+    """Closed set of vision-extractable document types (P1.2).
+
+    The upload path (T38.15) accepts both intake forms and lab PDFs,
+    but each routes through a distinct ``VisionContract`` — different
+    tool name, different schema, different system prompt. The doc_type
+    rides on the turn body so ``intake_extractor_node`` can dispatch
+    to the matching extractor instance built at app startup.
+
+    String values match the wire format exposed via ``AgentTurnRequest``
+    so Pydantic round-trips request bodies through this enum without a
+    separate translation layer.
+    """
+
+    INTAKE_FORM = "intake_form"
+    LAB_PDF = "lab_pdf"
+
+
 class AgentState(TypedDict):
     """Shared state threaded through every node in the graph.
 
@@ -142,7 +161,7 @@ class AgentState(TypedDict):
     route_decision: RouteDecision | None
     route_reason: str
     iteration: int
-    extraction_result: IntakeFormExtraction | None
+    extraction_result: IntakeFormExtraction | LabPdfExtraction | None
     evidence_chunks: list[RetrievalResult]
     document_id: int | None
     patient_id: int | None
@@ -150,6 +169,10 @@ class AgentState(TypedDict):
     query: str
     langfuse_trace: TraceHandle | None
     last_node: str
+    # P1.2: which vision contract to dispatch the PDF through.
+    # ``None`` defaults to INTAKE_FORM for back-compat with callers
+    # that haven't been updated to send the field.
+    doc_type: DocumentType | None
 
 
 class _PlannerLike(Protocol):
@@ -164,7 +187,7 @@ class _PlannerLike(Protocol):
 
 class _VisionExtractorLike(Protocol):
     """Subset of ``VisionExtractor[IntakeFormExtraction]`` consumed
-    by ``intake_extractor_node``.
+    by ``intake_extractor_node`` for the intake-form contract.
 
     The ``trace`` kwarg is optional so the node can hand the per-turn
     Langfuse handle through; the extractor uses it (when wired with
@@ -180,6 +203,30 @@ class _VisionExtractorLike(Protocol):
         patient_id: int,
         trace: TraceHandle | None = None,
     ) -> VisionExtractionResult[IntakeFormExtraction]: ...
+
+
+class _LabVisionExtractorLike(Protocol):
+    """Subset of ``VisionExtractor[LabPdfExtraction]`` consumed by
+    ``intake_extractor_node`` when ``state["doc_type"] == LAB_PDF``.
+
+    Same shape as :class:`_VisionExtractorLike` but bound to the lab
+    schema so the dispatch site's return type narrows correctly. The
+    ``trace`` kwarg matches the intake protocol so lab extractions emit
+    the same per-call ``record_extraction_call`` Langfuse span when the
+    extractor is wired with a ``LangfuseClient``. The node name stays
+    ``intake-extractor`` for now to avoid churning the LangGraph wiring;
+    rename to a neutral ``vision-extractor`` is a follow-up if/when more
+    contracts land.
+    """
+
+    async def extract(
+        self,
+        *,
+        pages: list[RenderedPage],
+        document_id: int,
+        patient_id: int,
+        trace: TraceHandle | None = None,
+    ) -> VisionExtractionResult[LabPdfExtraction]: ...
 
 
 class _EvidenceRetrieverLike(Protocol):
@@ -361,19 +408,29 @@ def _maybe_record_handoff(
 async def intake_extractor_node(
     state: AgentState,
     extractor: _VisionExtractorLike,
+    *,
+    lab_extractor: _LabVisionExtractorLike | None = None,
 ) -> dict[str, Any]:
-    """Drive the intake-form vision extraction.
+    """Drive the vision-extraction step against the appropriate contract.
 
-    Hands the rendered pages + identifier triple to
-    ``VisionExtractor.extract`` and writes the validated
-    ``IntakeFormExtraction`` into ``state["extraction_result"]``.
+    P1.2: dispatches on ``state["doc_type"]`` so a lab PDF routes through
+    ``LAB_CONTRACT`` (``lab_extractor``) and an intake form routes through
+    ``INTAKE_CONTRACT`` (``extractor``). ``state["doc_type"] is None``
+    defaults to the intake path for back-compat with callers that don't
+    yet send the field.
 
-    Idempotent: returns an empty update without calling the extractor
+    Hands the rendered pages + identifier triple to the chosen extractor
+    and writes the validated extraction into
+    ``state["extraction_result"]``. The state field's union type
+    (``IntakeFormExtraction | LabPdfExtraction | None``) lets downstream
+    nodes (synthesizer, terminal) treat the value as opaque
+    ``BaseModel`` for ``model_dump_json``-style consumers.
+
+    Idempotent: returns an empty update without calling either extractor
     when (a) extraction has already run this turn, (b) no pages are
-    attached, or (c) document_id / patient_id are missing. The
-    supervisor's loop-back means a worker can be re-entered up to
-    MAX_ITERATIONS times, so we must not duplicate the (expensive)
-    Anthropic call.
+    attached, (c) document_id / patient_id are missing, or (d)
+    ``doc_type == LAB_PDF`` but ``lab_extractor`` is None (clean fail-skip
+    rather than silently misrouting through the intake contract).
 
     Always stamps ``last_node`` so the next supervisor pass can populate
     ``from_node`` on its handoff span — even on the no-op short-circuit
@@ -391,13 +448,27 @@ async def intake_extractor_node(
     if document_id is None or patient_id is None:
         return last_node_update
 
-    result = await extractor.extract(
+    doc_type = state.get("doc_type")
+    if doc_type is DocumentType.LAB_PDF:
+        if lab_extractor is None:
+            return last_node_update
+        lab_result = await lab_extractor.extract(
+            pages=state["pdf_pages"],
+            document_id=document_id,
+            patient_id=patient_id,
+            trace=state.get("langfuse_trace"),
+        )
+        return {**last_node_update, "extraction_result": lab_result.extraction}
+
+    # doc_type is INTAKE_FORM or None — both go through the intake
+    # contract. Explicit branch keeps mypy's union narrowing happy.
+    intake_result = await extractor.extract(
         pages=state["pdf_pages"],
         document_id=document_id,
         patient_id=patient_id,
         trace=state.get("langfuse_trace"),
     )
-    return {**last_node_update, "extraction_result": result.extraction}
+    return {**last_node_update, "extraction_result": intake_result.extraction}
 
 
 async def evidence_retriever_node(
@@ -501,8 +572,13 @@ def _build_synthesis_context_block(state: AgentState) -> str | None:
 
     extraction = state["extraction_result"]
     if extraction is not None:
+        label = (
+            "EXTRACTED LAB DATA"
+            if isinstance(extraction, LabPdfExtraction)
+            else "EXTRACTED INTAKE DATA"
+        )
         sections.append(
-            "EXTRACTED INTAKE DATA:\n" + extraction.model_dump_json(indent=2)
+            f"{label}:\n" + extraction.model_dump_json(indent=2)
         )
 
     chunks = state["evidence_chunks"]
@@ -727,6 +803,13 @@ def build_w2_citation_index(state: AgentState) -> CitationIndex:
     return CitationIndex(records=records)
 
 
+def _walk_lab_extraction_citations(
+    extraction: LabPdfExtraction,
+) -> Iterable[W2Citation]:
+    for value in extraction.values:
+        yield value.citation
+
+
 def _register_w2_citation(
     records: dict[CitationKey, dict[str, Any]],
     citation: W2Citation,
@@ -736,8 +819,11 @@ def _register_w2_citation(
 
 
 def _walk_extraction_citations(
-    extraction: IntakeFormExtraction,
+    extraction: IntakeFormExtraction | LabPdfExtraction,
 ) -> Iterable[W2Citation]:
+    if isinstance(extraction, LabPdfExtraction):
+        yield from _walk_lab_extraction_citations(extraction)
+        return
     if extraction.chief_concern_citation is not None:
         yield extraction.chief_concern_citation
     for demo in extraction.demographics:
@@ -829,6 +915,7 @@ def build_graph(
     planner: _PlannerLike,
     *,
     vision_extractor: _VisionExtractorLike | None = None,
+    vision_extractor_lab: _LabVisionExtractorLike | None = None,
     evidence_retriever: _EvidenceRetrieverLike | None = None,
     synthesis_llm: _SynthesisLLMLike | None = None,
     domain_checker: DomainConstraintChecker | None = None,
@@ -844,6 +931,14 @@ def build_graph(
     is optional — when None, the corresponding worker is wired as a
     no-op pass-through. This preserves earlier MR behavior for
     callers that haven't wired the new dependency yet.
+
+    ``vision_extractor`` is the intake-form contract (back-compat default).
+    ``vision_extractor_lab`` is the lab-PDF contract added in P1.2; the
+    intake-extractor node dispatches on ``state["doc_type"]`` to pick
+    one. Built as separate kwargs (not a single ``dict[DocumentType, ...]``)
+    because the extractor map only ever has two entries today and the
+    legacy ``vision_extractor`` kwarg is already wired through several
+    callers (production main.py + the test suite).
 
     ``domain_checker`` is consumed by ``terminal_node``'s embedded
     ``StreamingVerifier``. When None, the verifier passes
@@ -871,7 +966,11 @@ def build_graph(
     async def _intake_extractor(state: AgentState) -> dict[str, Any]:
         if vision_extractor is None:
             return {"last_node": RouteDecision.INTAKE_EXTRACTOR.value}
-        return await intake_extractor_node(state, vision_extractor)
+        return await intake_extractor_node(
+            state,
+            vision_extractor,
+            lab_extractor=vision_extractor_lab,
+        )
 
     async def _evidence_retriever(state: AgentState) -> dict[str, Any]:
         if evidence_retriever is None:

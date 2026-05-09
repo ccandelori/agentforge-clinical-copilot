@@ -198,6 +198,7 @@ class SupervisorAdapter:
             "query": evidence_query,
             "langfuse_trace": None,
             "last_node": HANDOFF_START_NODE,
+            "doc_type": None,
         }
 
         result = await graph.ainvoke(state)

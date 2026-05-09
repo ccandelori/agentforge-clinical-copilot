@@ -376,6 +376,7 @@ def _starter_state_with_tool_results(
         query="",
         langfuse_trace=None,
         last_node=HANDOFF_START_NODE,
+        doc_type=None,
     )
 
 

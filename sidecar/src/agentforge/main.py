@@ -80,6 +80,7 @@ from agentforge.timeouts import TimeoutPolicy
 from agentforge.tools.allergies import AllergiesFetcher
 from agentforge.tools.attach_and_extract import (
     INTAKE_CONTRACT,
+    LAB_CONTRACT,
     PdfRenderer,
     RenderedPage,
     VisionExtractor,
@@ -365,6 +366,7 @@ def create_app(
     pdf_renderer: PdfRenderer | None = None,
     document_bytes_fetcher: DocumentBytesFetcher | None = None,
     vision_extractor: VisionExtractor[Any] | None = None,
+    vision_extractor_lab: VisionExtractor[Any] | None = None,
     evidence_retriever: EvidenceRetriever | None = None,
     agent_graph: _AgentGraphLike | None = None,
 ) -> FastAPI:
@@ -575,18 +577,36 @@ def create_app(
     # would crash. Surfacing the absence as ``None`` here means the
     # graph's intake-extractor node degrades to a clean no-op for
     # local-dev / test runs that have no key.
+    #
+    # P1.2: build TWO extractors (intake + lab) sharing one
+    # ``AsyncAnthropic`` client. The graph's intake-extractor node
+    # dispatches on ``state["doc_type"]`` to pick which contract runs.
+    # Build sites are cheap — both contracts are module-level constants
+    # and the SDK client is lazy on first request — so ``None``
+    # short-circuits remain accurate for keyless local-dev.
     vision_extractor_instance = vision_extractor
-    if vision_extractor_instance is None and settings.anthropic_api_key:
-        vision_extractor_instance = VisionExtractor(
-            contract=INTAKE_CONTRACT,
-            client=AsyncAnthropic(api_key=settings.anthropic_api_key),
-            # P2-3: wire the Langfuse client so every successful and
-            # failed extract emits a ``record_extraction_call`` span.
-            # The extractor short-circuits to a no-op when called with
-            # no per-turn trace handle, so this is safe even on the
-            # NullLangfuseClient path.
-            langfuse=langfuse,
-        )
+    vision_extractor_lab_instance = vision_extractor_lab
+    if (
+        vision_extractor_instance is None or vision_extractor_lab_instance is None
+    ) and settings.anthropic_api_key:
+        shared_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        if vision_extractor_instance is None:
+            vision_extractor_instance = VisionExtractor(
+                contract=INTAKE_CONTRACT,
+                client=shared_client,
+                # P2-3: wire the Langfuse client so every successful and
+                # failed extract emits a ``record_extraction_call`` span.
+                # The extractor short-circuits to a no-op when called with
+                # no per-turn trace handle, so this is safe even on the
+                # NullLangfuseClient path.
+                langfuse=langfuse,
+            )
+        if vision_extractor_lab_instance is None:
+            vision_extractor_lab_instance = VisionExtractor(
+                contract=LAB_CONTRACT,
+                client=shared_client,
+                langfuse=langfuse,
+            )
 
     # EvidenceRetriever build is gated on the feature flag + corpus
     # presence (see ``_build_evidence_retriever``). Tests pass
@@ -611,6 +631,7 @@ def create_app(
             build_graph(
                 planner_instance,
                 vision_extractor=vision_extractor_instance,
+                vision_extractor_lab=vision_extractor_lab_instance,
                 evidence_retriever=evidence_retriever_instance,
                 synthesis_llm=llm,
                 truncator=truncator_instance,
