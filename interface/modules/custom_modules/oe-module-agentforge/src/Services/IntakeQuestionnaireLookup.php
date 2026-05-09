@@ -33,6 +33,26 @@ readonly class IntakeQuestionnaireLookup
 {
     public const CANONICAL_URL = 'https://agentforge.openemr.org/Questionnaire/intake-form';
 
+    /**
+     * FHIR R4 logical id for the AgentForge intake-form Questionnaire.
+     *
+     * Stored on `questionnaire_repository.questionnaire_id` by the
+     * Version20260505000001 seed migration, and copied onto every
+     * `questionnaire_response.questionnaire_id` row written by the
+     * intake persistence flow so FHIR clients resolve the canonical
+     * `Questionnaire/{id}` reference correctly.
+     *
+     * Constraints (FHIR R4 §id grammar): alphanumeric + hyphens, max
+     * 64 chars. Deliberately no version suffix — versioning, when it
+     * arrives, gets a fresh seeded row with its own id (e.g.
+     * `agentforge-intake-form-v2`) rather than mutating this one.
+     *
+     * Constant exists at the class level so the seed migration, the
+     * lookup's NULL-fallback path, and the writer all share a single
+     * source of truth.
+     */
+    public const QUESTIONNAIRE_ID = 'agentforge-intake-form';
+
     public function __construct(
         private Connection $connection,
     ) {
@@ -41,7 +61,7 @@ readonly class IntakeQuestionnaireLookup
     public function findCanonicalQuestionnaire(): ?SeededIntakeQuestionnaire
     {
         $row = $this->connection->fetchAssociative(
-            'SELECT id, name, questionnaire FROM questionnaire_repository '
+            'SELECT id, name, questionnaire, questionnaire_id FROM questionnaire_repository '
             . 'WHERE source_url = :url LIMIT 1',
             ['url' => self::CANONICAL_URL],
         );
@@ -60,9 +80,18 @@ readonly class IntakeQuestionnaireLookup
             ? $row['questionnaire']
             : '';
 
+        // The seed migration in production may pre-date this fix and
+        // leave questionnaire_id NULL on the existing droplet row.
+        // Falling back to the canonical constant keeps the persistence
+        // flow working without forcing a coordinated data-fix step.
+        $questionnaireId = isset($row['questionnaire_id']) && is_string($row['questionnaire_id']) && $row['questionnaire_id'] !== ''
+            ? $row['questionnaire_id']
+            : self::QUESTIONNAIRE_ID;
+
         return new SeededIntakeQuestionnaire(
             id: $id,
             name: $name,
+            questionnaireId: $questionnaireId,
             questionnaireJson: $questionnaireJson,
         );
     }

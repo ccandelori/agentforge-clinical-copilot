@@ -48,17 +48,32 @@ interface IntakeQuestionnaireResponsePersister
      * Persist a FHIR R4 QuestionnaireResponse for a patient and return
      * the new resource's logical id.
      *
-     * @param array<array-key, mixed> $questionnaireResponse FHIR R4 JSON
-     * @param int                     $patientId             Internal patient pid
-     * @param string                  $questionnaireJson     Serialized canonical
-     *                                                       Questionnaire (the
-     *                                                       row's source-of-truth
-     *                                                       schema column)
-     * @param string                  $questionnaireName     Human-readable name;
-     *                                                       used as the title
-     *                                                       fallback and the
-     *                                                       `questionnaire_name`
-     *                                                       column.
+     * @param array<array-key, mixed> $questionnaireResponse  FHIR R4 JSON
+     * @param int                     $patientId              Internal patient pid
+     * @param string                  $questionnaireJson      Serialized canonical
+     *                                                        Questionnaire (the
+     *                                                        row's source-of-truth
+     *                                                        schema column)
+     * @param string                  $questionnaireName      Human-readable name;
+     *                                                        used as the title
+     *                                                        fallback and the
+     *                                                        `questionnaire_name`
+     *                                                        column. NOT a valid
+     *                                                        FHIR resource id —
+     *                                                        keep separate from
+     *                                                        $questionnaireLogicalId.
+     * @param string                  $questionnaireLogicalId FHIR R4 `Questionnaire.id`
+     *                                                        (e.g. `agentforge-intake-form`).
+     *                                                        Forwarded as the legacy
+     *                                                        service's 7th positional
+     *                                                        `$q_id` so it lands in
+     *                                                        `questionnaire_response.questionnaire_id`
+     *                                                        and is used to construct
+     *                                                        the FHIR canonical URL
+     *                                                        `Questionnaire/{id}`.
+     *                                                        Must be alphanumeric +
+     *                                                        hyphen, max 64 chars
+     *                                                        (FHIR R4 §id grammar).
      *
      * @return string Newly assigned `response_id` (string-form UUID).
      */
@@ -67,5 +82,6 @@ interface IntakeQuestionnaireResponsePersister
         int $patientId,
         string $questionnaireJson,
         string $questionnaireName,
+        string $questionnaireLogicalId,
     ): string;
 }

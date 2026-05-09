@@ -45,10 +45,18 @@ use PHPUnit\Framework\TestCase;
  *
  * These tests verify:
  *   1. `insert()` calls the persister exactly once with the right shape
- *   2. The narrative-generation flag is set so the saved row carries
- *      the rendered HTML report (the overlay UI reads this)
- *   3. The returned response_id round-trips out of the persister result
- *   4. Persister exceptions propagate (the controller catches at its
+ *   2. The FHIR Questionnaire logical id passes through verbatim — it
+ *      lands in the persister's `$questionnaireLogicalId` slot, the
+ *      production binding then forwards it as the legacy service's 7th
+ *      positional `$q_id` so it persists into
+ *      `questionnaire_response.questionnaire_id` (the column FHIR
+ *      clients use to resolve `Questionnaire/{id}`).
+ *   3. The display name and the logical id are kept distinct — the
+ *      previous version of this writer's persister passed the display
+ *      name as the legacy service's `$q_id`, which silently produced
+ *      `Questionnaire/AgentForge Intake Form` (broken FHIR canonical).
+ *   4. The returned response_id round-trips out of the persister result
+ *   5. Persister exceptions propagate (the controller catches at its
  *      layer; the writer must not swallow)
  */
 final class IntakeQuestionnaireResponseWriterTest extends TestCase
@@ -68,11 +76,17 @@ final class IntakeQuestionnaireResponseWriterTest extends TestCase
                 self::equalTo(42),
                 // $questionnaireJson: the canonical Questionnaire JSON,
                 // passed through.
-                self::equalTo('{"resourceType":"Questionnaire","id":"agentforge-intake"}'),
-                // $questionnaireName: the service uses this as both
-                // questionnaire_name and (when missing from the FHIR
-                // payload) the title.
+                self::equalTo('{"resourceType":"Questionnaire","id":"agentforge-intake-form"}'),
+                // $questionnaireName: human display name. Kept on the
+                // interface for narrative-fallback / logging purposes
+                // even though the production binding does not forward
+                // it to the legacy service (the service derives the
+                // row's name column from the canonical JSON's title).
                 self::equalTo('AgentForge Intake Form'),
+                // $questionnaireLogicalId: FHIR R4 Questionnaire.id —
+                // distinct from the display name, used to construct
+                // `Questionnaire/{id}` canonical references.
+                self::equalTo('agentforge-intake-form'),
             )
             ->willReturn('11111111-2222-3333-4444-555555555555');
 
@@ -81,16 +95,86 @@ final class IntakeQuestionnaireResponseWriterTest extends TestCase
         $responseId = $writer->insert(
             patientId: 42,
             questionnaireForeignId: 7,
+            questionnaireId: 'agentforge-intake-form',
             questionnaireName: 'AgentForge Intake Form',
             questionnaireResponse: [
                 'resourceType' => 'QuestionnaireResponse',
                 'status' => 'completed',
                 'item' => [],
             ],
-            questionnaireJson: '{"resourceType":"Questionnaire","id":"agentforge-intake"}',
+            questionnaireJson: '{"resourceType":"Questionnaire","id":"agentforge-intake-form"}',
         );
 
         self::assertSame('11111111-2222-3333-4444-555555555555', $responseId);
+    }
+
+    #[Test]
+    public function insertForwardsLogicalIdVerbatimToPersister(): void
+    {
+        // The load-bearing contract: whatever logical id the controller
+        // supplies (sourced from the seeded canonical Questionnaire row)
+        // must reach the persister untouched. No rewriting, no
+        // case-folding, no falling back to the display name.
+        //
+        // This guards against a future refactor that "helpfully"
+        // derives the id from the name — the previous bug shape.
+        $captured = null;
+        $persister = self::createMock(IntakeQuestionnaireResponsePersister::class);
+        $persister->method('save')
+            ->willReturnCallback(static function (
+                array $response,
+                int $patientId,
+                string $questionnaireJson,
+                string $questionnaireName,
+                string $questionnaireLogicalId,
+            ) use (&$captured): string {
+                $captured = $questionnaireLogicalId;
+                return 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+            });
+
+        $writer = new IntakeQuestionnaireResponseWriter($persister);
+
+        $writer->insert(
+            patientId: 1,
+            questionnaireForeignId: 7,
+            questionnaireId: 'agentforge-intake-form',
+            questionnaireName: 'AgentForge Intake Form',
+            questionnaireResponse: ['resourceType' => 'QuestionnaireResponse'],
+            questionnaireJson: '{}',
+        );
+
+        self::assertSame('agentforge-intake-form', $captured);
+    }
+
+    #[Test]
+    public function insertKeepsLogicalIdAndDisplayNameDistinct(): void
+    {
+        // Regression guard for the original P4 bug shape: the legacy
+        // QuestionnaireResponseService's 7th positional was being
+        // passed the display name ("AgentForge Intake Form"), which is
+        // not a valid FHIR resource id. The writer must hand the
+        // persister two separate values and not collapse them.
+        $persister = self::createMock(IntakeQuestionnaireResponsePersister::class);
+        $persister->expects(self::once())
+            ->method('save')
+            ->with(
+                self::anything(),
+                self::anything(),
+                self::anything(),
+                self::equalTo('AgentForge Intake Form'),     // display name
+                self::equalTo('agentforge-intake-form'),     // logical id
+            )
+            ->willReturn('dddddddd-dddd-dddd-dddd-dddddddddddd');
+
+        $writer = new IntakeQuestionnaireResponseWriter($persister);
+        $writer->insert(
+            patientId: 1,
+            questionnaireForeignId: 7,
+            questionnaireId: 'agentforge-intake-form',
+            questionnaireName: 'AgentForge Intake Form',
+            questionnaireResponse: ['resourceType' => 'QuestionnaireResponse'],
+            questionnaireJson: '{}',
+        );
     }
 
     #[Test]
@@ -104,6 +188,7 @@ final class IntakeQuestionnaireResponseWriterTest extends TestCase
         $responseId = $writer->insert(
             patientId: 1,
             questionnaireForeignId: 7,
+            questionnaireId: 'agentforge-intake-form',
             questionnaireName: 'AgentForge Intake Form',
             questionnaireResponse: ['resourceType' => 'QuestionnaireResponse'],
             questionnaireJson: '{}',
@@ -129,6 +214,7 @@ final class IntakeQuestionnaireResponseWriterTest extends TestCase
         $writer->insert(
             patientId: 1,
             questionnaireForeignId: 7,
+            questionnaireId: 'agentforge-intake-form',
             questionnaireName: 'AgentForge Intake Form',
             questionnaireResponse: ['resourceType' => 'QuestionnaireResponse'],
             questionnaireJson: '{}',

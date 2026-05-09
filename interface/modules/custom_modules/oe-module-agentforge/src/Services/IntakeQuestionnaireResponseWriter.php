@@ -35,7 +35,13 @@ namespace OpenEMR\Modules\AgentForge\Services;
  *
  * The current implementation routes through the OpenEMR-blessed entry
  * point via the {@see IntakeQuestionnaireResponsePersister} seam (see
- * that interface for why it exists).
+ * that interface for why it exists). The FHIR Questionnaire logical id
+ * (`questionnaire_repository.questionnaire_id`, separate from both the
+ * int FK and the human display name) is threaded explicitly through
+ * the writer signature so the persister can pass it as the legacy
+ * service's 7th positional `$q_id` — that argument is what populates
+ * `questionnaire_response.questionnaire_id` and constructs the FHIR
+ * canonical `Questionnaire/{id}` URL the overlay UI resolves.
  *
  * What this writer still does NOT do:
  *
@@ -59,19 +65,40 @@ readonly class IntakeQuestionnaireResponseWriter
     }
 
     /**
-     * @param array<string, mixed> $questionnaireResponse FHIR R4 JSON
-     * @param int $questionnaireForeignId Retained for backward
-     *        compatibility with the caller; the persister derives the
-     *        FK linkage from the canonical Questionnaire JSON, so this
-     *        value is currently unused but kept to preserve the
-     *        external API. Removing it would force a same-PR change to
-     *        the controller call site for no functional benefit.
+     * @param array<string, mixed> $questionnaireResponse  FHIR R4 JSON
+     * @param int                  $questionnaireForeignId Retained for backward
+     *                                                     compatibility with the caller;
+     *                                                     the persister derives the FK
+     *                                                     linkage from the canonical
+     *                                                     Questionnaire JSON, so this
+     *                                                     value is currently unused but
+     *                                                     kept to preserve the external
+     *                                                     API. Removing it would force
+     *                                                     a same-PR change to the
+     *                                                     controller call site for no
+     *                                                     functional benefit.
+     * @param string               $questionnaireId        FHIR R4 `Questionnaire.id`
+     *                                                     for the canonical AgentForge
+     *                                                     intake-form Questionnaire
+     *                                                     (e.g. `agentforge-intake-form`).
+     *                                                     Forwarded verbatim to the
+     *                                                     persister, where it lands in
+     *                                                     `questionnaire_response.questionnaire_id`
+     *                                                     and is used to construct the
+     *                                                     FHIR canonical URL the
+     *                                                     overlay UI follows. Distinct
+     *                                                     from $questionnaireName —
+     *                                                     the name is human-readable
+     *                                                     display ("AgentForge Intake
+     *                                                     Form") and not a valid FHIR
+     *                                                     resource id.
      *
      * @return string Newly assigned `response_id` (string-form UUID).
      */
     public function insert(
         int $patientId,
         int $questionnaireForeignId,
+        string $questionnaireId,
         string $questionnaireName,
         array $questionnaireResponse,
         string $questionnaireJson,
@@ -83,6 +110,7 @@ readonly class IntakeQuestionnaireResponseWriter
             $patientId,
             $questionnaireJson,
             $questionnaireName,
+            $questionnaireId,
         );
     }
 }

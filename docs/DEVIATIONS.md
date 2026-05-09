@@ -12,6 +12,111 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-08 — P4 questionnaire logical id; threaded through the P2.1 seam
+
+**Extends the P2.1 entry below.** P2.1 routed
+`IntakeQuestionnaireResponseWriter` through the
+`IntakeQuestionnaireResponsePersister` interface so the AgentForge
+intake-form write path goes through
+`OpenEMR\Services\QuestionnaireResponseService::saveQuestionnaireResponse()`.
+That fixed the event-firing and audit-user gaps but left the FHIR
+canonical reference broken: the production binding was passing the
+display name ("AgentForge Intake Form") as the legacy service's 7th
+positional `$q_id`, which lands in
+`questionnaire_response.questionnaire_id` and constructs the FHIR
+canonical URL `Questionnaire/{id}`. Display name is not a valid FHIR
+resource id (FHIR R4 §id forbids spaces), so the persisted reference
+was `Questionnaire/AgentForge Intake Form` — broken on every overlay-UI
+round-trip.
+
+**Punch-list claim.** "The AgentForge intake persister calls
+`saveQuestionnaireResponse()` and passes the display name as the 7th
+positional, which the service writes into
+`questionnaire_response.questionnaire_id`."
+
+**What I confirmed.** Read the legacy service implementation directly:
+`saveQuestionnaireResponse` lines 401, 443, and 467 — the 7th
+positional `$q_id` is exactly the FHIR `Questionnaire.id` slot; it
+falls back to the FHIR id parsed from the canonical Questionnaire JSON
+when null/empty, and otherwise lands verbatim in the
+`questionnaire_id` row column and the `Questionnaire/{q_id}` canonical
+URL. So the punch-list framing was right at the contract level. (My
+prior agent's branch on top of pre-P2.1 main found a different bug
+shape — the writer's *raw INSERT* was leaving `questionnaire_id` NULL,
+not putting the wrong value there. Same FHIR symptom, different cause.
+This rebase folds that work onto the P2.1 seam, where the bug shape
+matches the punch-list framing.)
+
+**Fix shape.** The logical id is now an explicit string threaded
+through three sites in lockstep:
+
+1. **Constant + DTO + lookup.** `IntakeQuestionnaireLookup::QUESTIONNAIRE_ID
+   = 'agentforge-intake-form'`. Kebab-cased, no version suffix, valid
+   FHIR R4 id. The trailing path of the pre-existing canonical URL
+   (`https://agentforge.openemr.org/Questionnaire/intake-form`) was
+   `intake-form`; I added the `agentforge-` prefix so the id is
+   namespace-distinguishable from any other module that picks the
+   same word. Versioning, when it arrives, gets a fresh seeded row
+   with its own id (`agentforge-intake-form-v2`) rather than mutating
+   this one. `SeededIntakeQuestionnaire` carries a new
+   `questionnaireId` field; `IntakeQuestionnaireLookup` reads it from
+   `questionnaire_repository.questionnaire_id` and falls back to the
+   constant when NULL (forward-compat for droplet rows that ran the
+   pre-fix seed).
+2. **Writer + persister interface.**
+   `IntakeQuestionnaireResponseWriter::insert()` takes a new
+   `questionnaireId: string` parameter. The
+   `IntakeQuestionnaireResponsePersister::save()` interface gains a
+   new `$questionnaireLogicalId` parameter at the end (additive to
+   the P2.1 contract).
+3. **Production binding.**
+   `QuestionnaireResponseServicePersister::save()` forwards
+   `$questionnaireLogicalId` as the 7th positional argument to the
+   legacy service. The display name (`$questionnaireName`) is no
+   longer passed to the legacy service at all — the service derives
+   `questionnaire_name` from the canonical JSON's `title` field
+   (lines 402-407), and shadowing that with a writer-supplied string
+   only produced inconsistency. The display name is kept on the
+   persister interface for narrative-fallback / logging symmetry.
+
+**Seed migration path.** The original `Version20260505000001` is
+already applied on the production droplet; Doctrine doesn't replay
+applied versions. New `Version20260508000001` migration backfills
+`questionnaire_id` on the existing canonical row (no-op when the
+column already matches). The original seed migration was also updated
+for fresh installs (sets `questionnaire_id` on first INSERT and during
+its idempotent UPDATE branch).
+
+**Test posture.** Three layers of coverage:
+
+- `IntakeQuestionnaireLookupTest` — verifies the lookup surfaces the
+  stored id and falls back to the constant when NULL.
+- `IntakeQuestionnaireResponseWriterTest` — verifies the writer
+  delegates to the persister with the logical id in the new slot,
+  forwards it verbatim, and keeps it distinct from the display name.
+- `QuestionnaireResponseServicePersisterTest` (new) — verifies the
+  production binding passes the logical id as the legacy service's
+  7th positional. Uses the `OPENEMR_STATIC_ANALYSIS` constant in
+  `setUp()` to make `BaseService`'s `code_types.inc.php` include
+  loadable in the isolated harness, matching the prior art in
+  `EncounterRestControllerTest`.
+
+**What we learned.** When a punch-list item describes the *symptom*
+(broken FHIR canonical reference) and presumes a specific *causal
+path* (legacy service invocation with a wrong positional arg), the
+"is the path even taken" question matters. On the pre-P2.1 codebase
+the writer wasn't going through the legacy service at all (raw
+INSERT), so the bug shape was different. P2.1's interface seam moved
+the codebase onto the path the punch-list assumed, which means this
+fix is the punch-list fix as originally framed: change which value
+lands in `$q_id`. Net effect on the wire: same row, correct value.
+
+(Supersedes my prior entry on `fix/p4-questionnaire-logical-id` — the
+prose above incorporates that branch's investigation log into the
+post-P2.1 shape.)
+
+---
+
 ## 2026-05-08 — Sidecar-initiated persistence after graph extraction (P1.1)
 
 **Plan:** Until this slice the W2 graph's intake/lab extraction lived

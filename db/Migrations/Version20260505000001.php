@@ -61,6 +61,18 @@ final class Version20260505000001 extends AbstractMigration
     private const QUESTIONNAIRE_TYPE = 'Questionnaire';
     private const QUESTIONNAIRE_STATUS = 'active';
 
+    /**
+     * FHIR R4 logical id for this Questionnaire. Stored on
+     * `questionnaire_repository.questionnaire_id` and copied onto every
+     * resulting `questionnaire_response.questionnaire_id` row so FHIR
+     * clients resolve `Questionnaire/{id}` correctly. Mirrors the
+     * `IntakeQuestionnaireLookup::QUESTIONNAIRE_ID` constant — both
+     * sites must agree (the lookup falls back to its constant when the
+     * stored value is NULL on legacy seed rows, which is the upgrade
+     * path for droplets that ran an earlier version of this migration).
+     */
+    private const QUESTIONNAIRE_LOGICAL_ID = 'agentforge-intake-form';
+
     public function getDescription(): string
     {
         return 'Seed canonical AgentForge intake-form Questionnaire (W2 Task 5)';
@@ -79,13 +91,14 @@ final class Version20260505000001 extends AbstractMigration
             // Row does not exist — INSERT.
             $this->connection->executeStatement(
                 'INSERT INTO questionnaire_repository '
-                . '(name, type, status, source_url, questionnaire) '
-                . 'VALUES (:name, :type, :status, :url, :questionnaire)',
+                . '(name, type, status, source_url, questionnaire_id, questionnaire) '
+                . 'VALUES (:name, :type, :status, :url, :questionnaire_id, :questionnaire)',
                 [
                     'name' => self::QUESTIONNAIRE_NAME,
                     'type' => self::QUESTIONNAIRE_TYPE,
                     'status' => self::QUESTIONNAIRE_STATUS,
                     'url' => self::SOURCE_URL,
+                    'questionnaire_id' => self::QUESTIONNAIRE_LOGICAL_ID,
                     'questionnaire' => $questionnaireJson,
                 ]
             );
@@ -93,14 +106,19 @@ final class Version20260505000001 extends AbstractMigration
         }
 
         // Row exists — UPDATE in place. Idempotent re-run path.
+        // Re-running this migration on a droplet that originally seeded
+        // the row WITHOUT a questionnaire_id will now backfill it,
+        // which is the intended upgrade path for the P4 fix.
         $this->connection->executeStatement(
             'UPDATE questionnaire_repository SET '
-            . 'name = :name, type = :type, status = :status, questionnaire = :questionnaire '
+            . 'name = :name, type = :type, status = :status, '
+            . 'questionnaire_id = :questionnaire_id, questionnaire = :questionnaire '
             . 'WHERE source_url = :url',
             [
                 'name' => self::QUESTIONNAIRE_NAME,
                 'type' => self::QUESTIONNAIRE_TYPE,
                 'status' => self::QUESTIONNAIRE_STATUS,
+                'questionnaire_id' => self::QUESTIONNAIRE_LOGICAL_ID,
                 'questionnaire' => $questionnaireJson,
                 'url' => self::SOURCE_URL,
             ]
@@ -132,6 +150,7 @@ final class Version20260505000001 extends AbstractMigration
     {
         $questionnaire = [
             'resourceType' => 'Questionnaire',
+            'id' => self::QUESTIONNAIRE_LOGICAL_ID,
             'url' => self::SOURCE_URL,
             'name' => 'AgentForgeIntakeForm',
             'title' => self::QUESTIONNAIRE_NAME,
