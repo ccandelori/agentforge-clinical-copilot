@@ -5,10 +5,10 @@ declare(strict_types=1);
 /**
  * Public entry point for the AgentForge Clinical Co-Pilot module.
  *
- * Placeholder for module public pages. Actual routes (turn dispatch, panel
- * mount, asset serving) are wired in Task 2 via Controllers and event
- * subscriptions; this file exists so the module's public/ surface is
- * reachable and CSRF-checked from day one.
+ * Placeholder for module public pages. The module's live entry points
+ * are the sidecar-facing JWT-authed handlers under `public/internal/`;
+ * this file exists so the module's public/ surface is reachable and
+ * CSRF-checked from day one.
  *
  * @package   OpenEMR
  * @link      https://www.open-emr.org
