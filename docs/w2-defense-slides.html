@@ -161,37 +161,52 @@
 
 <!-- 1. TITLE -->
 <section class="slide center">
-  <span class="slide-label">Architecture Defense · 2026-05-04</span>
+  <span class="slide-label">Architecture Defense · 2026-05-09</span>
   <h1>Agent<span class="accent">Forge</span> · Week 2</h1>
-  <p class="lede">Two senses, one piece of plumbing — under a contract.</p>
+  <p class="lede">Two senses, one piece of plumbing — under a contract that bites.</p>
   <p class="muted" style="margin-top: 2.5rem; font-size: 1rem;">Cameron Candelori · Gauntlet AI</p>
-  <p class="muted" style="font-size: 0.9rem;">Source: <code>W2_ARCHITECTURE.md</code> · <code>W2_DEFENSE.md</code></p>
-  <span class="slide-number">1 / 18</span>
+  <p class="muted" style="font-size: 0.9rem;">Source: <code>W2_ARCHITECTURE.md</code> · <code>W2_DEFENSE.md</code> · <code>docs/NEXT-SESSION.md</code></p>
+  <p class="muted" style="font-size: 0.85rem; margin-top: 1.4rem;">Live MVP: <code>https://143.244.157.90:9300/dashboard/</code> &nbsp;·&nbsp; self-signed cert &nbsp;·&nbsp; demo personas Chen + Whitaker</p>
+  <span class="slide-number">1 / 23</span>
 </section>
 
 <!-- 2. TL;DR -->
 <section class="slide">
   <span class="slide-label">TL;DR</span>
   <h2>What Week 2 adds</h2>
-  <p class="lede">Two senses bolted onto the W1 agent — under a citation contract that makes the new behavior verifiable.</p>
-  <div class="grid-3" style="margin-top: 2rem;">
+  <p class="lede">Two senses bolted onto the W1 agent — under a citation contract that makes the new behavior verifiable, and a 50-case gate whose <em>self-test</em> proves the gate bites.</p>
+  <div class="grid-3" style="margin-top: 1.5rem;">
     <div class="card">
       <h4>Sense 1 — Vision</h4>
-      <p>Lab PDFs and patient intake forms read with strict-schema Pydantic extraction and per-field bounding boxes.</p>
+      <p>Intake forms + lab PDFs uploaded from the Vue dashboard, sent through a JWT-authed PHP endpoint to the sidecar, read by Haiku vision into strict-schema Pydantic with per-field bboxes.</p>
     </div>
     <div class="card">
       <h4>Sense 2 — Retrieval</h4>
-      <p>Hybrid RAG (BM25 + dense + rerank) over a small clinical-guideline corpus committed to the repo.</p>
+      <p>Hybrid RAG (BM25 + dense + rerank) over a small clinical-guideline corpus. Opt-in via an "Ask guidelines" composer toggle — visible affordance over heuristic intent classification.</p>
     </div>
     <div class="card">
       <h4>Plumbing — Supervisor</h4>
-      <p>LangGraph supervisor + 2 named workers. Routing decisions logged. The Planner finally gets wired.</p>
+      <p>LangGraph supervisor + 2 named workers. Routing decisions logged as Langfuse spans. The Planner finally gets wired.</p>
     </div>
   </div>
-  <div class="callout" style="margin-top: 2rem;">
-    <strong>Done</strong> = 50-case eval gate green; gate self-test demonstrates a deliberate regression fails the rubric.
+  <div class="grid-3" style="margin-top: 1rem;">
+    <div class="card">
+      <h4>Trust artifact — Bbox overlay</h4>
+      <p>"View source (N)" modal renders the original PDF with blue rectangles over extracted regions. Citation analogue for vision: show your work.</p>
+    </div>
+    <div class="card">
+      <h4>Persistence — Option A</h4>
+      <p>Sidecar persists extractions after the graph turn (single round-trip from the dashboard's POV). Routes through OpenEMR's <code>QuestionnaireResponseService</code> so events fire and the audit trail stays intact.</p>
+    </div>
+    <div class="card">
+      <h4>Eval — 50 cases, 5 categories</h4>
+      <p>Programmatic + LLM-as-judge harness. Gate self-test deliberately regresses the supervisor adapter and asserts the gate catches it.</p>
+    </div>
   </div>
-  <span class="slide-number">2 / 18</span>
+  <div class="callout" style="margin-top: 1.25rem;">
+    Sidecar suite <strong>1335 passed / 18 deselected</strong> &nbsp;·&nbsp; PHP module <strong>384 / 384</strong> &nbsp;·&nbsp; PHPStan level 10 clean &nbsp;·&nbsp; live on the droplet.
+  </div>
+  <span class="slide-number">2 / 23</span>
 </section>
 
 <!-- 3. THE SHAPE -->
@@ -216,8 +231,8 @@
       <!-- BROWSER -->
       <g>
         <rect x="280" y="6" width="440" height="50" rx="7" fill="rgba(88,166,255,0.12)" stroke="#58a6ff" stroke-width="1.5"/>
-        <text x="500" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#58a6ff">Browser — Clinician at the patient chart</text>
-        <text x="500" y="44" text-anchor="middle" font-size="10" fill="#8b949e">Upload PDF · view citation overlay over rendered PDF</text>
+        <text x="500" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#58a6ff">Browser — Vue dashboard SPA, AgentForge drawer</text>
+        <text x="500" y="44" text-anchor="middle" font-size="10" fill="#8b949e">Upload PDF · ExtractionPanel · "View source (N)" bbox overlay</text>
       </g>
 
       <line x1="500" y1="56" x2="500" y2="84" stroke="#444c56" stroke-width="1.5" marker-end="url(#t3-arr)"/>
@@ -242,14 +257,16 @@
           <text x="184" y="225" text-anchor="middle" font-size="8.5" fill="#6e7681" font-style="italic">→ documents.id</text>
         </g>
 
-        <!-- turn.php (W1) -->
+        <!-- BFF turn route (Vue dashboard) -->
         <g>
-          <rect x="350" y="120" width="305" height="110" rx="5" fill="rgba(63,185,80,0.10)" stroke="rgba(63,185,80,0.5)" stroke-width="1"/>
-          <text x="502" y="146" text-anchor="middle" font-size="11" font-weight="700" fill="#3fb950">public/turn.php</text>
-          <text x="502" y="166" text-anchor="middle" font-size="9.5" fill="#8b949e">W1 · agent-turn proxy</text>
-          <text x="502" y="182" text-anchor="middle" font-size="9.5" fill="#8b949e">session-auth → mints JWT</text>
-          <text x="502" y="198" text-anchor="middle" font-size="9.5" fill="#8b949e">Symfony HttpClient streaming</text>
-          <text x="502" y="218" text-anchor="middle" font-size="8.5" fill="#6e7681" font-style="italic">unchanged from W1</text>
+          <rect x="350" y="120" width="305" height="110" rx="5" fill="rgba(63,185,80,0.16)" stroke="#3fb950" stroke-width="1.4"/>
+          <rect x="358" y="113" width="50" height="14" rx="3" fill="#0d1117" stroke="#58a6ff" stroke-width="0.9"/>
+          <text x="383" y="123" text-anchor="middle" font-size="8" font-weight="700" fill="#58a6ff" letter-spacing="0.06em">NEW W2</text>
+          <text x="502" y="146" text-anchor="middle" font-size="11" font-weight="700" fill="#3fb950">/api/agent/turn (BFF)</text>
+          <text x="502" y="166" text-anchor="middle" font-size="9.5" fill="#8b949e">session-cookie → mints JWT</text>
+          <text x="502" y="182" text-anchor="middle" font-size="9.5" fill="#8b949e">forwards doc_type +</text>
+          <text x="502" y="196" text-anchor="middle" font-size="9.5" fill="#8b949e">evidence_query (toggle)</text>
+          <text x="502" y="216" text-anchor="middle" font-size="8.5" fill="#6e7681" font-style="italic">legacy turn.php yanked (P4#3)</text>
         </g>
 
         <!-- internal/*.php (NEW W2 endpoints) -->
@@ -260,9 +277,9 @@
           <text x="818" y="146" text-anchor="middle" font-size="11" font-weight="700" fill="#3fb950">public/internal/*.php</text>
           <text x="818" y="162" text-anchor="middle" font-size="9" fill="#8b949e">JWT-validated · pid-scoped</text>
           <text x="818" y="183" text-anchor="middle" font-size="9.5" fill="#e6edf3">+ get_document_bytes.php</text>
-          <text x="818" y="197" text-anchor="middle" font-size="9.5" fill="#e6edf3">+ persist_lab_result.php</text>
-          <text x="818" y="211" text-anchor="middle" font-size="9.5" fill="#e6edf3">+ persist_questionnaire_response.php</text>
-          <text x="818" y="225" text-anchor="middle" font-size="8.5" fill="#6e7681" font-style="italic">no ApiResponseLoggerListener</text>
+          <text x="818" y="197" text-anchor="middle" font-size="9.5" fill="#e6edf3">+ persist_lab.php (LabValue)</text>
+          <text x="818" y="211" text-anchor="middle" font-size="9.5" fill="#e6edf3">+ persist_intake.php (QR svc)</text>
+          <text x="818" y="225" text-anchor="middle" font-size="8.5" fill="#6e7681" font-style="italic">JWT-validated · pid-scoped · service events fire</text>
         </g>
       </g>
 
@@ -340,7 +357,7 @@
         <rect x="820" y="354" width="160" height="110" rx="7" fill="rgba(88,166,255,0.06)" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="5,3"/>
         <text x="900" y="375" text-anchor="middle" font-size="11" font-weight="700" fill="#58a6ff">Anthropic</text>
         <text x="900" y="394" text-anchor="middle" font-size="9.5" fill="#8b949e">BAA · vision + reasoning</text>
-        <text x="900" y="408" text-anchor="middle" font-size="9.5" fill="#8b949e">claude-sonnet-4-6</text>
+        <text x="900" y="408" text-anchor="middle" font-size="9.5" fill="#8b949e">claude-haiku-4-5</text>
         <text x="900" y="436" text-anchor="middle" font-size="9" fill="#d29922" font-weight="600">load-bearing</text>
         <text x="900" y="450" text-anchor="middle" font-size="9" fill="#d29922" font-weight="600">PHI exception</text>
       </g>
@@ -350,10 +367,10 @@
       <text x="810" y="402" text-anchor="middle" font-size="8" fill="#6e7681">vision call</text>
 
       <!-- Footer note -->
-      <text x="20" y="595" font-size="9" fill="#6e7681" font-style="italic">- - - dashed border = trust boundary the sidecar deliberately crosses · all PHI in this sprint is synthetic</text>
+      <text x="20" y="595" font-size="9" fill="#6e7681" font-style="italic">- - - dashed border = trust boundary the sidecar deliberately crosses · all PHI in this sprint is synthetic · model = claude-haiku-4-5</text>
     </svg>
   </div>
-  <span class="slide-number">3 / 18</span>
+  <span class="slide-number">3 / 23</span>
 </section>
 
 <!-- 4. THE FIVE DECISIONS (overview) -->
@@ -368,7 +385,7 @@
     <li><strong>The eval gate is the deliverable.</strong> Boolean rubric, 50 cases, PR-blocking, with a self-test that proves it bites.</li>
   </ol>
   <p class="muted" style="margin-top: 1.5rem;">Each gets a slide. Each names the alternative we rejected and why.</p>
-  <span class="slide-number">4 / 18</span>
+  <span class="slide-number">4 / 23</span>
 </section>
 
 <!-- 5. DECISION 1 -->
@@ -389,15 +406,18 @@
   <div class="callout warn" style="margin-top: 1.25rem;">
     <strong>Tradeoff:</strong> The clinician has to confirm. Promotion-write-back UI is post-W2.
   </div>
-  <p class="muted" style="margin-top: 1rem; font-size: 1rem;"><code>W2_ARCHITECTURE.md</code> §2.3 invariant I-2 · enforced at the Pydantic boundary, the persistence-test layer, and as an eval-suite rubric item.</p>
-  <span class="slide-number">5 / 18</span>
+  <div class="callout" style="margin-top: 0.75rem;">
+    <strong>P2.1 punch-list correction:</strong> the writer routes through OpenEMR's <code>QuestionnaireResponseService::saveQuestionnaireResponse()</code> (via an <code>IntakeQuestionnaireResponsePersister</code> seam), not a raw <code>INSERT</code>. <code>EVENT_PRE_SAVE</code> / <code>EVENT_POST_SAVE</code> fire; audit user is wired; FHIR canonical reference resolves (P4#4 logical id <code>agentforge-intake-form</code>).
+  </div>
+  <p class="muted" style="margin-top: 0.5rem; font-size: 1rem;"><code>W2_ARCHITECTURE.md</code> §2.3 invariant I-2 · enforced at the Pydantic boundary, the persistence-test layer, and as an eval-suite rubric item.</p>
+  <span class="slide-number">5 / 23</span>
 </section>
 
 <!-- 6. DATA FLOW — INTAKE FORM -->
 <section class="slide" style="padding: 2.5rem 3rem;">
   <span class="slide-label">Data flow · intake form</span>
-  <h2 style="margin-bottom: 0.5rem;">From upload to citation overlay</h2>
-  <p class="muted" style="font-size: 0.95rem; margin: 0 0 0.5rem;">Numbered messages cross actor boundaries. Solid = call · dashed green = return · amber = PHI crosses.</p>
+  <h2 style="margin-bottom: 0.5rem;">From upload to extracted facts (Option A)</h2>
+  <p class="muted" style="font-size: 0.95rem; margin: 0 0 0.5rem;">Numbered messages cross actor boundaries. Solid = call · dashed green = return · amber = PHI crosses. <strong>All five phases ship today</strong> — Phase 4 persistence is sidecar-initiated (Option A) and lands the QR row in the same round-trip as extraction. Bbox overlay on Phase 5 is the trust artifact (see slide 13).</p>
   <div style="flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;">
     <svg viewBox="0 0 1200 670" style="display: block; width: 100%; height: auto; max-height: calc(100vh - 200px);">
       <defs>
@@ -459,8 +479,8 @@
         <circle cx="68" cy="80" r="11" fill="#58a6ff"/>
         <text x="68" y="84" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">1</text>
         <line x1="182" y1="80" x2="478" y2="80" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#iseq-arr)"/>
-        <text x="330" y="74" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /upload_document.php</text>
-        <text x="330" y="91" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">multipart · session + CSRF · doc_type=intake_form</text>
+        <text x="330" y="74" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /agentforge/internal/upload_document</text>
+        <text x="330" y="91" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">multipart · JWT (session-minted) · doc_type=intake_form</text>
         <text x="330" y="105" text-anchor="middle" font-size="8.5" fill="#3fb950">→ documents table · audit: agentforge.document_ingest</text>
       </g>
 
@@ -477,8 +497,8 @@
         <circle cx="68" cy="160" r="11" fill="#58a6ff"/>
         <text x="68" y="164" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">3</text>
         <line x1="182" y1="160" x2="478" y2="160" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#iseq-arr)"/>
-        <text x="330" y="154" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /turn.php  "extract document_id=N"</text>
-        <text x="330" y="171" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">session-authed · OpenEMR mints JWT (lcobucci/jwt)</text>
+        <text x="330" y="154" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /api/agent/turn  "extract document_id=N"</text>
+        <text x="330" y="171" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">session-cookie BFF · sidecar mints JWT (lcobucci/jwt)</text>
       </g>
 
       <!-- Step 4 -->
@@ -537,9 +557,9 @@
         <circle cx="68" cy="430" r="11" fill="#bc8cff"/>
         <text x="68" y="434" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">9</text>
         <line x1="798" y1="430" x2="482" y2="430" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#iseq-arr)"/>
-        <text x="640" y="424" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /internal/persist_questionnaire_response  (JWT)</text>
-        <text x="640" y="441" text-anchor="middle" font-size="9" fill="#3fb950" font-style="italic">FhirQuestionnaireResponseFormService  →  QuestionnaireResponse</text>
-        <text x="640" y="455" text-anchor="middle" font-size="8.5" fill="#3fb950">audit: agentforge.questionnaire_persist  ·  no patient_data write</text>
+        <text x="640" y="424" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /agentforge/internal/persist_intake  (JWT, sidecar-initiated)</text>
+        <text x="640" y="441" text-anchor="middle" font-size="9" fill="#3fb950" font-style="italic">QuestionnaireResponseService::saveQuestionnaireResponse  →  service events fire</text>
+        <text x="640" y="455" text-anchor="middle" font-size="8.5" fill="#3fb950">questionnaire_id = "agentforge-intake-form" (P4#4)  ·  no patient_data write</text>
       </g>
 
       <!-- Step 10 (return) -->
@@ -555,8 +575,8 @@
         <circle cx="68" cy="520" r="11" fill="#56d364"/>
         <text x="68" y="524" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">11</text>
         <line x1="798" y1="520" x2="182" y2="520" stroke="#56d364" stroke-width="1.6" stroke-dasharray="5,3" marker-end="url(#iseq-ret)"/>
-        <text x="490" y="514" text-anchor="middle" font-size="10.5" font-weight="600" fill="#56d364">stream final answer  ·  Citation per clinical claim</text>
-        <text x="490" y="531" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">verifier-validated · "Suggested updates from intake form" panel renders</text>
+        <text x="490" y="514" text-anchor="middle" font-size="10.5" font-weight="600" fill="#56d364">turn response  ·  AgentTurnResponse(extraction, persisted_resource_id, citations)</text>
+        <text x="490" y="531" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">ExtractionPanel renders; "View source (N)" button visible</text>
       </g>
 
       <!-- Step 12 -->
@@ -564,8 +584,8 @@
         <circle cx="68" cy="565" r="11" fill="#58a6ff"/>
         <text x="68" y="569" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">12</text>
         <line x1="182" y1="565" x2="478" y2="565" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#iseq-arr)"/>
-        <text x="330" y="559" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">GET /patient_file/documents/&lt;id&gt;</text>
-        <text x="330" y="576" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">session-authed · NOT through sidecar</text>
+        <text x="330" y="559" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">GET /agentforge/internal/get_document_bytes (HTTP cache hdrs)</text>
+        <text x="330" y="576" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">JWT-validated · Cache-Control: max-age=300, private</text>
       </g>
 
       <!-- Step 13 (return) -->
@@ -573,8 +593,8 @@
         <circle cx="68" cy="608" r="11" fill="#56d364"/>
         <text x="68" y="612" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">13</text>
         <line x1="478" y1="608" x2="182" y2="608" stroke="#56d364" stroke-width="1.4" stroke-dasharray="5,3" marker-end="url(#iseq-ret)"/>
-        <text x="330" y="603" text-anchor="middle" font-size="10" font-weight="600" fill="#56d364">PDF bytes (inline preview)</text>
-        <text x="330" y="620" text-anchor="middle" font-size="9" fill="#56d364" font-style="italic">React overlay positioned by Citation.page_bbox</text>
+        <text x="330" y="603" text-anchor="middle" font-size="10" font-weight="600" fill="#56d364">PDF bytes → DocumentViewer</text>
+        <text x="330" y="620" text-anchor="middle" font-size="9" fill="#56d364" font-style="italic">pdf.js renders pages · blue rectangles overlay each Citation.page_bbox</text>
       </g>
 
       <!-- Right-side invariant callout -->
@@ -587,7 +607,7 @@
       </g>
     </svg>
   </div>
-  <span class="slide-number">6 / 18</span>
+  <span class="slide-number">6 / 23</span>
 </section>
 
 <!-- 7. DECISION 2 -->
@@ -608,15 +628,18 @@
   <div class="callout">
     <code>procedure_result.document_id = documents.id</code> — schema-level linkage to the uploaded PDF. The FHIR cross-link (<code>Observation.derivedFrom</code>, <code>DiagnosticReport.presentedForm</code>) needs transformer changes this fork doesn't make. Not promised as a W2 deliverable.
   </div>
-  <p class="muted" style="margin-top: 0.5rem; font-size: 1rem;"><code>W2_ARCHITECTURE.md</code> §2.3 invariant I-1.</p>
-  <span class="slide-number">7 / 18</span>
+  <div class="callout" style="margin-top: 0.5rem;">
+    <strong>P2.2 punch-list correction:</strong> <code>InternalLabPersistController</code> parses raw payloads into a <code>final readonly LabValue</code> domain primitive at the boundary. Non-empty <code>testName</code> + <code>value</code> enforced at construction; bad rows yield HTTP 400 (no PHI echoed) instead of silent empty-string corruption.
+  </div>
+  <p class="muted" style="margin-top: 0.5rem; font-size: 1rem;"><code>W2_ARCHITECTURE.md</code> §2.3 invariant I-1 · CLAUDE.md "parse, don't validate."</p>
+  <span class="slide-number">7 / 23</span>
 </section>
 
 <!-- 8. DATA FLOW — LAB PDF -->
 <section class="slide" style="padding: 2.5rem 3rem;">
   <span class="slide-label">Data flow · lab PDF</span>
   <h2 style="margin-bottom: 0.5rem;">Same backbone, different persistence</h2>
-  <p class="muted" style="font-size: 0.95rem; margin: 0 0 0.5rem;">Phases 1–3 are identical to the intake flow. The persistence step writes to <code>procedure_*</code> with <code>procedure_result.document_id</code> set.</p>
+  <p class="muted" style="font-size: 0.95rem; margin: 0 0 0.5rem;">Phases 1–3 are identical to the intake flow. P1.2 added <code>doc_type</code> dispatch in the extractor node and P1.1's persister is <code>isinstance</code>-typed for <code>LabPdfExtraction</code> — forward-compatible. The graph today emits <code>IntakeFormExtraction</code>; wiring a lab worker end-to-end is a forward-compat-ready follow-up (slide 22). Persist endpoint + LabValue primitive are live.</p>
   <div style="flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;">
     <svg viewBox="0 0 1200 670" style="display: block; width: 100%; height: auto; max-height: calc(100vh - 200px);">
       <defs>
@@ -678,8 +701,8 @@
         <circle cx="68" cy="80" r="11" fill="#58a6ff"/>
         <text x="68" y="84" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">1</text>
         <line x1="182" y1="80" x2="478" y2="80" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#lseq-arr)"/>
-        <text x="330" y="74" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /upload_document.php</text>
-        <text x="330" y="91" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">multipart · session + CSRF · doc_type=lab_pdf</text>
+        <text x="330" y="74" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /agentforge/internal/upload_document</text>
+        <text x="330" y="91" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">multipart · JWT · doc_type=lab_pdf (P4#1 carries through)</text>
         <text x="330" y="105" text-anchor="middle" font-size="8.5" fill="#3fb950">→ documents table · audit: agentforge.document_ingest</text>
       </g>
 
@@ -696,8 +719,8 @@
         <circle cx="68" cy="160" r="11" fill="#58a6ff"/>
         <text x="68" y="164" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">3</text>
         <line x1="182" y1="160" x2="478" y2="160" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#lseq-arr)"/>
-        <text x="330" y="154" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /turn.php  "extract document_id=N"</text>
-        <text x="330" y="171" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">session-authed · OpenEMR mints JWT (lcobucci/jwt)</text>
+        <text x="330" y="154" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /api/agent/turn  "extract document_id=N"</text>
+        <text x="330" y="171" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">session-cookie BFF · sidecar mints JWT (lcobucci/jwt)</text>
       </g>
 
       <!-- Step 4 -->
@@ -706,7 +729,7 @@
         <text x="68" y="199" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">4</text>
         <line x1="482" y1="195" x2="798" y2="195" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#lseq-arr)"/>
         <text x="640" y="189" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST sidecar /turn  (signed JWT)</text>
-        <text x="640" y="206" text-anchor="middle" font-size="9" fill="#bc8cff" font-style="italic">supervisor (Planner) → routes to intake-extractor</text>
+        <text x="640" y="206" text-anchor="middle" font-size="9" fill="#bc8cff" font-style="italic">extractor dispatches on doc_type → lab vision schema (P1.2)</text>
       </g>
 
       <!-- Step 5 -->
@@ -756,8 +779,8 @@
         <circle cx="68" cy="430" r="11" fill="#bc8cff"/>
         <text x="68" y="434" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">9</text>
         <line x1="798" y1="430" x2="482" y2="430" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#lseq-arr)"/>
-        <text x="640" y="424" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /internal/persist_lab_result  (JWT)</text>
-        <text x="640" y="441" text-anchor="middle" font-size="9" fill="#3fb950" font-style="italic">writes procedure_order  +  procedure_report  +  procedure_result</text>
+        <text x="640" y="424" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">POST /agentforge/internal/persist_lab  (JWT, sidecar-initiated)</text>
+        <text x="640" y="441" text-anchor="middle" font-size="9" fill="#3fb950" font-style="italic">parses each row → LabValue (final readonly) · writes procedure_order/report/result</text>
         <text x="640" y="455" text-anchor="middle" font-size="8.5" fill="#3fb950">procedure_result.document_id = documents.id  ·  audit: agentforge.lab_persist</text>
       </g>
 
@@ -774,8 +797,8 @@
         <circle cx="68" cy="520" r="11" fill="#56d364"/>
         <text x="68" y="524" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">11</text>
         <line x1="798" y1="520" x2="182" y2="520" stroke="#56d364" stroke-width="1.6" stroke-dasharray="5,3" marker-end="url(#lseq-ret)"/>
-        <text x="490" y="514" text-anchor="middle" font-size="10.5" font-weight="600" fill="#56d364">stream final answer  ·  Citation per clinical claim</text>
-        <text x="490" y="531" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">verifier-validated · agent panel renders extracted lab values with citations</text>
+        <text x="490" y="514" text-anchor="middle" font-size="10.5" font-weight="600" fill="#56d364">turn response  ·  AgentTurnResponse(extraction, persisted_resource_id, citations)</text>
+        <text x="490" y="531" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">ExtractionPanel renders lab values with per-row citations</text>
       </g>
 
       <!-- Step 12 -->
@@ -783,8 +806,8 @@
         <circle cx="68" cy="565" r="11" fill="#58a6ff"/>
         <text x="68" y="569" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">12</text>
         <line x1="182" y1="565" x2="478" y2="565" stroke="#9da7b3" stroke-width="1.6" marker-end="url(#lseq-arr)"/>
-        <text x="330" y="559" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">GET /patient_file/documents/&lt;id&gt;</text>
-        <text x="330" y="576" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">session-authed · NOT through sidecar</text>
+        <text x="330" y="559" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e6edf3">GET /agentforge/internal/get_document_bytes (HTTP cache hdrs)</text>
+        <text x="330" y="576" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">JWT-validated · Cache-Control: max-age=300, private</text>
       </g>
 
       <!-- Step 13 (return) -->
@@ -792,8 +815,8 @@
         <circle cx="68" cy="608" r="11" fill="#56d364"/>
         <text x="68" y="612" text-anchor="middle" font-size="10.5" font-weight="800" fill="#0d1117">13</text>
         <line x1="478" y1="608" x2="182" y2="608" stroke="#56d364" stroke-width="1.4" stroke-dasharray="5,3" marker-end="url(#lseq-ret)"/>
-        <text x="330" y="603" text-anchor="middle" font-size="10" font-weight="600" fill="#56d364">PDF bytes (inline preview)</text>
-        <text x="330" y="620" text-anchor="middle" font-size="9" fill="#56d364" font-style="italic">React overlay positioned by Citation.page_bbox</text>
+        <text x="330" y="603" text-anchor="middle" font-size="10" font-weight="600" fill="#56d364">PDF bytes → DocumentViewer</text>
+        <text x="330" y="620" text-anchor="middle" font-size="9" fill="#56d364" font-style="italic">pdf.js renders pages · blue rectangles overlay each Citation.page_bbox</text>
       </g>
 
       <!-- Right-side invariant callout -->
@@ -806,7 +829,7 @@
       </g>
     </svg>
   </div>
-  <span class="slide-number">8 / 18</span>
+  <span class="slide-number">8 / 23</span>
 </section>
 
 <!-- 9. DECISION 3 -->
@@ -849,7 +872,7 @@
   <div class="callout warn" style="margin-top: 1.25rem;">
     <strong>Failure mode:</strong> if the migration destabilizes the nine W1 regression locks, fall back to a hand-written routing function — the spec accepts "another inspectable orchestration framework." Wiring is the <em>first</em> W2 milestone, so this risk surfaces before any new tools land.
   </div>
-  <span class="slide-number">9 / 18</span>
+  <span class="slide-number">9 / 23</span>
 </section>
 
 <!-- 10. DATA FLOW — SUPERVISOR ROUTING -->
@@ -1029,7 +1052,7 @@
       </g>
     </svg>
   </div>
-  <span class="slide-number">10 / 18</span>
+  <span class="slide-number">10 / 23</span>
 </section>
 
 <!-- 11. DECISION 4 — PHI -->
@@ -1066,10 +1089,83 @@
   <div class="callout warn" style="margin-top: 1rem;">
     <strong>Honest framing:</strong> Cloud Claude vision is a real production dependency. Demo data is synthetic. The LLM-client abstraction is the swap point for on-prem vLLM in production hardening — W1's deferred work.
   </div>
-  <span class="slide-number">11 / 18</span>
+  <span class="slide-number">11 / 23</span>
 </section>
 
-<!-- 9. DECISION 5 — EVAL GATE -->
+<!-- 12. DOC-UPLOAD PIPELINE (NEW) -->
+<section class="slide">
+  <span class="slide-label">Doc-upload pipeline · what shipped</span>
+  <h2>Browser to chart in one round trip</h2>
+  <p class="lede">A clinician drops a PDF in the AgentForge drawer, types "extract this." The pipeline lands the extraction in OpenEMR before the synthesis reply hits the screen.</p>
+  <table style="margin-top: 0.75rem;">
+    <tr>
+      <th>Step</th>
+      <th>Surface</th>
+      <th>What happens</th>
+    </tr>
+    <tr>
+      <td><span class="pill accent">1</span></td>
+      <td>Vue dashboard drawer</td>
+      <td><code>useUploadAttachment</code> composable wraps the file as a <code>PendingAttachment</code> with <code>doc_type</code> inferred client-side (P4#1).</td>
+    </tr>
+    <tr>
+      <td><span class="pill accent">2</span></td>
+      <td>BFF + JWT-authed PHP endpoint</td>
+      <td>BFF mints a session-bound JWT; <code>InternalUploadDocumentController</code> validates it, runs the upload through OpenEMR's <code>Document::createDocument()</code>, audits, returns <code>document_id</code>.</td>
+    </tr>
+    <tr>
+      <td><span class="pill accent">3</span></td>
+      <td>Sidecar / Haiku vision</td>
+      <td>Supervisor routes to <code>intake-extractor</code>; <code>VisionExtractor</code> calls Haiku with strict-schema Pydantic and emits per-field bboxes. Telemetry: <code>record_extraction_call</code> Langfuse spans on success + failure (P2.3).</td>
+    </tr>
+    <tr>
+      <td><span class="pill accent">4</span></td>
+      <td>Option A persist (sidecar-initiated)</td>
+      <td><code>Orchestrator._maybe_persist_extraction</code> POSTs back to <code>/agentforge/internal/persist_intake</code> with a fresh JWT. Persister routes through <code>QuestionnaireResponseService</code> (events fire, audit user wired).</td>
+    </tr>
+    <tr>
+      <td><span class="pill accent">5</span></td>
+      <td>Dashboard ExtractionPanel</td>
+      <td><code>AgentTurnResponse</code> carries <code>extraction</code> + <code>persisted_resource_id</code> + structured citations. Panel renders below chat bubble; "View source (N)" button visible.</td>
+    </tr>
+  </table>
+  <div class="callout" style="margin-top: 0.75rem;">
+    <strong>Why Option A (sidecar-initiated) over Option B (dashboard-driven):</strong> single round trip from the dashboard's POV; sidecar already holds the document_id + extraction in hand; the user's first turn already lands the QR cascade. The confirm-panel later moves data from "extracted but unapproved" to structured tables — never from "in-memory" to "stored."
+  </div>
+  <span class="slide-number">12 / 23</span>
+</section>
+
+<!-- 13. BBOX OVERLAY AS TRUST ARTIFACT (NEW) -->
+<section class="slide">
+  <span class="slide-label">Trust artifact · bbox overlay</span>
+  <h2>"View source" is the citation analogue for vision</h2>
+  <p class="lede">Every extracted field carries a <code>page_bbox</code>. The DocumentViewer modal turns those rectangles into a visible "show your work" property.</p>
+  <div class="grid-2">
+    <div class="card">
+      <h4>End-to-end</h4>
+      <ul>
+        <li>Click <strong>"View source (18)"</strong> on the ExtractionPanel.</li>
+        <li>Modal opens; <code>InternalDocumentBytesController</code> serves the PDF (<code>Cache-Control: max-age=300, private</code>).</li>
+        <li>pdf.js renders pages 1..N at canvas-true coordinates.</li>
+        <li>Each <code>Citation.page_bbox</code> becomes a blue rectangle overlay positioned in the page coordinate system.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Why it's load-bearing</h4>
+      <ul>
+        <li>The Pydantic <code>Citation</code> validator already rejects scanned-source citations with <code>bbox_confidence &lt; 0.7</code>. Any value the panel surfaces has a verifiable bbox.</li>
+        <li>The clinician can confirm visually before promotion. The chart write is still a separate human action (Decision 1).</li>
+        <li>Same contract end-to-end: extraction emits Citation, persistence stores it, UI consumes it.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout warn" style="margin-top: 0.75rem;">
+    <strong>Honest caveat:</strong> Haiku-vision bboxes land in the right region but can be offset by a row/cell on dense forms. Acceptable trust artifact, not pixel-tight. PNG intake forms (Reyes, Kowalski) won't render — pdf.js can't parse <code>image/png</code> bytes — so the demo runbook sticks to typed PDFs (Chen, Whitaker).
+  </div>
+  <span class="slide-number">13 / 23</span>
+</section>
+
+<!-- 14. DECISION 5 — EVAL GATE -->
 <section class="slide">
   <span class="slide-label">Decision 5 of 5</span>
   <h2>The eval gate is the deliverable</h2>
@@ -1098,7 +1194,7 @@
     </div>
   </div>
   <p class="muted" style="margin-top: 1rem; font-size: 1rem;">Two layers, orthogonal failure modes: programmatic grounding (W1, deterministic) + LLM-as-judge (NEW W2, <code>claude-sonnet-4-6</code>, <code>temperature=0</code>, boolean per category).</p>
-  <span class="slide-number">12 / 18</span>
+  <span class="slide-number">14 / 23</span>
 </section>
 
 <!-- 10. CITATION CONTRACT -->
@@ -1120,9 +1216,9 @@
   <ul style="margin-top: 1rem;">
     <li><strong>Type-level distinction</strong> between patient-record facts and guideline evidence — UI renders them in different sections; rubric checks a guideline citation never supports a patient-specific claim.</li>
     <li><strong>Bbox confidence is the anti-hallucination floor.</strong> A low-confidence field can only land in <code>unsupported_fields</code> — never as a structured value.</li>
-    <li><strong>Same contract end-to-end:</strong> extraction → retrieval → verifier → UI overlay.</li>
+    <li><strong>Same contract end-to-end:</strong> extraction → retrieval → verifier → UI overlay (slide 13).</li>
   </ul>
-  <span class="slide-number">13 / 18</span>
+  <span class="slide-number">15 / 23</span>
 </section>
 
 <!-- 11. RAG -->
@@ -1216,36 +1312,41 @@
       </div>
       <div class="card" style="padding: 1rem 1.2rem;">
         <h4 style="margin-bottom: 0.4rem;">Packaging</h4>
-        <p style="font-size: 0.95rem; margin: 0;">Embedding + reranker pre-baked into the sidecar Docker image — no ~370MB cold-start download. Eval suite includes a passthrough-vs-rerank ablation pair.</p>
+        <p style="font-size: 0.95rem; margin: 0;">Embedding + reranker pre-baked into the sidecar Docker image. Honest sizing: as-shipped delta is ~1.2 GB (not the spec's ~370 MB — bge-reranker-base fp32 weights are 1.1 GB). Cohere remains the network-gated alternative.</p>
       </div>
     </div>
   </div>
-  <span class="slide-number">14 / 18</span>
+  <span class="slide-number">16 / 23</span>
 </section>
 
-<!-- 12. EVAL GATE — WHERE IT RUNS + SELF-TEST -->
+<!-- 17. EVAL GATE — SELF-TEST IS THE CORRECTNESS CLAIM -->
 <section class="slide">
-  <span class="slide-label">Eval gate</span>
-  <h2>How we know the gate bites</h2>
-  <div class="grid-2">
+  <span class="slide-label">Eval gate · how we know the gate bites</span>
+  <h2>The self-test is a safety property, not a regression check</h2>
+  <p class="lede">A separate test deliberately regresses the supervisor adapter and asserts the gate fails. The gate isn't just a CI rate-of-change check — it's an empirical correctness claim about the gate itself.</p>
+  <div class="grid-2" style="margin-top: 1rem;">
     <div class="card">
-      <h4>Three places it runs</h4>
+      <h4>50-case W2 suite</h4>
       <ul>
-        <li><strong>Local prek</strong> — 10-case smoke subset, fast feedback per commit</li>
-        <li><strong>GitLab CI</strong> (<code>.gitlab-ci.yml</code>, NEW) — full 50, authoritative PR-blocker per the spec</li>
-        <li><strong>GitHub Actions mirror</strong> — same script, same config, can't drift</li>
+        <li><strong>extraction (12)</strong> · <strong>evidence_retrieval (10)</strong> · <strong>citations (10)</strong> · <strong>refusal (8)</strong> · <strong>missing_data (10)</strong></li>
+        <li>YAML cases under <code>sidecar/tests/eval/cases/week2/</code>, real fixtures under <code>week2/example-documents/</code> (Chen, Whitaker, Reyes, Kowalski).</li>
+        <li>10-case smoke subset tagged <code>eval_smoke</code> — pre-commit hook in &lt;30s with mocked supervisor + judge.</li>
       </ul>
     </div>
     <div class="card">
-      <h4>Gate self-test</h4>
-      <p><code>test_gate_blocks_regression.py</code> monkey-patches <code>intake-extractor</code> to return one fabricated lab value, runs the full 50, and asserts <code>factually_consistent</code> drops &gt;5% — i.e., the build <em>would</em> fail.</p>
-      <p style="margin-top: 0.5rem;">Separate CI job; runnable manually. <strong>Graders can trigger it directly.</strong></p>
+      <h4>Two-stage harness</h4>
+      <ul>
+        <li><strong>Programmatic (deterministic):</strong> <code>schema_valid</code>, <code>citation_present</code>, <code>no_phi_in_logs</code>.</li>
+        <li><strong>LLM-as-judge:</strong> <code>factually_consistent</code>, <code>safe_refusal</code> at <code>temperature=0</code>; retry-with-fresh-seed + tiebreaker on disagreement.</li>
+        <li>Either layer failing fails the case.</li>
+      </ul>
     </div>
   </div>
-  <div class="callout" style="margin-top: 1.25rem;">
-    We do <em>not</em> seed the 50-case golden set with intentionally-broken cases. Mixing pass and fail expectations into one dataset makes the rubric ambiguous.
+  <div class="callout" style="margin-top: 1rem;">
+    <strong>Self-test (Task 19):</strong> <code>test_gate_blocks_regression.py</code> wires a regressed supervisor that emits <code>"A1c = 15.5%"</code> with the citation deliberately stripped. The <code>citations</code> pass rate drops 1.0 → 0.6 — outside the 5% regression band and below the 0.9 floor. The gate must return <code>verdict.passed is False</code>. Same path through the CLI exits non-zero. Three end-to-end tests under <code>@pytest.mark.gate_validation</code>; runnable by graders directly.
   </div>
-  <span class="slide-number">15 / 18</span>
+  <p class="muted" style="margin-top: 0.6rem; font-size: 0.95rem;">Why citation-strip and not numeric mismatch: the W2 harness's <code>_JUDGE_BY_CATEGORY</code> only routes <code>HALLUCINATION</code>/<code>REFUSAL</code> to the LLM judge; the W2 yaml suite uses five different categories. The programmatic <code>citation_present</code> grader carries the load-bearing assertion. Extending judge routing for value-fabrication is a documented follow-up.</p>
+  <span class="slide-number">17 / 23</span>
 </section>
 
 <!-- 16. DATA FLOW — EVAL GATE RUN -->
@@ -1420,23 +1521,72 @@
         <text x="1060" y="475" text-anchor="middle" font-size="10" font-weight="700" fill="#f85149">Gate self-test</text>
         <line x1="955" y1="483" x2="1165" y2="483" stroke="rgba(248,81,73,0.3)" stroke-width="0.8"/>
         <text x="1060" y="500" text-anchor="middle" font-size="9" fill="#e6edf3">test_gate_blocks_regression.py</text>
-        <text x="1060" y="514" text-anchor="middle" font-size="8.5" fill="#8b949e">monkey-patches extractor to fabricate</text>
-        <text x="1060" y="526" text-anchor="middle" font-size="8.5" fill="#8b949e">a value · asserts factually_consistent</text>
-        <text x="1060" y="538" text-anchor="middle" font-size="8.5" fill="#8b949e">drops &gt;5%  ·  proves the gate bites</text>
+        <text x="1060" y="514" text-anchor="middle" font-size="8.5" fill="#8b949e">regresses adapter to strip citation</text>
+        <text x="1060" y="526" text-anchor="middle" font-size="8.5" fill="#8b949e">on a fabricated A1c · asserts</text>
+        <text x="1060" y="538" text-anchor="middle" font-size="8.5" fill="#8b949e">citation_present drops &gt;5%</text>
       </g>
     </svg>
   </div>
-  <span class="slide-number">16 / 18</span>
+  <span class="slide-number">18 / 23</span>
 </section>
 
-<!-- 17. ANTICIPATED QUESTIONS -->
+<!-- 19. PERSISTENCE-LAYER CORRECTNESS (NEW) -->
+<section class="slide">
+  <span class="slide-label">Production-grade discipline</span>
+  <h2>Persistence-layer correctness, in three slices</h2>
+  <p class="lede">These are not bug fixes — they're the three places the persistence story has to be airtight before "ship it" is honest.</p>
+  <div class="grid-3" style="margin-top: 1rem;">
+    <div class="card">
+      <h4>P2.1 · Service routing</h4>
+      <p><code>IntakeQuestionnaireResponseWriter</code> previously did a raw <code>INSERT</code> against an injected DBAL connection. That bypassed <code>ServiceSaveEvent::EVENT_PRE_SAVE</code> / <code>EVENT_POST_SAVE</code>, the audit-user wire-up, and the generated narrative HTML.</p>
+      <p style="margin-top: 0.5rem;">Now routes through <code>QuestionnaireResponseService::saveQuestionnaireResponse()</code> via an <code>IntakeQuestionnaireResponsePersister</code> interface seam. Production binding wraps the legacy service; the interface keeps the writer unit-testable in the isolated harness (<code>BaseService</code> drags ADODB file-include side effects).</p>
+    </div>
+    <div class="card">
+      <h4>P2.2 · LabValue domain primitive</h4>
+      <p><code>InternalLabPersistController</code> previously validated only the array shape and forwarded a normalized <code>list&lt;array&lt;string, mixed&gt;&gt;</code> to the writer, which silently substituted empty strings for missing or non-string fields — <code>procedure_result</code> rows with blank <code>result_text</code>.</p>
+      <p style="margin-top: 0.5rem;"><code>final readonly LabValue</code> primitive enforces non-empty <code>testName</code> + <code>value</code> at construction. The controller parses-not-validates at the boundary; <code>\DomainException</code> becomes HTTP 400 with no PHI echoed back. CLAUDE.md's "parse, don't validate" applied at the wire.</p>
+    </div>
+    <div class="card">
+      <h4>P4#4 · Logical id (FHIR canonical)</h4>
+      <p><code>QuestionnaireResponse.questionnaire_id</code> was being persisted as <code>NULL</code>, breaking the FHIR canonical reference (<code>Questionnaire/{id}</code>) on every overlay-UI round-trip. Display-name shadowing made the row non-resolvable.</p>
+      <p style="margin-top: 0.5rem;">New <code>IntakeQuestionnaireLookup</code> + <code>SeededIntakeQuestionnaire</code> DTO + stable kebab-case logical id <code>agentforge-intake-form</code> threaded through writer + persister. Two Doctrine migrations: seed update + production backfill.</p>
+    </div>
+  </div>
+  <div class="callout" style="margin-top: 1rem;">
+    The headline isn't "we fixed three bugs." It's that the persistence layer is the point where AI-suggested data crosses into the system of record — boundary parsing, service-event participation, and FHIR-canonical resolvability are the three things that have to be true before <em>any</em> defense of "the chart is updated by humans" holds.
+  </div>
+  <span class="slide-number">19 / 23</span>
+</section>
+
+<!-- 20. PANEL YANK + ASK GUIDELINES (NEW) -->
+<section class="slide">
+  <span class="slide-label">UX decisions · placement + opt-in</span>
+  <h2>Two surface decisions worth defending</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>P4#3 · Panel yank · placement won</h4>
+      <p><strong>What changed:</strong> The original W1 per-chart AgentForge panel (Twig + JS bundle + <code>turn.php</code>/<code>upload_document.php</code> entry points + <code>Bootstrap</code> event subscriber + tests) was deleted in one atomic commit.</p>
+      <p style="margin-top: 0.5rem;"><strong>Why:</strong> The 2026-05-06 placement-design grilling concluded the per-chart embed was "dangerously wrong" — a top-level co-pilot drawer in the new dashboard is the correct placement. From that decision onward, the legacy panel was deprecated but still wired in. A 2026-05-08 review surfaced latent bugs (lab PDFs hard-coded to intake schema; unfinished citation-overlay plumbing). Two paths: fix the bugs or delete the surface.</p>
+      <p style="margin-top: 0.5rem;"><strong>What we learned:</strong> Once a placement decision is made, the deprecated surface is carrying cost — both maintenance (PHPStan/PHPCS keep seeing it) and review attention. Deleting deprecated surfaces immediately, the same day the placement flips, would have saved that round-trip.</p>
+    </div>
+    <div class="card">
+      <h4>P4#2 · "Ask guidelines" toggle</h4>
+      <p><strong>The straight-line fix</strong> for "the dashboard guideline RAG is unreachable" was "forward <code>req.message</code> as <code>evidence_query</code> on every turn." That mis-routes every chart-Q&amp;A turn through the W2 evidence retriever — pays the RAG round-trip and emits guideline citations even when the clinician didn't ask.</p>
+      <p style="margin-top: 0.5rem;"><strong>What shipped:</strong> An "Ask guidelines" toggle in the composer toolbar (next to attach), backed by <code>agentforge.guidelineMode</code>, default <strong>off</strong>. When on, the store mirrors the user's text into both <code>message</code> and <code>evidence_query</code>; when off, neither field is sent and the W1 chart-Q&amp;A loop runs as before.</p>
+      <p style="margin-top: 0.5rem;"><strong>Why visible affordance over heuristic intent classification:</strong> "summarize last visit" should not trigger guideline RAG. Auto-detect from message text ("guideline", "according to") is too brittle — false positives turn chart-Q&amp;A into RAG; false negatives strand the feature. The user can demo "watch me toggle Guidelines and ask a clinical question" without the audience guessing what triggered the route.</p>
+    </div>
+  </div>
+  <span class="slide-number">20 / 23</span>
+</section>
+
+<!-- 21. ANTICIPATED QUESTIONS -->
 <section class="slide">
   <span class="slide-label">Q&amp;A primer</span>
   <h2>Anticipated questions</h2>
   <div class="grid-2">
     <div class="card">
       <h4>Q: How do you know the gate catches the regression graders will introduce?</h4>
-      <p>A separate test that monkey-patches the extractor to fabricate a value and asserts the rubric fires. Run it directly to confirm.</p>
+      <p><code>test_gate_blocks_regression.py</code> wires a regressed adapter that emits a fabricated A1c with the citation deliberately stripped. <code>citations</code> pass rate drops 1.0 → 0.6; gate returns <code>verdict.passed is False</code>. CLI exits non-zero. Runnable directly.</p>
     </div>
     <div class="card">
       <h4>Q: Why not write extracted intake fields straight to the proper tables?</h4>
@@ -1458,26 +1608,73 @@
       <h4>Q: Why default to a local reranker instead of Cohere?</h4>
       <p>Cost predictability, no API key in CI, spec accepts "or equivalent." Cohere is a one-env-var swap if eval scores demand it.</p>
     </div>
+    <div class="card">
+      <h4>Q: Why was the original per-chart panel deleted?</h4>
+      <p>Placement decision flipped on 2026-05-06 to a top-level dashboard drawer. The legacy panel had latent bugs (lab PDFs hard-coded to intake schema, unfinished overlay plumbing) and no demo path used it — fixing dead code is pure carrying cost. See slide 20.</p>
+    </div>
+    <div class="card">
+      <h4>Q: Why is the eval baseline a stub at 1.0?</h4>
+      <p>The production <code>SupervisorAdapter</code> bridge ships (<code>sidecar/src/agentforge/eval/supervisor_adapter.py</code>); the regen CLI's real-LLM branch is a deliberate manual-edit seam so the test surface stays token-free. The gate's <em>self-test</em> proves the gate bites; replacing the stub with a measured baseline is a once-per-meaningful-change run on the droplet.</p>
+    </div>
   </div>
-  <span class="slide-number">17 / 18</span>
+  <span class="slide-number">21 / 23</span>
 </section>
 
-<!-- 14. DONE / CLOSING -->
+<!-- 22. SHIPPED VS DEFERRED -->
+<section class="slide">
+  <span class="slide-label">As of 2026-05-09 morning · honest state</span>
+  <h2>Shipped vs deferred</h2>
+  <p class="lede">The architecture defense holds and the implementation has caught up. Receipts follow; everything left is named, scoped, and sequenced.</p>
+  <div class="grid-2" style="margin-top: 1rem;">
+    <div class="card">
+      <h4 style="color: var(--good);">Shipped — running on the droplet</h4>
+      <ul style="font-size: 0.95rem; line-height: 1.45; margin: 0.4rem 0 0;">
+        <li><span class="pill good">graph</span> LangGraph supervisor + intake-extractor + evidence-retriever wired; doc_type dispatch on extractor (P1.2)</li>
+        <li><span class="pill good">vision</span> Pydantic <code>IntakeFormExtraction</code> + <code>LabPdfExtraction</code> with bbox-confidence floor; <code>record_extraction_call</code> Langfuse spans (P2.3)</li>
+        <li><span class="pill good">upload</span> JWT-authed PHP upload endpoint; doc_type carried through Vue (P4#1) into the turn body</li>
+        <li><span class="pill good">persist</span> Option A sidecar-initiated persist; <code>QuestionnaireResponseService</code> route (P2.1); LabValue primitive (P2.2); logical id <code>agentforge-intake-form</code> (P4#4)</li>
+        <li><span class="pill good">overlay</span> Bbox overlay live — DocumentViewer + "View source (N)" modal renders blue rectangles over Citation.page_bbox</li>
+        <li><span class="pill good">RAG</span> BM25 + dense + RRF + cross-encoder; "Ask guidelines" toggle opt-in (P4#2)</li>
+        <li><span class="pill good">eval</span> 50-case W2 suite + LLM-as-judge + gate self-test; GitLab CI + GitHub Actions mirror</li>
+        <li><span class="pill good">PHI</span> Three-boundary auth (slide 11); HTTP cache headers on internal document route (Task 26)</li>
+        <li><span class="pill good">tests</span> Sidecar 1335 / 18 deselected · PHP module 384 / 384 · PHPStan level 10 clean</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="color: var(--warn);">Deferred — named, scoped, sequenced</h4>
+      <ul style="font-size: 0.95rem; line-height: 1.45; margin: 0.4rem 0 0;">
+        <li><span class="pill warn">eval</span> <strong>Measured baseline.</strong> <code>baselines/week2.json</code> is a structural stub (<code>_meta.status: "stub"</code>); <code>SupervisorAdapter</code> ships, manual <code>regenerate_baseline</code> CLI edit + ~$0.87 run replaces it.</li>
+        <li><span class="pill warn">judge</span> <strong>Judge routing.</strong> <code>_JUDGE_BY_CATEGORY</code> only fires for HALLUCINATION/REFUSAL; the W2 case suite uses five different categories. Programmatic <code>citation_present</code> grader carries the load-bearing claim today; extending judge routing is a documented follow-up.</li>
+        <li><span class="pill warn">labs</span> <strong>Lab graph worker.</strong> P1.2 + P1.1 are forward-compat-ready; the graph today emits <code>IntakeFormExtraction</code>. Wiring a lab-extractor flow end-to-end is the next slice.</li>
+        <li><span class="pill warn">write-back</span> <strong>Promotion-to-chart UI.</strong> Extraction surfaces with citations; promotion is an explicit human action by design (Decision 1). The audit + co-sign UX is post-W2.</li>
+        <li><span class="pill warn">PNG</span> <strong>DocumentViewer is PDF-only.</strong> Reyes + Kowalski PNG forms won't render in the modal. Demo runbook sticks to typed PDFs.</li>
+        <li><span class="pill warn">streaming</span> <strong>SSE on the W2 path.</strong> Graph returns one final string; W1 chart-question turns continue to stream.</li>
+        <li><span class="pill warn">corpus</span> <strong>Demo guideline corpus is project-prepared summaries</strong> (NOTICE.md "demo stub only"). Production-grade ingestion of real source PDFs is post-W2.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout" style="margin-top: 1rem;">
+    Every deferral is a known-shape implementation gap, not a design rethink. Each item has a documented next step in <code>docs/NEXT-SESSION.md</code> and <code>docs/DEVIATIONS.md</code>.
+  </div>
+  <span class="slide-number">22 / 23</span>
+</section>
+
+<!-- 23. DONE / CLOSING -->
 <section class="slide">
   <span class="slide-label">Closing</span>
   <h2>What "done" looks like Sunday at noon</h2>
-  <ul style="font-size: 1.15rem;">
-    <li><span class="pill accent">gate</span> 50-case eval gate green; gate self-test demonstrates a deliberately-injected regression fails the rubric.</li>
-    <li><span class="pill accent">graph</span> LangGraph supervisor + 2 workers wired; the nine W1 regression locks pass against the new graph.</li>
-    <li><span class="pill accent">ingest</span> Lab PDF and intake form ingestion end-to-end through <code>procedure_*</code> and <code>QuestionnaireResponse</code>, with the AgentForge Intake <code>Questionnaire</code> seed migration applied.</li>
-    <li><span class="pill accent">UI</span> Citation overlay on the existing patient-demographics agent panel; PDF served from OpenEMR's session-authed documents path.</li>
-    <li><span class="pill good">extension</span> Critic agent and lab trend chart shipped <em>only</em> after the eval gate clears Thursday EOD.</li>
-    <li><span class="pill warn">deferred</span> Third document type · promotion write-back · FHIR cross-link · ColQwen2 · on-prem vLLM.</li>
+  <ul style="font-size: 1.1rem;">
+    <li><span class="pill good">live</span> MVP running on the droplet at <code>https://143.244.157.90:9300/dashboard/</code>. Demo personas Chen + Whitaker exercise the upload → extract → persist → ExtractionPanel → bbox-overlay loop end-to-end.</li>
+    <li><span class="pill good">graph</span> LangGraph supervisor + intake-extractor + evidence-retriever wired; nine W1 regression locks pass against the W2 citation index.</li>
+    <li><span class="pill good">vision</span> Doc-upload pipeline shipped: JWT-authed PHP upload → sidecar → Haiku vision → Pydantic-validated extraction → Option A persist → ExtractionPanel + "View source" bbox overlay.</li>
+    <li><span class="pill good">persist</span> Service-routed (<code>QuestionnaireResponseService</code>); LabValue domain primitive at the wire; FHIR-canonical-resolvable logical id.</li>
+    <li><span class="pill good">eval</span> 50-case W2 suite + LLM-as-judge harness + gate self-test that deliberately regresses the supervisor adapter and proves the gate catches it. CI mirrored on GitLab + GitHub.</li>
+    <li><span class="pill warn">deferred</span> Measured baseline (stub today) · lab graph worker · promotion-to-chart UI · PNG viewer · streaming on the W2 path · production guideline corpus. Each named, scoped, sequenced.</li>
   </ul>
-  <div class="callout" style="margin-top: 2rem;">
-    <p style="font-size: 1.15rem; margin: 0;">OpenEMR remains the system of record. The agent reads, extracts with citations, retrieves grounded evidence, and answers — but the chart is updated by humans, not by VLM extraction.</p>
+  <div class="callout" style="margin-top: 1.5rem;">
+    <p style="font-size: 1.15rem; margin: 0;">OpenEMR remains the system of record. The agent reads, extracts with citations + bboxes, retrieves grounded evidence, and answers — but the chart is updated by humans, not by VLM extraction. The eval gate's <em>self-test</em> is the empirical claim that the gate bites.</p>
   </div>
-  <span class="slide-number">18 / 18</span>
+  <span class="slide-number">23 / 23</span>
 </section>
 
 <div class="nav-hint">scroll · or ↓ / Space</div>
