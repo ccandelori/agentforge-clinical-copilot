@@ -65,6 +65,7 @@ from agentforge.orchestrator import (
     get_turn_citation_index,
 )
 from agentforge.orchestrator.graph import DocumentType
+from agentforge.schemas.citation import SourceType
 from agentforge.verifier.cache import CitationIndex
 from agentforge.verifier.citation import find_citations
 
@@ -151,22 +152,57 @@ class AgentTurnRequest(BaseModel):
 
 
 class AgentTurnCitation(BaseModel):
-    """One citation surfaced to the dashboard chat UI.
+    """One citation surfaced to the dashboard chat UI — W2 wire shape.
 
-    Shape matches what the vue-ui ``CitationPill`` / ``CitationsPane``
-    components expect. Sourced by parsing the orchestrator's reply text
-    for the W1 ``[record_type #id]`` grammar via
-    :func:`agentforge.verifier.citation.find_citations`.
+    The dashboard contract per W2_ARCHITECTURE.md §2.2: every clinical
+    claim carries a machine-readable citation a reader can trace back
+    to its source. The fields mirror :class:`agentforge.schemas.citation.Citation`
+    on purpose — that is the canonical structured form, this is the
+    BFF response surface that flattens it for the chat UI. Note that
+    ``source_type`` is a free string rather than the schema's
+    :class:`SourceType` enum so this model can also carry the synthetic
+    ``OPENEMR_RECORD`` source we mint for W1 chart records (see
+    :func:`_build_citations`); the value space is still constrained
+    to the ``SourceType`` enum at construction time.
+
+    Sourced by parsing the orchestrator's reply text for the
+    ``[record_type #id]`` grammar via
+    :func:`agentforge.verifier.citation.find_citations`, then enriched
+    against the per-turn :class:`CitationIndex` so each pill carries
+    the rich locator + verbatim quote the W2 contract asks for.
+
+    Shape compatibility with W1 callers is intentionally NOT preserved
+    — the dashboard is the only consumer and is updated in lockstep.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str
-    source: str
-    excerpt: str
-    date: str
-    kind: str
-    provenance: str | None = None
+    source_type: str
+    """One of :class:`SourceType` values: ``openemr_record``,
+    ``guideline``, ``intake_form``, ``lab_pdf``."""
+
+    source_id: str
+    """Stable handle for the source: FHIR/OpenEMR record id, guideline
+    document id, or scanned-document id."""
+
+    page_or_section: str | None = None
+    """Human-readable locator: ``"page 2"`` for documents, ``"Section
+    4.1"`` for guideline chunks, ``None`` for chart-resident records
+    that have no page/section concept."""
+
+    field_or_chunk_id: str | None = None
+    """Stable inner handle: ``"<record_type>/<record_id>"`` for chart
+    records, retrieval ``chunk_id`` for guideline chunks, extraction
+    field key for scanned documents. ``None`` only for the rare
+    fallback path where the verifier returned no record context."""
+
+    quote_or_value: str | None = None
+    """The literal extracted value or quoted text the claim is grounded
+    in. Capped at :data:`_QUOTE_MAX_LEN` to bound payload size; the
+    client truncates further for compact display. ``None`` only when
+    the verifier returned no record context AND no raw token was
+    captured (extremely unlikely — we always have at least the
+    bracket-tag string)."""
 
 
 class AgentTurnResponse(BaseModel):
@@ -193,26 +229,6 @@ class AgentTurnResponse(BaseModel):
     # route a follow-up "open this resource" action without a second
     # round-trip to look up the just-persisted handle.
     persisted_resource_id: str | None = None
-
-
-# Map verifier record types → frontend kind enum
-# ('note' | 'lab' | 'med' | 'problem' | 'allergy'). Unknown record
-# types fall back to 'note' so the citation still surfaces as a pill.
-_KIND_BY_RECORD_TYPE: dict[str, str] = {
-    "note": "note",
-    "encounter": "note",
-    "visit": "note",
-    "problem": "problem",
-    "condition": "problem",
-    "diagnosis": "problem",
-    "allergy": "allergy",
-    "med": "med",
-    "medication": "med",
-    "rx": "med",
-    "lab": "lab",
-    "lab_result": "lab",
-    "observation": "lab",
-}
 
 
 _NARRATIVE_FIELDS: tuple[str, ...] = (
@@ -316,17 +332,17 @@ _METADATA_BY_KIND: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-# Cap excerpts to bound payload size — full chart notes can be many KB
-# of free text and the chat doesn't need every word. The client clamps
+# Cap quote_or_value to bound payload size — full chart notes can be many
+# KB of free text and the chat doesn't need every word. The client clamps
 # its display further (line-clamp-3 by default) and reveals more on the
 # "View source" expand toggle, so 4 KB is plenty of headroom.
-_EXCERPT_MAX_LEN = 4000
+_QUOTE_MAX_LEN = 4000
 
 
 def _truncate(s: str) -> str:
     s = s.strip()
-    if len(s) > _EXCERPT_MAX_LEN:
-        return s[: _EXCERPT_MAX_LEN - 1].rstrip() + "…"
+    if len(s) > _QUOTE_MAX_LEN:
+        return s[: _QUOTE_MAX_LEN - 1].rstrip() + "…"
     return s
 
 
@@ -375,54 +391,191 @@ def _pick_excerpt(record: dict[str, Any], record_type: str, fallback: str) -> st
     return fallback
 
 
-def _pick_date(record: dict[str, Any]) -> str:
-    """Pick the most-likely date field; empty string if none matches."""
+def _date_to_section(record: dict[str, Any]) -> str | None:
+    """Pick the most-likely date field for ``page_or_section``.
+
+    Chart-resident records (notes, encounters, labs) have no page or
+    formal section — but they DO have a clinical date that gives the
+    citation pill a useful temporal locator (``"Recorded 2026-04-12"``).
+    Returns ``None`` when no date field matched, so the wire shape
+    omits ``page_or_section`` cleanly rather than emitting an empty
+    string.
+    """
     for field_name in _DATE_FIELD_PRIORITY:
         v = record.get(field_name)
         if isinstance(v, str) and v.strip():
             # Trim time portion for compact pill display.
             return v.split("T", 1)[0]
-    return ""
+    return None
+
+
+def _quote_from_w2_record(record: dict[str, Any], fallback: str) -> str:
+    """Pick the verbatim quote from a W2-shaped record dict.
+
+    W2 records (guideline chunks, intake/lab extractions) carry the
+    canonical literal in ``quote_or_value``. Truncate so the wire
+    payload stays bounded — guideline chunks routinely exceed
+    :data:`_QUOTE_MAX_LEN` of body text.
+    """
+    quote = record.get("quote_or_value")
+    if isinstance(quote, str) and quote.strip():
+        return _truncate(quote)
+    return fallback
+
+
+def _w2_citation_from_record(
+    record_type: str,
+    record_id: str,
+    record: dict[str, Any],
+    fallback_quote: str,
+) -> AgentTurnCitation:
+    """Build a wire citation from a W2-shaped indexed record.
+
+    The W2 graph stashes ``Citation.model_dump()`` into the per-turn
+    index for guideline chunks (``source_type=guideline``) and intake
+    /lab extraction fields. Those dicts already carry the canonical
+    fields; we just normalize types and bound the quote length.
+    """
+    source_type_raw = record.get("source_type")
+    if not isinstance(source_type_raw, str) or not source_type_raw:
+        source_type_raw = SourceType.OPENEMR_RECORD.value
+
+    source_id_raw = record.get("source_id")
+    if isinstance(source_id_raw, str) and source_id_raw:
+        source_id = source_id_raw
+    else:
+        source_id = record_id
+
+    page_or_section = record.get("page_or_section")
+    if not isinstance(page_or_section, str) or not page_or_section:
+        page_or_section = None
+
+    field_or_chunk_id_raw = record.get("field_or_chunk_id")
+    if isinstance(field_or_chunk_id_raw, str) and field_or_chunk_id_raw:
+        field_or_chunk_id = field_or_chunk_id_raw
+    else:
+        # Fall back to a deterministic synthetic key. The bracket-tag
+        # parser already pinned (record_type, record_id), so reusing
+        # them keeps the dashboard's pill identity stable.
+        field_or_chunk_id = f"{record_type}/{record_id}"
+
+    return AgentTurnCitation(
+        source_type=source_type_raw,
+        source_id=source_id,
+        page_or_section=page_or_section,
+        field_or_chunk_id=field_or_chunk_id,
+        quote_or_value=_quote_from_w2_record(record, fallback_quote),
+    )
+
+
+def _w2_citation_from_w1_record(
+    record_type: str,
+    record_id: str,
+    record: dict[str, Any],
+    fallback_quote: str,
+) -> AgentTurnCitation:
+    """Build a W2 wire citation from a W1-shaped chart record.
+
+    Chart records (the ones returned by the eleven W1 chart tools —
+    problems, meds, allergies, labs, vitals, encounters, notes,
+    immunizations, procedures, demographics) don't carry a structured
+    citation; they're raw row dicts. We project them into the W2
+    contract by minting an ``OPENEMR_RECORD`` source with:
+
+    * ``source_id``  = the bracket-tag ``record_id`` (verifier already
+      validated this against the per-turn cache, so it's a real id).
+    * ``page_or_section`` = the row's date field if present (gives the
+      pill a temporal locator), else ``None``.
+    * ``field_or_chunk_id`` = ``"<record_type>/<record_id>"`` — the
+      composite key that uniquely identifies this row within the turn.
+    * ``quote_or_value`` = the rich excerpt :func:`_pick_excerpt`
+      already produces (narrative when available, else the kind-specific
+      "Label: value · Label: value" synthesis).
+    """
+    return AgentTurnCitation(
+        source_type=SourceType.OPENEMR_RECORD.value,
+        source_id=record_id,
+        page_or_section=_date_to_section(record),
+        field_or_chunk_id=f"{record_type}/{record_id}",
+        quote_or_value=_pick_excerpt(record, record_type, fallback=fallback_quote),
+    )
 
 
 def _build_citations(reply: str) -> list[AgentTurnCitation]:
-    """Extract inline ``[type #id]`` citations from a reply for the UI.
+    """Extract inline ``[type #id]`` citations from a reply, in W2 wire shape.
 
-    Excerpts and dates are resolved against the per-turn
-    :class:`CitationIndex` stashed by the orchestrator — this gives the
-    chat pills the actual record text instead of the raw ``[note #116]``
-    token. When the index is unavailable (e.g. unit-test stub or a turn
-    that didn't go through the verifier), we fall back to the raw token.
+    Bridge contract:
+
+    1. The synthesizer emits bracket-tag citations in its reply text
+       (the W1 grammar — ``[type #id]``). The bracket grammar is the
+       LLM-friendly form; the W2 wire shape is the dashboard contract.
+       Mapping between the two happens here.
+    2. :func:`find_citations` parses the bracket tags into a
+       ``(record_type, record_id)`` pair plus the raw token.
+    3. Each pair is looked up in the per-turn :class:`CitationIndex`
+       stashed by the orchestrator. The index records carry either:
+
+       * **W2 shape** (key has ``source_type``) — guideline chunks
+         registered by ``build_w2_citation_index`` and intake/lab
+         extraction citations. Fields are copied through directly.
+       * **W1 shape** (raw row dicts) — chart records keyed by their
+         tool's row id. Projected to W2 via
+         :func:`_w2_citation_from_w1_record`: ``source_type`` becomes
+         ``OPENEMR_RECORD``; ``page_or_section`` becomes the row's date
+         (when present); ``quote_or_value`` becomes the same rich
+         excerpt the W1 surface used to render.
+
+    4. When the per-turn index is unavailable (unit-test stub, or a
+       turn that didn't pass through the verifier), we still emit a
+       valid W2 citation — the bracket-tag carries (record_type,
+       record_id) so the wire shape can be populated; only the
+       ``quote_or_value`` falls back to the raw token.
+
+    Dedup keys on ``(source_type, field_or_chunk_id)`` — the same key
+    the underlying :class:`CitationIndex` uses, so duplicate bracket
+    tags collapse into one pill.
     """
     index: CitationIndex | None = get_turn_citation_index()
     out: list[AgentTurnCitation] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for c in find_citations(reply):
-        kind = _KIND_BY_RECORD_TYPE.get(c.record_type.lower(), "note")
-        cid = f"{c.record_type}-{c.record_id}"
-        if cid in seen:
-            continue
-        seen.add(cid)
         record = (
             index.get(c.record_type, c.record_id) if index is not None else None
         )
-        source = f"{c.record_type.title()} {c.record_id}"
-        if record is not None:
-            excerpt = _pick_excerpt(record, c.record_type, fallback=c.raw)
-            date = _pick_date(record)
-        else:
-            excerpt = c.raw
-            date = ""
-        out.append(
-            AgentTurnCitation(
-                id=cid,
-                source=source,
-                excerpt=excerpt,
-                date=date,
-                kind=kind,
-                provenance=c.raw,
+
+        if record is None:
+            citation = AgentTurnCitation(
+                source_type=SourceType.OPENEMR_RECORD.value,
+                source_id=c.record_id,
+                page_or_section=None,
+                field_or_chunk_id=f"{c.record_type}/{c.record_id}",
+                quote_or_value=c.raw,
             )
+        elif "source_type" in record:
+            # W2-shaped record: ``Citation.model_dump()`` from
+            # build_w2_citation_index. Copy fields through.
+            citation = _w2_citation_from_record(
+                c.record_type, c.record_id, record, fallback_quote=c.raw
+            )
+        else:
+            # W1-shaped record: raw chart row from build_citation_index.
+            citation = _w2_citation_from_w1_record(
+                c.record_type, c.record_id, record, fallback_quote=c.raw
+            )
+
+        # Dedup on the W2 key. ``field_or_chunk_id`` is non-None for the
+        # W2 record path and for the W1 projection (we synthesize
+        # ``"<record_type>/<record_id>"`` there); for the no-index
+        # fallback we synthesize the same composite, so the dedup key
+        # is always populated.
+        dedup_key = (
+            citation.source_type,
+            citation.field_or_chunk_id or f"{c.record_type}/{c.record_id}",
         )
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        out.append(citation)
     return out
 
 

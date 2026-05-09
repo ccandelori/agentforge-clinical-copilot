@@ -112,7 +112,7 @@ describe('useAgentTurn', () => {
     expect('document_id' in body).toBe(false)
   })
 
-  it('returns the parsed reply and citations', async () => {
+  it('returns the parsed reply and W2-shape citations', async () => {
     const { respond } = setupFetchMock()
     const turn = useAgentTurn()
 
@@ -121,11 +121,11 @@ describe('useAgentTurn', () => {
       reply: 'There you go',
       citations: [
         {
-          id: 'note-1',
-          source: 'Note 1',
-          excerpt: 'foo',
-          date: '2026-01-01',
-          kind: 'note',
+          source_type: 'openemr_record',
+          source_id: '116',
+          page_or_section: '2026-04-12',
+          field_or_chunk_id: 'note/116',
+          quote_or_value: 'Visit summary text.',
         },
       ],
     })
@@ -133,7 +133,106 @@ describe('useAgentTurn', () => {
 
     expect(result.reply).toBe('There you go')
     expect(result.citations).toHaveLength(1)
-    expect(result.citations[0]!.id).toBe('note-1')
+    const c = result.citations[0]!
+    expect(c.source_type).toBe('openemr_record')
+    expect(c.source_id).toBe('116')
+    expect(c.page_or_section).toBe('2026-04-12')
+    expect(c.field_or_chunk_id).toBe('note/116')
+    expect(c.quote_or_value).toBe('Visit summary text.')
+  })
+
+  it('parses guideline citations with null page_or_section nulls', async () => {
+    const { respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'guidelines please' })
+    respond({
+      reply: 'Per guideline...',
+      citations: [
+        {
+          source_type: 'guideline',
+          source_id: 'hypertension-acc-aha-2017-targets',
+          page_or_section: 'Blood Pressure Categories in mmHg',
+          field_or_chunk_id: 'bp-categories-0',
+          quote_or_value: 'Stage 1 HTN: 130-139 mm Hg.',
+        },
+      ],
+    })
+    const result = await promise
+
+    expect(result.citations).toHaveLength(1)
+    const c = result.citations[0]!
+    expect(c.source_type).toBe('guideline')
+    expect(c.field_or_chunk_id).toBe('bp-categories-0')
+  })
+
+  it('drops citations whose source_type is unknown', async () => {
+    const { respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'hi' })
+    respond({
+      reply: 'ok',
+      citations: [
+        {
+          source_type: 'made_up_kind',
+          source_id: 'x',
+          page_or_section: null,
+          field_or_chunk_id: 'x/y',
+          quote_or_value: 'q',
+        },
+      ],
+    })
+    const result = await promise
+
+    expect(result.citations).toHaveLength(0)
+  })
+
+  it('drops citations missing source_id', async () => {
+    const { respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'hi' })
+    respond({
+      reply: 'ok',
+      citations: [
+        {
+          source_type: 'openemr_record',
+          page_or_section: null,
+          field_or_chunk_id: 'note/9',
+          quote_or_value: 'q',
+        },
+      ],
+    })
+    const result = await promise
+
+    expect(result.citations).toHaveLength(0)
+  })
+
+  it('coerces null optional fields to nullable on the typed result', async () => {
+    const { respond } = setupFetchMock()
+    const turn = useAgentTurn()
+
+    const promise = turn.send({ message: 'hi' })
+    respond({
+      reply: 'ok',
+      citations: [
+        {
+          source_type: 'openemr_record',
+          source_id: '9',
+          page_or_section: null,
+          field_or_chunk_id: null,
+          quote_or_value: null,
+        },
+      ],
+    })
+    const result = await promise
+
+    expect(result.citations).toHaveLength(1)
+    const c = result.citations[0]!
+    expect(c.page_or_section).toBeNull()
+    expect(c.field_or_chunk_id).toBeNull()
+    expect(c.quote_or_value).toBeNull()
   })
 
   it('surfaces a parsed extraction when the sidecar attaches one', async () => {

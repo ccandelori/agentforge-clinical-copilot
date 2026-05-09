@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { useAgentForgeStore, type Citation } from '@/stores/agentforge'
+import { citationKey, type Citation } from '@/composables/useAgentTurn'
+import { useAgentForgeStore } from '@/stores/agentforge'
 
 interface Props {
   highlightedId: string | null
@@ -12,9 +13,10 @@ const props = defineProps<Props>()
 const store = useAgentForgeStore()
 
 interface CitationGroup {
-  readonly source: string
-  readonly date: string
-  readonly citations: readonly Citation[]
+  // Visual group label, e.g. "Chart" / "Guideline" / "Lab PDF" /
+  // "Intake".
+  readonly groupLabel: string
+  readonly entries: readonly { readonly key: string; readonly citation: Citation }[]
 }
 
 const allCitations = computed<readonly Citation[]>(() => {
@@ -22,26 +24,37 @@ const allCitations = computed<readonly Citation[]>(() => {
   const seen = new Set<string>()
   for (const m of store.messages) {
     for (const c of m.citations ?? []) {
-      if (seen.has(c.id)) continue
-      seen.add(c.id)
+      const key = citationKey(c)
+      if (seen.has(key)) continue
+      seen.add(key)
       out.push(c)
     }
   }
   return out
 })
 
-const grouped = computed<readonly CitationGroup[]>(() => {
-  const map = new Map<string, Citation[]>()
-  for (const c of allCitations.value) {
-    const key = `${c.source}|${c.date}`
-    const list = map.get(key) ?? []
-    list.push(c)
-    map.set(key, list)
+function sourceTypeLabel(sourceType: Citation['source_type']): string {
+  switch (sourceType) {
+    case 'openemr_record':
+      return 'Chart'
+    case 'guideline':
+      return 'Guideline'
+    case 'lab_pdf':
+      return 'Lab PDF'
+    case 'intake_form':
+      return 'Intake'
   }
-  return [...map.entries()].map(([key, list]) => {
-    const [source, date] = key.split('|') as [string, string]
-    return { source, date, citations: list }
-  })
+}
+
+const grouped = computed<readonly CitationGroup[]>(() => {
+  const map = new Map<string, { readonly key: string; readonly citation: Citation }[]>()
+  for (const c of allCitations.value) {
+    const groupLabel = sourceTypeLabel(c.source_type)
+    const list = map.get(groupLabel) ?? []
+    list.push({ key: citationKey(c), citation: c })
+    map.set(groupLabel, list)
+  }
+  return [...map.entries()].map(([groupLabel, entries]) => ({ groupLabel, entries }))
 })
 
 const cardRefs = ref<Map<string, HTMLElement>>(new Map())
@@ -71,33 +84,16 @@ function isExpanded(id: string): boolean {
   return expanded.value.has(id)
 }
 
-function kindLabel(kind: Citation['kind']): string {
-  switch (kind) {
-    case 'note':
-      return 'Note'
-    case 'lab':
-      return 'Lab'
-    case 'med':
-      return 'Medication'
-    case 'problem':
-      return 'Problem'
-    case 'allergy':
-      return 'Allergy'
-  }
-}
-
-function kindBadgeClass(kind: Citation['kind']): string {
-  switch (kind) {
-    case 'note':
+function badgeClass(sourceType: Citation['source_type']): string {
+  switch (sourceType) {
+    case 'openemr_record':
       return 'bg-info-100 text-info-700 dark:bg-info-700/20 dark:text-info-500'
-    case 'lab':
-      return 'bg-warning-100 text-warning-700 dark:bg-warning-700/20 dark:text-warning-500'
-    case 'med':
-      return 'bg-success-100 text-success-700 dark:bg-success-700/20 dark:text-success-500'
-    case 'problem':
-      return 'bg-danger-100 text-danger-700 dark:bg-danger-700/20 dark:text-danger-500'
-    case 'allergy':
+    case 'guideline':
       return 'bg-primary-100 text-primary-700 dark:bg-primary-700/20 dark:text-primary-300'
+    case 'lab_pdf':
+      return 'bg-warning-100 text-warning-700 dark:bg-warning-700/20 dark:text-warning-500'
+    case 'intake_form':
+      return 'bg-success-100 text-success-700 dark:bg-success-700/20 dark:text-success-500'
   }
 }
 
@@ -135,21 +131,21 @@ watch(
     </div>
 
     <div v-else class="flex flex-col gap-5">
-      <section v-for="g in grouped" :key="`${g.source}-${g.date}`" class="flex flex-col gap-2">
+      <section v-for="g in grouped" :key="g.groupLabel" class="flex flex-col gap-2">
         <header class="flex items-baseline justify-between gap-2">
           <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            {{ g.source }}
+            {{ g.groupLabel }}
           </h3>
-          <span class="text-[11px] text-ink-muted">{{ g.date }}</span>
+          <span class="text-[11px] text-ink-muted">{{ g.entries.length }}</span>
         </header>
 
         <article
-          v-for="c in g.citations"
-          :key="c.id"
-          :ref="(el) => setCardRef(c.id, el)"
+          v-for="entry in g.entries"
+          :key="entry.key"
+          :ref="(el) => setCardRef(entry.key, el)"
           class="rounded-xl border border-line bg-surface p-3 shadow-card transition-colors"
           :class="
-            highlightedId === c.id
+            highlightedId === entry.key
               ? 'border-primary-500 ring-2 ring-primary-500/30'
               : ''
           "
@@ -157,26 +153,42 @@ watch(
           <div class="flex items-center gap-2">
             <span
               class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
-              :class="kindBadgeClass(c.kind)"
+              :class="badgeClass(entry.citation.source_type)"
             >
-              {{ kindLabel(c.kind) }}
+              {{ entry.citation.source_id }}
             </span>
-            <span class="text-[11px] text-ink-muted">{{ c.date }}</span>
+            <span
+              v-if="entry.citation.page_or_section !== null"
+              class="text-[11px] text-ink-muted"
+            >
+              {{ entry.citation.page_or_section }}
+            </span>
           </div>
           <p
+            v-if="entry.citation.quote_or_value !== null"
             class="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-ink"
-            :class="isExpanded(c.id) ? '' : 'line-clamp-3'"
-          >{{ c.excerpt }}</p>
+            :class="isExpanded(entry.key) ? '' : 'line-clamp-3'"
+          >{{ entry.citation.quote_or_value }}</p>
+          <p
+            v-else
+            class="mt-2 text-sm italic text-ink-muted"
+          >No quote available.</p>
+          <div
+            v-if="entry.citation.field_or_chunk_id !== null"
+            class="mt-2 truncate text-[10px] font-mono text-ink-muted"
+            :title="entry.citation.field_or_chunk_id"
+          >{{ entry.citation.field_or_chunk_id }}</div>
           <div class="mt-3 flex justify-end">
             <button
+              v-if="entry.citation.quote_or_value !== null"
               type="button"
               class="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs font-medium text-ink-muted hover:bg-surface-2 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              :title="isExpanded(c.id) ? 'Collapse' : 'View full source'"
-              :aria-expanded="isExpanded(c.id)"
-              @click="toggleExpanded(c.id)"
+              :title="isExpanded(entry.key) ? 'Collapse' : 'View full source'"
+              :aria-expanded="isExpanded(entry.key)"
+              @click="toggleExpanded(entry.key)"
             >
               <svg
-                v-if="!isExpanded(c.id)"
+                v-if="!isExpanded(entry.key)"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -199,7 +211,7 @@ watch(
               >
                 <path d="m18 15-6-6-6 6" />
               </svg>
-              {{ isExpanded(c.id) ? 'Collapse' : 'View source' }}
+              {{ isExpanded(entry.key) ? 'Collapse' : 'View source' }}
             </button>
           </div>
         </article>

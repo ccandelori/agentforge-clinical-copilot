@@ -25,9 +25,11 @@ import type { DocumentType } from '@/composables/useDocumentUpload'
  * localStorage; mirroring that here on the way to real data.
  *
  * Re-exports `Citation` from the composable so existing imports
- * (`@/stores/agentforge`) keep working without churn. Citation kinds
- * were reconciled to dashboard-port's set: `'imaging'` and
- * `'medication'` were dropped in favour of `'med'` and `'allergy'`.
+ * (`@/stores/agentforge`) keep working without churn. The Citation
+ * shape carries the W2 machine-readable contract (P2.3): every pill
+ * has `source_type` / `source_id` / `page_or_section` /
+ * `field_or_chunk_id` / `quote_or_value` so a clinician can trace
+ * each clinical claim back to its underlying source.
  */
 
 const STORAGE_KEY = 'agentforge-conversations'
@@ -88,21 +90,23 @@ function makeId(prefix: string): string {
 function isCitation(v: unknown): v is Citation {
   if (typeof v !== 'object' || v === null) return false
   const o = v as Record<string, unknown>
-  if (typeof o.id !== 'string') return false
-  if (typeof o.source !== 'string') return false
-  if (typeof o.excerpt !== 'string') return false
-  if (typeof o.date !== 'string') return false
+  if (typeof o.source_type !== 'string') return false
   if (
-    o.kind !== 'note'
-    && o.kind !== 'lab'
-    && o.kind !== 'med'
-    && o.kind !== 'problem'
-    && o.kind !== 'allergy'
+    o.source_type !== 'openemr_record'
+    && o.source_type !== 'guideline'
+    && o.source_type !== 'lab_pdf'
+    && o.source_type !== 'intake_form'
   ) {
     return false
   }
-  if (o.provenance !== undefined && typeof o.provenance !== 'string') {
-    return false
+  if (typeof o.source_id !== 'string') return false
+  // page_or_section, field_or_chunk_id, quote_or_value are nullable —
+  // only reject when the field is present-but-not-string-or-null.
+  for (const optionalKey of ['page_or_section', 'field_or_chunk_id', 'quote_or_value']) {
+    const value = o[optionalKey]
+    if (value !== null && value !== undefined && typeof value !== 'string') {
+      return false
+    }
   }
   return true
 }

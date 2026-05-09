@@ -946,3 +946,216 @@ async def test_evidence_query_defaults_to_empty_when_omitted() -> None:
 
     assert resp.status_code == 200
     assert orch.captured["evidence_query"] == ""
+
+
+# ---------------------------------------------------------------------
+# P2.3 — W2 machine-readable citation shape
+#
+# Every emitted citation must carry source_type / source_id /
+# page_or_section / field_or_chunk_id / quote_or_value (per
+# W2_ARCHITECTURE.md §2.2). Cover three paths:
+#   * W1 chart record (``[note #N]``) → OPENEMR_RECORD projection.
+#   * W2 guideline chunk (``[guideline #chunk_id]``) → GUIDELINE pass-
+#     through from the per-turn CitationIndex.
+#   * No index / unknown record → fallback OPENEMR_RECORD with the raw
+#     bracket-token quote.
+# ---------------------------------------------------------------------
+
+
+def test_w2_citation_shape_for_chart_record_uses_openemr_record_source() -> None:
+    """A bracket tag matching a W1 chart record produces an
+    OPENEMR_RECORD citation with the row's date as page_or_section
+    and the row's narrative/synthesized excerpt as quote_or_value."""
+    from contextvars import copy_context
+
+    from agentforge.dashboard_auth.turn_route import _build_citations
+    from agentforge.orchestrator import _TURN_CITATION_INDEX_VAR
+    from agentforge.verifier.cache import CitationIndex
+
+    index = CitationIndex(records={
+        ("note", "116"): {
+            "id": "116",
+            "text": "Patient reports stable HTN. BP 128/78 today.",
+            "date": "2026-04-12",
+        },
+    })
+
+    def run() -> list[Any]:
+        _TURN_CITATION_INDEX_VAR.set(index)
+        return _build_citations(
+            "Patient is stable on lisinopril [note #116]."
+        )
+
+    citations = copy_context().run(run)
+
+    assert len(citations) == 1
+    c = citations[0]
+    assert c.source_type == "openemr_record"
+    assert c.source_id == "116"
+    assert c.field_or_chunk_id == "note/116"
+    assert c.page_or_section == "2026-04-12"
+    assert "stable HTN" in (c.quote_or_value or "")
+
+
+def test_w2_citation_shape_for_guideline_chunk_passes_through_w2_record() -> None:
+    """A bracket tag matching a W2 guideline chunk in the per-turn
+    index round-trips the structured Citation fields (source_type /
+    source_id / page_or_section / field_or_chunk_id / quote_or_value)
+    untouched onto the wire."""
+    from contextvars import copy_context
+
+    from agentforge.dashboard_auth.turn_route import _build_citations
+    from agentforge.orchestrator import _TURN_CITATION_INDEX_VAR
+    from agentforge.schemas.citation import Citation, SourceType
+    from agentforge.verifier.cache import CitationIndex
+
+    # Use a parser-compatible chunk id (the bracket-tag regex allows
+    # ``[A-Za-z0-9_\-]``; double-colon-delimited chunk ids in the
+    # production corpus do not round-trip through the W1 verifier
+    # parser today, which is a separate pre-existing gap outside the
+    # P2.3 scope). The wire-shape contract here is independent of
+    # which chunk-id alphabet ultimately ships.
+    chunk_citation = Citation(
+        source_type=SourceType.GUIDELINE,
+        source_id="hypertension-acc-aha-2017-targets",
+        page_or_section="Blood Pressure Categories in mmHg",
+        field_or_chunk_id="bp-categories-0",
+        quote_or_value=(
+            "Stage 1 hypertension: systolic 130-139 mm Hg or "
+            "diastolic 80-89 mm Hg."
+        ),
+        page_bbox=None,
+    )
+    index = CitationIndex(records={
+        ("guideline", "bp-categories-0"): chunk_citation.model_dump(),
+    })
+
+    def run() -> list[Any]:
+        _TURN_CITATION_INDEX_VAR.set(index)
+        return _build_citations(
+            "138/86 falls into stage 1 HTN [guideline #bp-categories-0]."
+        )
+
+    citations = copy_context().run(run)
+
+    assert len(citations) == 1
+    c = citations[0]
+    assert c.source_type == "guideline"
+    assert c.source_id == "hypertension-acc-aha-2017-targets"
+    assert c.page_or_section == "Blood Pressure Categories in mmHg"
+    assert c.field_or_chunk_id == "bp-categories-0"
+    assert c.quote_or_value is not None
+    assert "Stage 1" in c.quote_or_value
+
+
+def test_w2_citation_shape_falls_back_to_raw_token_when_index_missing() -> None:
+    """When the per-turn citation index is not set (unit-test stub or
+    a turn that bypassed the verifier), the bracket tag still produces
+    a syntactically valid W2 citation — just with the raw token as
+    the quote_or_value fallback."""
+    from contextvars import copy_context
+
+    from agentforge.dashboard_auth.turn_route import _build_citations
+    from agentforge.orchestrator import _TURN_CITATION_INDEX_VAR
+
+    def run() -> list[Any]:
+        _TURN_CITATION_INDEX_VAR.set(None)
+        return _build_citations(
+            "Active dx [problem #42] confirmed."
+        )
+
+    citations = copy_context().run(run)
+
+    assert len(citations) == 1
+    c = citations[0]
+    assert c.source_type == "openemr_record"
+    assert c.source_id == "42"
+    assert c.field_or_chunk_id == "problem/42"
+    assert c.page_or_section is None
+    assert c.quote_or_value == "[problem #42]"
+
+
+def test_w2_citation_shape_dedupes_repeated_brackets() -> None:
+    """A reply that cites the same record twice must produce one pill,
+    not two — the W2 wire dedup key is
+    ``(source_type, field_or_chunk_id)``."""
+    from contextvars import copy_context
+
+    from agentforge.dashboard_auth.turn_route import _build_citations
+    from agentforge.orchestrator import _TURN_CITATION_INDEX_VAR
+
+    def run() -> list[Any]:
+        _TURN_CITATION_INDEX_VAR.set(None)
+        return _build_citations(
+            "First mention [problem #42]. Second mention [problem #42]."
+        )
+
+    citations = copy_context().run(run)
+
+    assert len(citations) == 1
+    assert citations[0].field_or_chunk_id == "problem/42"
+
+
+@pytest.mark.asyncio
+async def test_response_serializes_w2_citation_shape_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: when the orchestrator's reply contains a bracket
+    citation, the JSON response carries it under the W2 wire shape
+    (source_type / source_id / page_or_section / field_or_chunk_id /
+    quote_or_value) — NOT the legacy W1 shape (id/source/excerpt/
+    date/kind)."""
+    from agentforge.verifier.cache import CitationIndex
+
+    index = CitationIndex(records={
+        ("note", "9"): {
+            "id": "9",
+            "text": "Visit summary.",
+            "date": "2026-05-01",
+        },
+    })
+    monkeypatch.setattr(
+        "agentforge.dashboard_auth.turn_route.get_turn_citation_index",
+        lambda: index,
+    )
+
+    orch = _CapturingOrchestrator(reply="Recent visit [note #9].")
+    app, _, store = _build_app(
+        me_response={"user_id": 1, "username": "u", "role": None},
+        pid_response={"pid": 7},
+        orchestrator=orch,
+    )
+    sid = await _seed_session(
+        store,
+        fhir_user=f"{OPENEMR_BASE}/fhir/Practitioner/u",
+    )
+
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, sid)
+        resp = client.post(
+            "/api/agent/turn",
+            json={"message": "summary", "patient_uuid": "p"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["citations"]) == 1
+    cite = body["citations"][0]
+    # New W2 keys present.
+    assert set(cite.keys()) == {
+        "source_type",
+        "source_id",
+        "page_or_section",
+        "field_or_chunk_id",
+        "quote_or_value",
+    }
+    # Legacy W1 keys absent — strict compatibility break is intentional.
+    for legacy_key in ("id", "source", "excerpt", "date", "kind", "provenance"):
+        assert legacy_key not in cite, (
+            f"W2 wire shape must not carry legacy W1 key {legacy_key!r}"
+        )
+    assert cite["source_type"] == "openemr_record"
+    assert cite["source_id"] == "9"
+    assert cite["field_or_chunk_id"] == "note/9"
+    assert cite["page_or_section"] == "2026-05-01"
+    assert "Visit summary" in cite["quote_or_value"]

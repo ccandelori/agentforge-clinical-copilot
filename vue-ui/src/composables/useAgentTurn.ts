@@ -28,41 +28,62 @@ import type { DocumentType } from './useDocumentUpload'
 export type AgentTurnStatus = 'idle' | 'loading' | 'success' | 'error'
 
 /**
- * Citation kind — controls the badge/icon used in the citations pane.
+ * Citation source type — controls the badge/icon used in the citations pane.
  *
- * Mirrors the `kind` discriminator the sidecar attaches to citation
- * payloads (T38.14 / Task 24). Reconciled to dashboard-port's exact
- * set (commit 71badfcc5): unknown kinds are dropped at the boundary in
- * {@link parseCitations} rather than passed through opaquely.
+ * Mirrors the sidecar's :class:`agentforge.schemas.citation.SourceType`
+ * enum (W2_ARCHITECTURE.md §2.2). The dashboard renders each source
+ * type with a distinct visual treatment so a clinician can tell at a
+ * glance whether a claim is grounded in the patient's chart, a
+ * scanned document, or a published guideline. Unknown source types
+ * are dropped at the boundary in {@link parseCitations}.
  */
-export type CitationKind =
-  | 'note'
-  | 'lab'
-  | 'med'
-  | 'problem'
-  | 'allergy'
+export type CitationSourceType =
+  | 'openemr_record'
+  | 'guideline'
+  | 'lab_pdf'
+  | 'intake_form'
 
 /**
- * Citation attached to an assistant reply.
+ * W2 machine-readable citation attached to an assistant reply.
  *
- * Shape matches the documented sidecar response field. Ids are sidecar-
- * provided; downstream UI (citation pill click → CitationsPane scroll
- * target) keys off them.
+ * Shape mirrors the sidecar :class:`agentforge.dashboard_auth.turn_route.AgentTurnCitation`
+ * exactly — the BFF flattens
+ * :class:`agentforge.schemas.citation.Citation` plus the chart-record
+ * projection into this surface so the dashboard can trace every
+ * clinical claim back to its source without a second round-trip.
+ *
+ * Identity for click → scroll-to-card uses
+ * ``${source_type}/${field_or_chunk_id}`` (the same pair the BFF
+ * dedupes on).
  */
 export interface Citation {
-  readonly id: string
-  /** Human-readable source label, e.g. "Note 2024-09-12" or "Lab Result". */
-  readonly source: string
-  readonly excerpt: string
-  /** ISO date or short date string for grouping/display. */
-  readonly date: string
-  readonly kind: CitationKind
+  readonly source_type: CitationSourceType
   /**
-   * Free-form provenance string from the sidecar (resource type +
-   * resource id, link to source, etc). Optional — older sidecar
-   * payloads may not carry it.
+   * Stable handle for the source: FHIR/OpenEMR record id, guideline
+   * document id, or scanned-document id. Always non-empty.
    */
-  readonly provenance?: string
+  readonly source_id: string
+  /**
+   * Human-readable locator: ``"page 2"`` for documents, ``"Section 4.1"``
+   * for guideline chunks. ``null`` for chart-resident records that
+   * have no page/section concept (the BFF substitutes the row's date
+   * here when one is available).
+   */
+  readonly page_or_section: string | null
+  /**
+   * Stable inner handle: ``"<record_type>/<record_id>"`` for chart
+   * records, retrieval ``chunk_id`` for guideline chunks, extraction
+   * field key for scanned documents. ``null`` only on the rare
+   * fallback path where the BFF could not resolve the bracket-tag.
+   */
+  readonly field_or_chunk_id: string | null
+  /**
+   * The literal extracted value or quoted text the claim is grounded
+   * in. Capped at 4 KB by the BFF; the UI further truncates for
+   * compact display and reveals the full quote on the "View source"
+   * expand toggle.
+   */
+  readonly quote_or_value: string | null
 }
 
 export interface AgentTurnRequest {
@@ -171,12 +192,11 @@ interface AgentTurnResponseBody {
   extraction?: unknown
 }
 
-const ALLOWED_KINDS: ReadonlySet<CitationKind> = new Set<CitationKind>([
-  'note',
-  'lab',
-  'med',
-  'problem',
-  'allergy',
+const ALLOWED_SOURCE_TYPES: ReadonlySet<CitationSourceType> = new Set<CitationSourceType>([
+  'openemr_record',
+  'guideline',
+  'lab_pdf',
+  'intake_form',
 ])
 
 // 120s accommodates the W2 document-extraction path (PDF render →
@@ -189,21 +209,30 @@ const REQUEST_TIMEOUT_MS = 120_000
 function parseCitation(raw: unknown): Citation | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
-  if (typeof o.id !== 'string' || o.id.length === 0) return null
-  if (typeof o.source !== 'string') return null
-  if (typeof o.excerpt !== 'string') return null
-  if (typeof o.date !== 'string') return null
-  if (typeof o.kind !== 'string') return null
-  if (!ALLOWED_KINDS.has(o.kind as CitationKind)) return null
-  const out: Citation = {
-    id: o.id,
-    source: o.source,
-    excerpt: o.excerpt,
-    date: o.date,
-    kind: o.kind as CitationKind,
-    ...(typeof o.provenance === 'string' ? { provenance: o.provenance } : {}),
+  if (typeof o.source_type !== 'string') return null
+  if (!ALLOWED_SOURCE_TYPES.has(o.source_type as CitationSourceType)) return null
+  if (typeof o.source_id !== 'string' || o.source_id.length === 0) return null
+  // Optional fields: BFF emits null (not undefined) when unavailable.
+  // Accept either to stay forgiving on future shape additions.
+  const page_or_section: string | null
+    = typeof o.page_or_section === 'string' && o.page_or_section.length > 0
+      ? o.page_or_section
+      : null
+  const field_or_chunk_id: string | null
+    = typeof o.field_or_chunk_id === 'string' && o.field_or_chunk_id.length > 0
+      ? o.field_or_chunk_id
+      : null
+  const quote_or_value: string | null
+    = typeof o.quote_or_value === 'string' && o.quote_or_value.length > 0
+      ? o.quote_or_value
+      : null
+  return {
+    source_type: o.source_type as CitationSourceType,
+    source_id: o.source_id,
+    page_or_section,
+    field_or_chunk_id,
+    quote_or_value,
   }
-  return out
 }
 
 function parseCitations(raw: unknown): readonly Citation[] {
@@ -215,6 +244,17 @@ function parseCitations(raw: unknown): readonly Citation[] {
     if (parsed !== null) out.push(parsed)
   }
   return out
+}
+
+/**
+ * Stable identity for a citation — used as Vue list keys and as the
+ * scroll-target id when a CitationPill is clicked. Mirrors the BFF's
+ * dedup key (``source_type`` + ``field_or_chunk_id``); falls back to
+ * ``source_id`` when ``field_or_chunk_id`` is missing so the key is
+ * always populated.
+ */
+export function citationKey(c: Citation): string {
+  return `${c.source_type}/${c.field_or_chunk_id ?? c.source_id}`
 }
 
 export interface UseAgentTurn {

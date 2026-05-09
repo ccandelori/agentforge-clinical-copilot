@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
+import { citationKey } from '@/composables/useAgentTurn'
 import type {
   ChatMessage,
   Citation,
@@ -92,7 +93,7 @@ function onCitationClick(id: string): void {
       >
         <CitationPill
           v-for="(c, idx) in citations"
-          :key="c.id"
+          :key="citationKey(c)"
           :citation="c"
           :index="idx"
           @select="onCitationClick"

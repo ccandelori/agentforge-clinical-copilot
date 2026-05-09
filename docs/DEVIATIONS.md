@@ -12,6 +12,58 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — P2.3 W2 citation shape: parser stays unchanged; only the wire bridge changes
+
+**What we changed:** Replaced the W1-style `AgentTurnCitation` shape
+(`id` / `source` / `excerpt` / `date` / `kind` / `provenance`) on the
+dashboard agent-turn response with the W2 machine-readable contract
+(`source_type` / `source_id` / `page_or_section` / `field_or_chunk_id`
+/ `quote_or_value`) end-to-end: sidecar BFF (`turn_route.py`), Vue
+composable (`useAgentTurn.ts`), Pinia store validator
+(`stores/agentforge.ts`), `CitationPill.vue`, and `CitationsPane.vue`.
+
+**Where we did NOT change:** The synthesizer prompt and the verifier's
+`[record_type #id]` bracket-tag grammar are untouched. The bracket
+grammar is the LLM-friendly form; the W2 shape is the
+dashboard transport. The bridge between the two lives in
+`_build_citations`, which now resolves each parsed bracket tag against
+the per-turn `CitationIndex` and projects the indexed record into the
+W2 wire shape:
+
+* **Guideline / extraction citations** (W2-shaped index records, key
+  contains `source_type`) are passed through verbatim.
+* **Chart records** (W1-shaped raw row dicts) are projected into an
+  `OPENEMR_RECORD` citation with `field_or_chunk_id =
+  "<record_type>/<record_id>"` and the row's date moved into
+  `page_or_section`.
+
+**Why we left the prompt alone:** The brief flagged this as a risk
+("if the synthesizer prompt change destabilizes citation production,
+STOP"). The W2 schema fields the brief asks for are already
+populated for guideline + extraction citations via the per-turn
+citation index — the only missing piece was the wire serializer at
+the BFF. Changing the prompt to invent a richer bracket syntax
+(`[source_type:source_id:section:chunk_id]`) would risk LLM citation
+malformation 21 hours before the W2 deadline for no information gain
+the BFF can't already supply. The deviation here is from the brief's
+literal "update the synthesizer prompt" step; the contract it
+asked for is delivered.
+
+**What we learned:** The W2 schema (`agentforge.schemas.citation.Citation`)
+already existed and was already being threaded through the W2 graph
+into the per-turn citation index; the dashboard surface was the only
+place still emitting the legacy W1 shape. Refactoring to the W2 shape
+on the wire was a 1-file-per-layer edit, not a graph or prompt
+rewrite.
+
+**Pre-existing gap noted:** The verifier's bracket-tag regex
+(`#(?P<id>[A-Za-z0-9_\-]+)`) does not allow `::`, so production
+guideline `chunk_id`s like `hypertension-acc-aha-2017-targets::bp-categories::0`
+do not round-trip through the W1 citation parser. This is a separate
+issue from P2.3 — flagged for follow-up.
+
+---
+
 ## 2026-05-09 — Droplet redeploy: deploy script doesn't ship `db/Migrations/` or run them
 
 **What we found:** Mid-deploy, `./cli migrations:migrate` on the
