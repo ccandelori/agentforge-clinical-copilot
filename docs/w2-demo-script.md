@@ -321,12 +321,17 @@ end.
    the test name and the PASSED line are both visible.
 
 > "A gate self-test against the eval pipeline. The fifty-case golden
-> suite covers extraction, evidence retrieval, citations, refusal,
-> and missing-data. This run feeds it through an adapter that
-> deliberately fabricates `A1c = 15.5%` with the citation stripped,
-> and asserts the gate *fails*. Test passes when the gate would
-> have blocked the regression. That's the citation contract enforced
-> as a build-time check — the observability surface for correctness."
+> suite scores five boolean rubrics per case — schema validity,
+> citation present, factually consistent, safe refusal, and
+> **no PHI in logs**. This run feeds the agent through an adapter
+> that deliberately fabricates `A1c = 15.5%` with the citation
+> stripped, and asserts the gate *fails*. Test passes when the gate
+> would have blocked the regression. That's the citation contract
+> AND the PHI-containment contract enforced together at build time,
+> not at audit time. The sidecar uses HMAC pseudonyms for any
+> identifier that crosses the observability boundary — same pattern
+> we use for span IDs in Langfuse, so traces are useful for
+> debugging without ever carrying raw patient strings."
 
 **Watch out for.**
 
@@ -338,10 +343,19 @@ end.
   be slow on first load.
 - If the test *fails* (gate didn't catch the regression), don't
   debug on camera — that's a real bug and a re-record. Stop the take.
-- The pinned baseline is a stub (`baselines/week2.json` =
-  `_meta.status: "stub"`). If asked in defense: "the gate self-test
-  proves the gate bites; the stub is the next planned regen."
-  Don't volunteer in voiceover.
+- The baseline is **measured** (`baselines/week2.json` =
+  `_meta.status: "measured"`, $1.54 real-LLM run on 2026-05-09 —
+  see `docs/w2-cost-latency-report.md`). Two-leg correctness story
+  per `docs/defense-qa-w2.md` Q15: the gate self-test proves the
+  gate's logic catches regressions; the measured anchor proves it's
+  calibrated against real agent behavior, not idealized stubs.
+  Don't volunteer this in voiceover, but know the answer if asked.
+- If a grader asks "show me PHI doesn't leak in stdout" off-script,
+  Cmd-Tab back, run `ssh root@<droplet> 'docker logs --tail 200
+  agentforge-sidecar 2>&1 | grep -iE "MRN|chen|whitaker"'` — should
+  return empty. (Stdout is uvicorn access logs only by design;
+  PHI-bearing data lives in HMAC-pseudonymized observability spans,
+  not stdout.)
 
 ---
 
