@@ -12,6 +12,102 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — Care Team `Practitioner.name` resolution required NPI seeding (the User-vs-Practitioner gap)
+
+**Symptom.** After seeding `care_teams` + `care_team_member` for the
+four demo personas, the dashboard's `CareTeamCard` rendered
+"Unknown member" for every participant — three times per team, with
+correct role badges (Case Manager / Nurse Practitioner / Physician)
+but no names.
+
+**False starts (worth knowing because the wrong hypotheses each
+exposed something real).**
+
+1. **Hypothesis 1 — client parser was dropping members.** Read
+   `vue-ui/src/api/mock.ts:projectCareTeam`. Found a filter:
+   ```ts
+   const name = p.member?.display ?? ''
+   if (name === '') continue
+   ```
+   OpenEMR's `FhirCareTeamService::populateProviderTeamMembers`
+   doesn't populate `participant.member.display` — only the
+   `reference` and `type`. So the client filter was correctly
+   dropping every participant. Fixed by removing the filter; the
+   card still showed "Unknown member" because the `name` was
+   genuinely empty, but the rows now appeared with role badges.
+   **Real bug, partial fix.**
+
+2. **Hypothesis 2 — fetch `Practitioner/{id}` per participant to
+   backfill the name.** Wrote `getCareTeams()` to extract member
+   IDs, `Promise.all` over `/api/fhir/Practitioner/{id}`, build
+   `nameById`, enrich the projected members. Logic correct,
+   `user/Practitioner.read` scope already granted at OAuth
+   registration. Type-check failed: `fhir4.Practitioner` wasn't in
+   the local FHIR type fallback in `mock.ts`. Added it.
+   **Right idea, but the fetches still 404'd.**
+
+3. **Hypothesis 3 — `uuid_mapping` table needs Practitioner rows
+   the way it needs Observation rows.** Per the project memory
+   `project_synthea_uuid_mapping_gap`, OpenEMR's FHIR layer for
+   some resources requires entries in `uuid_mapping`. Ran
+   `UuidMapping::createAllMissingResourceUuids()` from inside the
+   container. Returned `0` (no missing rows). `uuid_mapping`
+   resource catalog still showed only `Group`, `Location`,
+   `Observation`. **Wrong layer.**
+
+**Real cause.** Drilled into `src/Services/PractitionerService.php`
+line ~88. The comment is the smoking gun:
+
+> *"force our value to be false as the only thing that
+> differentiates users as practitioners is our npi number"*
+
+OpenEMR's `PractitionerService::search()` filters the
+`Practitioner` FHIR projection to **users with a non-empty
+`users.npi`**. The seed populated `users.id`, `fname`, `lname`,
+`username` — everything FHIR `HumanName` needs — but left `npi`
+NULL. So the `Practitioner/{user_uuid}` endpoint returned 404
+even though the user row existed, the OAuth scope was granted,
+and the CareTeam reference pointed at a real UUID.
+
+**Fix.** Three `UPDATE users SET npi = '<10-digit test value>'`
+statements appended to `scripts/seed/care_team.sql` for users 1, 5,
+6 (admin, clinician, physician). Conditional `WHERE npi IS NULL OR
+npi = ''` keeps it idempotent and refuses to clobber a real NPI on
+a production install that happens to share user ids.
+
+**The interesting bit** — and this is the W2-defense-worthy
+takeaway: OpenEMR's data model has an **implicit
+`users → practitioners` projection that's not part of the FHIR
+spec**. The system maintains a single `users` table; FHIR
+`Practitioner` is a derived view filtered by NPI presence. The
+`care_team_member.user_id` foreign-key works against any user, but
+`Practitioner.read` excludes users without an NPI. Same person,
+two different "personhood" semantics depending on the FHIR
+resource doing the lookup.
+
+This is the kind of asymmetry that's invisible from the FHIR API
+contract alone — every resource looks like a flat read against a
+clean noun ("User", "Practitioner", "Patient"), but the projection
+layer underneath is filtering on domain criteria the FHIR client
+has no way to anticipate. Real lesson for clinical-software
+integration: **the FHIR contract is necessary but not sufficient
+documentation; you need the projection layer's source code (or its
+implementer's bug tracker) to know what's actually queryable.**
+
+The detection path is also worth narrating: clean-state seeded
+data → manual demo → DevTools Network tab → 9 × `404 Not Found`
+on `Practitioner/{uuid}` → ruling out cache (deployed bundle
+verified to contain the fetch URL via grep on the rsync'd JS) →
+ruling out auth (other FHIR endpoints worked from the same
+session) → drilling into `PractitionerService.php` source. About
+30 minutes from symptom to root cause. The DevTools network tab
+was the load-bearing diagnostic — without seeing the literal
+404s, the next-most-likely hypothesis would have been a
+client-side routing bug in `getCareTeams()`, and we'd have spent
+another hour barking up that tree.
+
+---
+
 ## 2026-05-09 — Promote-to-chart fix: re-route medication promotion from `lists` to `prescriptions`
 
 **What we changed:** `IntakePromotionWriter` now branches on

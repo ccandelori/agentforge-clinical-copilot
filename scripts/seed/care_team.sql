@@ -120,3 +120,31 @@ INSERT INTO care_team_member (care_team_id, user_id, role, status)
 SELECT id, 6, 'physician', 'active' FROM care_teams WHERE team_name = 'Kowalski Care Team';
 INSERT INTO care_team_member (care_team_id, user_id, role, status)
 SELECT id, 5, 'nurse_practitioner', 'active' FROM care_teams WHERE team_name = 'Kowalski Care Team';
+
+-- ----------------------------------------------------------------------
+-- 4. Backfill NPI on the seed users so they're discoverable via FHIR
+-- ----------------------------------------------------------------------
+--
+-- OpenEMR's `PractitionerService::search()` (line ~88) gates the
+-- entire Practitioner FHIR projection on a non-empty `users.npi`:
+--   "the only thing that differentiates users as practitioners is our
+--    npi number"
+-- Without an NPI, `GET /apis/default/fhir/Practitioner/{user_uuid}`
+-- returns 404 even though the user exists, the OAuth scope is
+-- granted, and the CareTeam.participant.member reference points at
+-- a real user UUID. The dashboard's CareTeam card resolves member
+-- names by fetching `Practitioner/{id}` per participant; without an
+-- NPI those fetches all 404 and the card renders "Unknown member"
+-- per role.
+--
+-- Setting fake but well-formed test NPIs unblocks the whole chain.
+-- Conditional WHERE keeps the update idempotent and refuses to
+-- clobber a real NPI on a production install that happens to share
+-- these user ids.
+
+UPDATE users SET npi = '1003000423'
+WHERE id = 1 AND (npi IS NULL OR npi = '');
+UPDATE users SET npi = '1003000431'
+WHERE id = 5 AND (npi IS NULL OR npi = '');
+UPDATE users SET npi = '1003000449'
+WHERE id = 6 AND (npi IS NULL OR npi = '');
