@@ -33,21 +33,24 @@ final class IntakePromotionWriterTest extends TestCase
     public function persistsOneListsRowPerItemWithCorrectShape(): void
     {
         $captured = [];
-        $idCounter = 100;
 
         $connection = self::createMock(Connection::class);
         $connection->method('transactional')->willReturnCallback(
             static fn (callable $fn) => $fn(),
         );
         $connection->method('executeStatement')->willReturnCallback(
-            static function (string $sql, array $bind) use (&$captured, &$idCounter): int {
+            static function (string $sql, array $bind) use (&$captured): int {
                 $captured[] = ['sql' => $sql, 'bind' => $bind];
                 return 1;
             },
         );
-        $connection->method('lastInsertId')->willReturnCallback(
-            static fn () => (string) ++$idCounter,
-        );
+        // Note: ``willReturnCallback`` with a closed-over ``++$counter``
+        // is brittle on PHP 8.5 + PHPUnit 11 — the closure can be
+        // re-invoked with stale state on the second call. The explicit
+        // consecutive-returns API gives each insert a distinct
+        // synthetic id without relying on reference-increment semantics.
+        $connection->method('lastInsertId')
+            ->willReturnOnConsecutiveCalls('101', '102');
 
         $writer = new IntakePromotionWriter($connection);
 
@@ -239,11 +242,12 @@ final class IntakePromotionWriterTest extends TestCase
     }
 
     #[Test]
-    public function nonAllergyKindsKeepMinimalShapeInsert(): void
+    public function nonAllergyListsKindsKeepMinimalShapeInsert(): void
     {
-        // The medical_problem / medication / family_history paths
-        // intentionally retain the original 8-column shape; only
-        // allergy gets the diagnosis + severity_al treatment.
+        // The medical_problem / family_history paths intentionally
+        // retain the original 8-column ``lists`` shape; only allergy
+        // gets the diagnosis + severity_al treatment, and medication
+        // routes to ``prescriptions`` instead (covered separately).
         $rows = [];
         $connection = self::createMock(Connection::class);
         $connection->method('transactional')->willReturnCallback(
@@ -266,11 +270,6 @@ final class IntakePromotionWriterTest extends TestCase
             items: [
                 new PromotionItem(kind: 'medical_problem', title: 'Hypertension'),
                 new PromotionItem(
-                    kind: 'medication',
-                    title: 'Metformin',
-                    details: '500mg / bid',
-                ),
-                new PromotionItem(
                     kind: 'family_history',
                     title: 'Mother: hypertension',
                 ),
@@ -278,11 +277,175 @@ final class IntakePromotionWriterTest extends TestCase
         );
 
         foreach ($rows as $row) {
+            self::assertStringContainsString('INSERT INTO lists', $row['sql']);
             self::assertArrayNotHasKey('diagnosis', $row['bind']);
             self::assertArrayNotHasKey('severity_al', $row['bind']);
             self::assertStringNotContainsString('diagnosis', $row['sql']);
             self::assertStringNotContainsString('severity_al', $row['sql']);
         }
+    }
+
+    #[Test]
+    public function medicationKindRoutesToPrescriptionsTable(): void
+    {
+        // The dashboard's MedicationsCard reads from FHIR
+        // MedicationRequest, which is projected from ``prescriptions``
+        // (not ``lists``). The writer must therefore branch
+        // ``kind='medication'`` items to a prescriptions INSERT.
+        // Critically: it must NOT also write a ``lists`` row — single
+        // source of truth, no shadow rows in the chart-summary list.
+        $captured = null;
+        $connection = self::createMock(Connection::class);
+        $connection->method('transactional')->willReturnCallback(
+            static fn (callable $fn) => $fn(),
+        );
+        $connection->method('executeStatement')->willReturnCallback(
+            static function (string $sql, array $bind) use (&$captured): int {
+                $captured = ['sql' => $sql, 'bind' => $bind];
+                return 1;
+            },
+        );
+        $connection->method('lastInsertId')->willReturn('501');
+
+        $writer = new IntakePromotionWriter($connection);
+        $result = $writer->persist(
+            patientId: 42,
+            username: 'admin',
+            questionnaireResponseId: 'qr-9',
+            documentId: 17,
+            items: [new PromotionItem(
+                kind: 'medication',
+                title: 'Lisinopril',
+                details: '10 mg PO daily',
+            )],
+        );
+
+        self::assertNotNull($captured);
+        // Hitting the prescriptions table (not lists).
+        self::assertStringContainsString('INSERT INTO prescriptions', $captured['sql']);
+        self::assertStringNotContainsString('INSERT INTO lists', $captured['sql']);
+
+        // Core column population: pid, drug name, parsed dose,
+        // full-sig text. ``active=1`` is hardcoded into the SQL since
+        // it's a literal, not a bind.
+        self::assertSame(42, $captured['bind']['pid']);
+        self::assertSame('Lisinopril', $captured['bind']['drug']);
+        self::assertSame('10 mg', $captured['bind']['dosage']);
+        self::assertSame('10 mg PO daily', $captured['bind']['sig']);
+        self::assertSame('admin', $captured['bind']['user']);
+        self::assertSame('community', $captured['bind']['category']);
+        self::assertSame('order', $captured['bind']['intent']);
+
+        // Comments-channel lineage hint — the chart row has a
+        // breadcrumb back to the source extraction, same as the
+        // ``lists``-bound paths get.
+        self::assertStringContainsString(
+            'Imported from AgentForge intake form',
+            $captured['bind']['note'],
+        );
+        self::assertStringContainsString('qr_id=qr-9', $captured['bind']['note']);
+        self::assertStringContainsString('doc_id=17', $captured['bind']['note']);
+
+        // UUID is binary(16) raw bytes — the writer generates one per
+        // row so the FHIR projection's row addressability works
+        // without depending on uuid_registry self-heal.
+        self::assertIsString($captured['bind']['uuid']);
+        self::assertSame(16, strlen($captured['bind']['uuid']));
+
+        // SQL must include the NOT NULL columns that have no schema
+        // default — without these, the live INSERT would crash.
+        self::assertStringContainsString('txDate', $captured['sql']);
+        self::assertStringContainsString('usage_category_title', $captured['sql']);
+        self::assertStringContainsString('request_intent_title', $captured['sql']);
+        // active=1 is critical for the FHIR status='active' chain.
+        self::assertMatchesRegularExpression('/\bactive\b/', $captured['sql']);
+
+        // Returned handle carries the prescriptions row id.
+        self::assertCount(1, $result->handles);
+        self::assertSame('medication', $result->handles[0]->kind);
+        self::assertSame(501, $result->handles[0]->listsId);
+    }
+
+    #[Test]
+    public function medicationInsertNullsDoseAndSigWhenDetailsAreEmpty(): void
+    {
+        // Edge case: medication item arrived with no details string.
+        // The writer should still produce a valid prescriptions INSERT
+        // (drug + uuid + status + the schema-required NOT NULL columns)
+        // but bind NULL for the dose/sig channels rather than empty
+        // strings — empty strings on dosage would still satisfy the
+        // FHIR text guard but read as a "" in the legacy edit form,
+        // which is misleading.
+        $captured = null;
+        $connection = self::createMock(Connection::class);
+        $connection->method('transactional')->willReturnCallback(
+            static fn (callable $fn) => $fn(),
+        );
+        $connection->method('executeStatement')->willReturnCallback(
+            static function (string $sql, array $bind) use (&$captured): int {
+                $captured = ['sql' => $sql, 'bind' => $bind];
+                return 1;
+            },
+        );
+        $connection->method('lastInsertId')->willReturn('502');
+
+        $writer = new IntakePromotionWriter($connection);
+        $writer->persist(
+            patientId: 1,
+            username: 'admin',
+            questionnaireResponseId: null,
+            documentId: null,
+            items: [new PromotionItem(
+                kind: 'medication',
+                title: 'Vitamin D',
+                details: null,
+            )],
+        );
+
+        self::assertNotNull($captured);
+        self::assertNull($captured['bind']['dosage']);
+        self::assertNull($captured['bind']['sig']);
+        // Drug name is still required and present.
+        self::assertSame('Vitamin D', $captured['bind']['drug']);
+    }
+
+    #[Test]
+    public function medicationInsertPreservesSigEvenWhenDoseUnparsable(): void
+    {
+        // When the details string carries a frequency-only or
+        // unstructured value (no leading "<n><unit>" token), we leave
+        // dosage NULL but still preserve the full text in the
+        // ``drug_dosage_instructions`` channel — that's what the
+        // dashboard's frequency line falls back to.
+        $captured = null;
+        $connection = self::createMock(Connection::class);
+        $connection->method('transactional')->willReturnCallback(
+            static fn (callable $fn) => $fn(),
+        );
+        $connection->method('executeStatement')->willReturnCallback(
+            static function (string $sql, array $bind) use (&$captured): int {
+                $captured = ['sql' => $sql, 'bind' => $bind];
+                return 1;
+            },
+        );
+        $connection->method('lastInsertId')->willReturn('503');
+
+        $writer = new IntakePromotionWriter($connection);
+        $writer->persist(
+            patientId: 1,
+            username: 'admin',
+            questionnaireResponseId: null,
+            documentId: null,
+            items: [new PromotionItem(
+                kind: 'medication',
+                title: 'Aspirin',
+                details: 'as needed for pain',
+            )],
+        );
+
+        self::assertNotNull($captured);
+        self::assertNull($captured['bind']['dosage']);
+        self::assertSame('as needed for pain', $captured['bind']['sig']);
     }
 
     #[Test]

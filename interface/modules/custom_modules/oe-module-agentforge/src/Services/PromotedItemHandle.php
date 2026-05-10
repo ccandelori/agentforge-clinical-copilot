@@ -21,9 +21,15 @@ namespace OpenEMR\Modules\AgentForge\Services;
  * uses these to (a) audit which AI-extracted rows landed in the
  * chart, and (b) potentially offer an "undo" affordance later.
  *
- * ``listsId`` is the auto-increment ``lists.id`` PK assigned by
- * MySQL — it's the simplest stable handle the existing
- * ``AllergiesRepository`` / ``ProblemsRepository`` joins return.
+ * ``listsId`` is the auto-increment row PK assigned by MySQL on the
+ * destination table:
+ *
+ *  - allergy / medical_problem / family_history → ``lists.id``
+ *  - medication → ``prescriptions.id``
+ *
+ * The field name predates medication routing landing in
+ * ``prescriptions``; the controller / dashboard treat it as an
+ * opaque per-row id, so renaming would be churn for no benefit.
  */
 final readonly class PromotedItemHandle
 {

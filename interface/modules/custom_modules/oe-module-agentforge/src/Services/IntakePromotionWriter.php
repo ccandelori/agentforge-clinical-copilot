@@ -18,12 +18,14 @@ namespace OpenEMR\Modules\AgentForge\Services;
 use Doctrine\DBAL\Connection;
 
 /**
- * Writes one row to the legacy ``lists`` table per accepted item type:
+ * Writes one row per accepted item to the appropriate destination
+ * table:
  *
- *  - allergies      → ``type='allergy'``
- *  - problems       → ``type='medical_problem'``
- *  - medications    → ``type='medication'``  (see caveat below)
- *  - family history → ``type='family_history'``
+ *  - allergies      → ``lists`` with ``type='allergy'``
+ *  - problems       → ``lists`` with ``type='medical_problem'``
+ *  - family history → ``lists`` with ``type='family_history'``
+ *  - medications    → ``prescriptions`` (NOT ``lists``; see medication
+ *    routing note below)
  *
  * The whole batch is wrapped in a DBAL transaction. If any single
  * insert fails the cascade rolls back so a half-applied promotion
@@ -85,21 +87,22 @@ use Doctrine\DBAL\Connection;
  *     ``subtype`` column, and the frontend re-classifies the
  *     category from the substance text via keyword matching.
  *
- * Medication caveat (deferred per W2 deadline):
+ * Medication routing (resolved in
+ * `fix(promote): re-route medication promotion to prescriptions`):
  *
  *   ``type='medication'`` rows in ``lists`` do NOT surface in the
  *   dashboard's ``MedicationsCard`` — that card reads from FHIR
  *   ``MedicationRequest``, which is projected by
  *   :php:class:`OpenEMR\\Services\\FHIR\\FhirMedicationRequestService`
- *   from the ``prescriptions`` table (a different table entirely
- *   with structured ``dosage``, ``route``, ``rxnorm_drugcode``, and
- *   several ``NOT NULL`` columns including UUID generation). The
- *   right routing for medications is to write to ``prescriptions``,
- *   not ``lists``. That fix is out of scope for this commit;
- *   medication rows continue to land in ``lists`` so the audit log
- *   reflects the clinician's approval, but they won't render on the
- *   medications card until the prescriptions-table writer ships.
- *   See ``docs/DEVIATIONS.md`` (entry dated 2026-05-09).
+ *   from the ``prescriptions`` table (a different table entirely with
+ *   ``binary(16)`` UUID + several ``NOT NULL`` columns). For
+ *   ``kind='medication'`` items we therefore branch into
+ *   :php:meth:`insertPrescriptionRow` and write a single row to
+ *   ``prescriptions`` instead of ``lists`` — single source of truth
+ *   for the medication card, no shadow row in ``lists`` to confuse
+ *   the chart-summary listing. The same per-row clinician approval
+ *   gate still applies (the controller validates kinds before we
+ *   ever see them); only the destination table changes.
  *
  * What this writer does NOT do:
  *
@@ -182,7 +185,7 @@ readonly class IntakePromotionWriter
     ): PromotionResult {
         $handles = [];
         foreach ($items as $item) {
-            $listsId = $this->insertLists(
+            $rowId = $this->insertItem(
                 $patientId,
                 $username,
                 $questionnaireResponseId,
@@ -191,14 +194,32 @@ readonly class IntakePromotionWriter
             );
             $handles[] = new PromotedItemHandle(
                 kind: $item->kind,
-                listsId: $listsId,
+                // For medication items this is the new ``prescriptions.id``
+                // rather than ``lists.id`` — the field is stable shape,
+                // the underlying table varies by kind. Documented on
+                // PromotedItemHandle.
+                listsId: $rowId,
                 title: $item->title,
             );
         }
         return new PromotionResult($handles);
     }
 
-    private function insertLists(
+    /**
+     * Dispatches one accepted item to the right destination table:
+     *
+     * - ``kind == 'medication'`` → ``prescriptions`` (via
+     *   :php:meth:`insertPrescriptionRow`) so the dashboard's
+     *   FHIR-backed MedicationsCard actually surfaces it.
+     * - ``kind == 'allergy'`` → ``lists`` with the canonical
+     *   FHIR-projection columns populated.
+     * - everything else → ``lists`` with the minimal shape.
+     *
+     * Returns the newly-assigned row id from whichever table received
+     * the row, captured via ``lastInsertId()`` immediately after the
+     * insert.
+     */
+    private function insertItem(
         int $patientId,
         string $username,
         ?string $questionnaireResponseId,
@@ -207,11 +228,19 @@ readonly class IntakePromotionWriter
     ): int {
         $comments = $this->buildComments($item, $questionnaireResponseId, $documentId);
 
-        // Allergies need extra canonical-column population so the FHIR
-        // AllergyIntolerance projection can build a non-DAR resource.
-        // Other kinds keep the original minimal-shape insert that
-        // ProblemListCard / FamilyHistory already render correctly.
-        if ($item->kind === self::TYPE_ALLERGY) {
+        if ($item->kind === self::TYPE_MEDICATION) {
+            $this->insertPrescriptionRow(
+                $patientId,
+                $username,
+                $item,
+                $comments,
+            );
+        } elseif ($item->kind === self::TYPE_ALLERGY) {
+            // Allergies need extra canonical-column population so the
+            // FHIR AllergyIntolerance projection can build a non-DAR
+            // resource. Other kinds keep the original minimal-shape
+            // insert that ProblemListCard / FamilyHistory already
+            // render correctly.
             $this->insertAllergyRow(
                 $patientId,
                 $username,
@@ -337,6 +366,174 @@ readonly class IntakePromotionWriter
                 'groupname' => '',
             ],
         );
+    }
+
+    /**
+     * Inserts a row into ``prescriptions`` so the FHIR
+     * ``MedicationRequest`` projection picks it up — that's what the
+     * dashboard's :code:`MedicationsCard` reads from. Mirrors the
+     * subset of columns Synthea-imported rows actually populate (see
+     * the SELECT from a sample row in commit message), so the row
+     * shape stays compatible with the rest of the EHR's medication
+     * UI (legacy `interface/orders/list.php`, the prescription edit
+     * screen, etc.).
+     *
+     * Mapping decisions worth knowing:
+     *
+     * - **`uuid`** is generated from :php:func:`random_bytes(16)` —
+     *   the column is ``binary(16)``. We don't write to
+     *   ``uuid_registry`` here; the FHIR projection's
+     *   :php:meth:`PrescriptionService::__construct` calls
+     *   ``UuidRegistry::createMissingUuidsForTables(['prescriptions'])``,
+     *   which only fills NULL uuids and leaves ours alone. The row is
+     *   addressable via ``combined_prescriptions.uuid`` in the FHIR
+     *   union SELECT either way — no registry round-trip is required
+     *   to render the medication.
+     * - **`drug_dosage_instructions`** carries the full free-text sig
+     *   ("10 mg PO daily"). FHIR projection at
+     *   :php:meth:`FhirMedicationRequestService::populateDosageInstruction`
+     *   prefers this column over ``dosage`` for the
+     *   ``dosageInstruction[0].text`` slot, and the frontend's
+     *   ``projectMedicationRequest`` falls back to that text for the
+     *   rendered ``frequency`` line.
+     * - **`dosage`** carries the parsed dose substring ("10 mg") for
+     *   any legacy UI that reads the column directly. The FHIR text
+     *   path uses ``drug_dosage_instructions`` first, so this is
+     *   belt-and-braces; setting both keeps the legacy chart edit
+     *   screen honest without conflicting with the dashboard render.
+     *   Note that the FHIR projection's text-set guard is
+     *   ``!is_numeric($dosageInstructions)`` — we always write a
+     *   string with units so the guard never fires.
+     * - **`interval` / `route`** stay NULL. Both columns are
+     *   ``int(11)`` foreign keys to ``list_options`` (option_id of
+     *   ``drug_interval`` / ``drug_route`` respectively). Mapping
+     *   "PO daily" → an interval option_id requires a runtime lookup
+     *   we don't currently have; the user-facing frequency text is
+     *   preserved in ``drug_dosage_instructions`` so nothing is lost
+     *   on the dashboard. Cleaner to leave both NULL than to invent a
+     *   wrong FK that would mis-render in the legacy prescription
+     *   edit form.
+     * - **`active = 1` + `end_date = NULL`** → the SQL CASE in
+     *   :php:meth:`PrescriptionService::getBaseSql` resolves to
+     *   ``status = 'active'`` → FHIR
+     *   ``MedicationRequest.status = active`` → frontend
+     *   ``Medication.status = 'active'``. This is the load-bearing
+     *   chain that gets the row out of "completed" (where Synthea
+     *   parks everything) into the dashboard's default visible bucket.
+     * - **`txDate`** is ``DATE NOT NULL`` with no default — we set it
+     *   to ``CURDATE()`` so the row passes the schema constraint.
+     *   ``date_added`` / ``date_modified`` go to ``NOW()`` so the
+     *   chart sort order respects the commit time.
+     * - **`usage_category_title` / `request_intent_title`** are NOT
+     *   NULL with no default. We write empty strings to match the
+     *   Synthea seed shape; ``PrescriptionService`` self-heals empty
+     *   values to ``"Home/Community"`` and ``"Order"`` respectively
+     *   in :php:meth:`createResultRecordFromDatabaseResult`, so the
+     *   downstream FHIR resource gets sensible category / intent.
+     * - **`provider_id` / `encounter` / `rxnorm_drugcode`** all NULL.
+     *   We don't extract structured RxNorm codes from intake-form
+     *   text, the row isn't tied to an encounter, and there's no
+     *   ordering provider on file for AI-extracted intake meds. The
+     *   FHIR projection tolerates each of these being NULL — they
+     *   just don't appear on the resulting MedicationRequest.
+     * - **`user`** carries the JWT's looked-up username so the audit
+     *   row reflects who clicked Commit (same convention as
+     *   :php:meth:`insertAllergyRow`).
+     */
+    private function insertPrescriptionRow(
+        int $patientId,
+        string $username,
+        PromotionItem $item,
+        string $comments,
+    ): void {
+        [$dose, $dosageInstructions] = $this->parseMedicationDetails($item->details);
+
+        // ``binary(16)`` UUID. PHP 8.2+ guarantees random_bytes is
+        // CSPRNG-backed; collision risk is negligible at 122 bits of
+        // entropy and the row is unique-keyed on uuid so a collision
+        // would surface as a constraint violation, not silent
+        // corruption.
+        $uuid = random_bytes(16);
+
+        // varchar(150) on ``drug``; clip defensively so a pathological
+        // intake-form drug name can't violate the column constraint.
+        $drug = substr($item->title, 0, 150);
+
+        $this->connection->executeStatement(
+            'INSERT INTO prescriptions ('
+            . 'uuid, patient_id, drug, drug_id, dosage, '
+            . 'drug_dosage_instructions, active, txDate, '
+            . 'date_added, date_modified, '
+            . 'usage_category, usage_category_title, '
+            . 'request_intent, request_intent_title, '
+            . 'note, user, erx_source, erx_uploaded'
+            . ') VALUES ('
+            . ':uuid, :pid, :drug, 0, :dosage, '
+            . ':sig, 1, CURDATE(), '
+            . 'NOW(), NOW(), '
+            . ":category, '', "
+            . ":intent, '', "
+            . ':note, :user, 0, 0'
+            . ')',
+            [
+                'uuid' => $uuid,
+                'pid' => $patientId,
+                'drug' => $drug,
+                'dosage' => $dose,
+                'sig' => $dosageInstructions,
+                'category' => 'community',
+                'intent' => 'order',
+                'note' => $comments,
+                'user' => $username,
+            ],
+        );
+    }
+
+    /**
+     * Pulls a (dose, full-sig) tuple out of the panel's ``details``
+     * string for the medication path.
+     *
+     * The ExtractionPanel composes medication details as either
+     * ``"<dose>"`` (dose only) or ``"<dose> <frequency>"`` /
+     * ``"<dose>, <frequency>"`` / ``"<dose> · <frequency>"``. We try a
+     * lightweight split: leading numeric+unit token is the dose, the
+     * rest is preserved verbatim as the full sig. Both pieces are
+     * persisted (dose → ``prescriptions.dosage`` for legacy UIs,
+     * full sig → ``prescriptions.drug_dosage_instructions`` for the
+     * FHIR text projection).
+     *
+     * Returns ``[null, null]`` when ``details`` is empty so the
+     * INSERT writes NULL for both columns rather than empty strings.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function parseMedicationDetails(?string $details): array
+    {
+        if ($details === null) {
+            return [null, null];
+        }
+        $trimmed = trim($details);
+        if ($trimmed === '') {
+            return [null, null];
+        }
+
+        // Try to peel off a leading "<number><optional space><unit>"
+        // token. We accept a unit pattern that matches the common
+        // intake-form vocabulary (mg, mcg, g, ml, mEq, IU, %) without
+        // being so loose that "metformin" would parse as a unit.
+        $matched = preg_match(
+            '/^(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|mEq|IU|%)\b/i',
+            $trimmed,
+            $matches,
+        );
+        $dose = $matched === 1 ? "{$matches[1]} {$matches[2]}" : null;
+
+        // The full sig string is always preserved as the FHIR text
+        // instruction; capping at 1000 chars is a guardrail against a
+        // pathological details string blowing up the longtext column.
+        $sig = strlen($trimmed) > 1000 ? substr($trimmed, 0, 1000) : $trimmed;
+
+        return [$dose, $sig];
     }
 
     /**

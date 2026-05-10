@@ -12,6 +12,96 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — Promote-to-chart fix: re-route medication promotion from `lists` to `prescriptions`
+
+**What we changed:** `IntakePromotionWriter` now branches on
+`kind='medication'` and writes to the `prescriptions` table
+instead of `lists`. The dashboard's `MedicationsCard` reads from
+FHIR `MedicationRequest`, which is projected by
+`FhirMedicationRequestService` from `prescriptions` (a UNION with
+`lists` exists for free-text meds tied via
+`lists_medication.prescription_id IS NULL`, but Synthea-style
+populated dose / sig / status only surfaces from `prescriptions`).
+With the prior `type='medication'` row in `lists`, the card
+rendered the drug name (from a fallback path) but lost dose and
+frequency entirely.
+
+**Why we couldn't reuse `PrescriptionService::insert()`:** Its
+constructor calls `UuidRegistry::createMissingUuidsForTables(...)`,
+which writes to global session-coupled state via the legacy
+`sqlStatementNoLog` channel. We're inside a JWT-authed internal
+endpoint with an injected DBAL connection; mixing the two auth
+pipelines was the same trap we hit with `AllergyIntoleranceService`
+in the prior commit. Same path (b) here: a raw INSERT through the
+DBAL `Connection` we already have, mirroring `LabResultWriter`.
+
+**Mapping decisions worth knowing** (full rationale in the
+`insertPrescriptionRow` docblock):
+
+- `uuid` ← `random_bytes(16)` directly (column is `binary(16)`); we
+  skip the `uuid_registry` round-trip because the FHIR projection's
+  union SELECT addresses rows by `combined_prescriptions.uuid`
+  directly and `createMissingUuidsForTables` only fills NULLs
+  (leaving ours alone).
+- `drug_dosage_instructions` ← full free-text sig
+  ("10 mg PO daily"). FHIR projection prefers this over `dosage`
+  for the `dosageInstruction[0].text` slot, which the frontend's
+  `projectMedicationRequest` falls back to for the rendered
+  frequency line.
+- `dosage` ← parsed dose substring ("10 mg") for any legacy UI
+  that reads the column directly.
+- `interval` and `route` stay NULL — both are `int(11)` FKs to
+  `list_options.option_id`. Mapping a free-form "PO daily" to an
+  interval option_id requires a runtime lookup we don't have; the
+  user-visible frequency text is preserved in
+  `drug_dosage_instructions`.
+- `active = 1` + `end_date = NULL` → FHIR `status='active'` →
+  frontend `Medication.status='active'` → row appears in the
+  card's default visible bucket.
+- `txDate` ← `CURDATE()` (NOT NULL with no default).
+- `usage_category_title` and `request_intent_title` ← empty strings
+  (matches Synthea seed shape; `PrescriptionService` self-heals to
+  `"Home/Community"` and `"Order"` respectively).
+
+**Single source of truth:** the medication path no longer also
+writes a `type='medication'` row to `lists` — single insert, single
+table. The audit row + lineage breadcrumb (`note` column carrying
+`qr_id=…, doc_id=…`) preserves the same per-row clinician approval
+trail the other kinds get.
+
+**`PromotedItemHandle.listsId` keeps its name** even though it now
+carries `prescriptions.id` for medication kinds. The controller
+and dashboard treat the field as an opaque per-row id; renaming
+would be churn for no benefit. Documented on the value object.
+
+**Test pre-existing fragility fixed in passing:**
+`IntakePromotionWriterTest::persistsOneListsRowPerItemWithCorrectShape`
+was failing on PHP 8.5 + PHPUnit 11 because `willReturnCallback`
+with a closed-over `++$counter` returns stale state on the second
+call. Switched to `willReturnOnConsecutiveCalls('101', '102')` —
+the explicit consecutive-returns API has stable semantics across
+PHPUnit versions and doesn't depend on closure-reference behavior.
+
+**What we learned:**
+
+- The "audit row in `lists` so the clinician's approval is logged
+  somewhere" rationale from the deferred fix wasn't load-bearing:
+  the audit lives in `IntakePersistAuditWriter` (event log), not
+  in a duplicate `lists` row. Cleaner to write once to the right
+  table than twice for vestigial audit reasons.
+- `FhirMedicationRequestService::populateDosageInstruction` has a
+  `!is_numeric($dosageInstructions)` guard that drops Synthea's
+  `"1.00"` dosage values silently. Always write a string with units
+  ("10 mg" not "10") to keep the FHIR text path live.
+- `prescriptions.usage_category_title` and `request_intent_title`
+  are `NOT NULL` with no default — every Synthea-imported row uses
+  empty strings here, which look broken but are self-healed by
+  `PrescriptionService::createResultRecordFromDatabaseResult`.
+  Worth knowing before spending time hunting for sensible category
+  / intent vocab.
+
+---
+
 ## 2026-05-09 — Promote-to-chart fix: populate canonical `lists` columns so the FHIR projections render correctly
 
 **What we changed:** `IntakePromotionWriter` now populates
