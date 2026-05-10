@@ -1,15 +1,18 @@
 # W2 Demo Video — Script & Shot List
 
-> Target: a single 5–7 minute screen recording covering the W2 thesis end
-> to end. The grader watches this without sitting through the live
-> defense, so the script has to stand alone. Designed for one or two
-> takes — every segment is timed, every action is named, and every
-> talking point is a quote-block ready to read verbatim.
+> Target: a single 3–5 minute screen recording covering the W2 thesis end
+> to end, matching the W2 brief's Submission Requirements ("Demo Video —
+> 3–5 minutes showing document upload, extraction, evidence retrieval,
+> citations, eval results, and observability"). The grader watches this
+> without sitting through the live defense, so the script has to stand
+> alone. Designed for one or two takes — every segment is timed, every
+> action is named, and every talking point is a quote-block ready to read
+> verbatim.
 >
 > The actual recording is a separate human step. This document is the
 > read-aloud script, the shot list, and the pre/post-record runbook.
 >
-> **Total runtime budget: 6:00 ± 30 seconds.** If any segment overshoots,
+> **Total runtime budget: 4:00 ± 30 seconds.** If any segment overshoots,
 > the cuttable beats are flagged in *Watch out for*.
 
 ---
@@ -18,12 +21,12 @@
 
 | # | Range       | Surface                     | One-line purpose                                 |
 |---|-------------|-----------------------------|--------------------------------------------------|
-| 1 | 0:00 – 0:30 | Browser, full-screen        | Thesis cold open over the live URL               |
-| 2 | 0:30 – 1:30 | Patient dashboard (Synthea persona pid 22) | "What you're looking at" — the Vue port itself, against a chart with real data |
-| 3 | 1:30 – 2:45 | AgentForge drawer + chat (still pid 22)    | Chart Q&A → guideline RAG via "Guidelines" toggle |
-| 4 | 2:45 – 4:30 | **Switch to Chen** + Drawer + DocumentViewer modal | Doc-upload pipeline → bbox citation overlay      |
-| 5 | 4:30 – 5:30 | Terminal (full-screen)      | Eval gate self-test as the correctness claim     |
-| 6 | 5:30 – 6:00 | Browser (live URL again)    | Close + repo pointer                             |
+| 1 | 0:00 – 0:15 | Browser, full-screen        | Thesis cold open over the live URL               |
+| 2 | 0:15 – 0:45 | Patient dashboard (Synthea persona pid 22) | "What you're looking at" — the Vue port itself, against a chart with real data |
+| 3 | 0:45 – 1:45 | AgentForge drawer + chat (still pid 22)    | One chart Q&A → guideline RAG via "Guidelines" toggle |
+| 4 | 1:45 – 3:15 | **Switch to Chen** + Drawer + DocumentViewer modal | Doc-upload pipeline → bbox citation overlay      |
+| 5 | 3:15 – 3:45 | Terminal (full-screen)      | Eval gate self-test as the correctness claim     |
+| 6 | 3:45 – 4:00 | Browser (live URL again)    | Close + repo pointer                             |
 
 **Two on-screen surfaces only:** browser at
 `https://143.244.157.90:9300/dashboard/` and a single full-screen
@@ -89,7 +92,9 @@ the demo script assumes a warm system.
       `~/Desktop/Gauntlet/openemr/sidecar` (or whichever working copy
       will run pytest). Resize to a screen-capture-friendly size
       (~120 cols × 30 rows). Pre-type the gate-self-test command but
-      *don't* press enter yet.
+      *don't* press enter yet. **The `-m gate_validation` flag is
+      mandatory** — the test is deselected by default and without the
+      marker pytest collects 0 tests, killing the segment.
 
       ```bash
       cd sidecar
@@ -98,16 +103,16 @@ the demo script assumes a warm system.
       ```
 
 - [ ] **Notifications silenced.** macOS DND on. Close Slack, mail,
-      anything that posts banners. A toast in the top-right of a 6-min
+      anything that posts banners. A toast in the top-right of a 4-min
       take is a re-record.
 
 - [ ] **Mic check.** 30 seconds of quiet recording, listen back. If
       there's HVAC hum, move closer to the mic. The script reads
-      ~1100 words; mic clarity matters.
+      ~700 words at this length; mic clarity matters.
 
 ---
 
-## 0:00 – 0:30 · Cold open
+## 0:00 – 0:15 · Cold open
 
 **Surface.** Browser at `https://143.244.157.90:9300/dashboard/`,
 parked on the patient list view (logged in, no chart open yet).
@@ -115,79 +120,57 @@ parked on the patient list view (logged in, no chart open yet).
 **Action.**
 
 1. Start with the address bar in focus so the live URL is the first
-   thing on screen for ~3 seconds.
+   thing on screen for ~2 seconds.
 2. Click into the patient list. Don't open a chart yet — that's the
-   next segment. The visual goal is "this is a real, deployed
-   surface" before the narration explains why it exists.
+   next segment.
 
-> "Clinicians lose thirty to sixty minutes a day to chart synthesis —
-> reading the same patient's history four times in four contexts.
-> AgentForge gives that time back, with citations the clinician can
-> click through and verify. Everything you're about to see is running
-> on a single droplet at this URL. The patient data is synthetic; the
-> code is shipped."
+> "AgentForge: a Vue 3 patient dashboard with a clinical co-pilot,
+> running at this URL. Every claim it makes carries a citation the
+> clinician can verify."
 
 **Watch out for.**
 
-- *Don't* read the URL out loud — it's on screen. Forty seconds of
-  voiceover in a thirty-second segment is the most common over-run.
+- *Don't* read the URL out loud — it's on screen.
 - If the page paints slowly, the address bar still anchors the shot.
   Don't re-load mid-narration.
 
 ---
 
-## 0:30 – 1:30 · The dashboard itself
+## 0:15 – 0:45 · The dashboard itself
 
 **Surface.** Click into the Synthea-rich persona at pid 22
 (Nichelle912 Johnston597 — the numeric suffix is a Synthea-import
-artifact; spoken as "Nichelle Johnston"). The shipped surface is
-one scroll: header band → vitals strip → seven cards (Allergies,
-Problem list, Medications, Prescriptions, Care Team, Recent
-encounters, Lab results).
+artifact; spoken as "Nichelle Johnston").
 
 **Action.**
 
 1. Search "Johnston" in the patient list, click into pid 22.
-2. Let the dashboard paint. Hover over a card briefly so the cursor
-   shows what's interactive.
-3. Scroll once, slowly, top to bottom — header → VitalsStrip →
-   Allergies (≥6 rows) → Problem list (deep) → Medications →
-   Prescriptions → Care Team → Recent encounters → Lab results.
-   Don't click into anything; the next segment opens the drawer.
+2. Let the dashboard paint. One quick scroll top-to-bottom so the
+   header band, vitals strip, and the seven cards (Allergies, Problem
+   list, Medications, Prescriptions, Care Team, Recent encounters, Lab
+   results) are all visible. Don't dwell on any single card.
 
-> "This is the patient dashboard, ported from PHP-rendered server
-> pages to Vue 3 against the existing FHIR R4 API. The OpenEMR
-> backend is untouched apart from a thin backend-for-frontend on the
-> AgentForge sidecar — it brokers OAuth so the access token never
-> touches JavaScript, and forwards FHIR calls. Seven cards — Allergies,
-> Problem list, Medications, Prescriptions, Care Team, Recent
-> Encounters, Labs — plus a vitals strip and the patient header band,
-> all driven from the same FHIR queries OpenEMR's own API already
-> exposes. The defense doc walks through *why Vue 3 specifically*
-> over React, Svelte, and Qwik — the headline is that the
-> architectural win is the separation, not the framework."
+> "The patient dashboard, ported from PHP-rendered server pages to
+> Vue 3 against the existing FHIR R4 API. The OpenEMR backend is
+> untouched — a thin sidecar brokers OAuth so the access token never
+> touches JavaScript, then forwards FHIR calls. Seven cards plus
+> vitals, all driven from the same FHIR queries OpenEMR already
+> exposes."
 
 **Watch out for.**
 
 - Synthea-imported names carry numeric suffixes (`Nichelle912`,
-  `Johnston597`). On screen they look synthetic; narrate the
-  patient as "Nichelle Johnston" without spelling out the numbers.
-  Optional polish: `UPDATE patient_data SET fname='Nichelle',
-  lname='Johnston' WHERE pid=22;` on the droplet before recording
-  (cosmetic; no functional impact).
-- Synthea Problem List items are all `category=encounter-diagnosis`
-  rather than `problem-list-item`; if the card filter is strict you
-  may see fewer rows than expected. The card still demonstrates the
-  FHIR-renderer point.
-- Lab / vitals tables on Synthea-imported personas render empty
-  ranges (no `referenceRange` / `interpretation`). Don't dwell;
-  the cards-as-FHIR-renderers point lands either way.
-- If the EncountersCard is slow to paint, scroll past it — the
-  narration is generic and doesn't depend on a specific row.
+  `Johnston597`). Narrate as "Nichelle Johnston" without spelling
+  out the numbers.
+- Synthea Problem List items are all `category=encounter-diagnosis`,
+  and lab/vitals tables render empty `referenceRange` /
+  `interpretation` columns. Don't dwell — the cards-as-FHIR-renderers
+  point lands either way.
+- If the EncountersCard is slow to paint, scroll past it.
 
 ---
 
-## 1:30 – 2:45 · AgentForge drawer + chart Q&A
+## 0:45 – 1:45 · AgentForge drawer + chart Q&A + guideline toggle
 
 **Surface.** AgentForge drawer (right edge of dashboard) +
 `AgentChatPane` composer.
@@ -197,51 +180,45 @@ encounters, Lab results).
 1. Click the AgentForge handle on the right edge → drawer slides in.
 2. Type into the composer: **"Summarize Nichelle's last visit and
    any active problems."**
-3. Press Send. Wait for the streamed reply — should be ~3-5s.
-4. Point (cursor hover) at a citation pill in the bubble. Click it
-   so the CitationsPane expands and the source quote shows.
-5. Now the guideline beat. In the composer toolbar, click the
-   **Guidelines** toggle (the small uppercase chip next to the
-   paperclip — its tooltip reads "Toggle to ask a clinical-guideline
-   question"). The button highlights.
-6. Type: **"How should I manage CKD stage 3?"** Send.
-7. Wait for the reply. Inline citations should be guideline-shaped
+3. Press Send. Wait for the streamed reply (~3-5s). Hover a citation
+   pill so the cursor lands on it; click it so the CitationsPane
+   expands with the source quote.
+4. In the composer toolbar, click the **Guidelines** toggle (small
+   uppercase chip next to the paperclip — tooltip "Toggle to ask a
+   clinical-guideline question"). The button highlights.
+5. Type: **"How should I manage CKD stage 3?"** Send.
+6. Wait for the reply. Inline citations should be guideline-shaped
    (corpus snippets), not chart-shaped. Hover one.
-8. Toggle Guidelines off afterwards so the next segment isn't
-   carrying state.
+7. Toggle Guidelines off afterwards so segment 4 starts clean.
 
 > "The co-pilot is a top-level drawer scoped to the active patient.
-> Every claim it makes carries a citation back to the chart — those
-> pills are clickable, and they expand to the FHIR resource the
-> answer came from. Now I'll flip the *Guidelines* toggle. With it
-> off, the agent runs the chart-Q&A loop only. With it on, the same
-> turn also routes through a hybrid-RAG retriever over a clinical
-> guideline corpus, and the response cites the guideline alongside
-> the chart. The toggle is a deliberate visible affordance — we
-> chose it over auto-detecting intent from message text because
-> false positives turn a chart question into a guideline lookup
-> behind the user's back."
+> Every claim carries a citation back to the chart — the pills are
+> clickable and expand to the FHIR resource the answer came from.
+>
+> Now I'll flip the *Guidelines* toggle. Off, the agent runs the
+> chart-Q&A loop only. On, the same turn also routes through a
+> hybrid-RAG retriever over a clinical guideline corpus, and the
+> response cites the guideline alongside the chart. Visible
+> affordance over auto-detection — false positives turn a chart
+> question into a guideline lookup behind the user's back."
 
 **Watch out for.**
 
 - The first chart-Q&A turn after a sidecar restart can take 8–12s
-  (cold LangGraph build + Anthropic round-trip). The `deploy-droplet.sh
-  check ; check` warm-up is what mitigates this — if the first turn
-  still hangs, it's a sign the warm-up didn't take.
+  (cold LangGraph build + Anthropic round-trip). The
+  `deploy-droplet.sh check ; check` warm-up mitigates this.
 - The guideline corpus is *project-prepared summaries*, framed in
-  `sidecar/data/guidelines/NOTICE.md` as "demo stub only." If a
-  grader watches and Googles the wording: that's fine, the framing
-  document calls it out. Don't claim production-grade ingestion.
+  `sidecar/data/guidelines/NOTICE.md` as "demo stub only." Don't
+  claim production-grade ingestion.
 - If the planner-Haiku tool-call fallback warning fires, the reply
-  still completes — it just uses the default plan. No on-screen
-  signal; mention only if asked.
+  still completes. Mention only if asked.
 - Don't let the guideline reply run to 15+ inline citations. If the
   cite list is long, scroll the bubble so the cursor lands on a
   specific pill.
 
 ---
 
-## 2:45 – 4:30 · Doc-upload pipeline (the headline)
+## 1:45 – 3:15 · Doc-upload pipeline (the headline)
 
 **Surface.** Switch patients first (Nichelle → Margaret Chen). Drawer
 re-mounts on the new chart. The `DocumentViewer` modal opens at the
@@ -274,10 +251,9 @@ end.
 
 > *(opening Chen's empty chart)*
 >
-> "Now switching to Margaret Chen — a brand-new patient with no
-> chart history yet. The cards are empty. This is the second use
-> case: the agent doesn't just synthesize *existing* charts, it
-> ingests *new* clinical context."
+> "Switching to Margaret Chen — a brand-new patient, no chart history.
+> The cards are empty. The agent doesn't just synthesize *existing*
+> charts; it ingests *new* clinical context."
 >
 > *(attach + send)*
 >
@@ -286,54 +262,44 @@ end.
 > sidecar runs Claude Haiku as a vision model against rendered page
 > images, parses the response into a Pydantic schema, and persists
 > the result as a FHIR `QuestionnaireResponse` through the existing
-> OpenEMR service layer. That's important: the persistence runs
-> server-side from the sidecar, not from the browser, so it's a
-> single round-trip from the dashboard's perspective and the audit
+> OpenEMR service layer. Persistence runs server-side, so the audit
 > log is single-sourced through the canonical save path."
 >
 > *(while waiting for the extraction)*
 >
-> "The agent doesn't write extracted demographics or allergies into
-> the canonical clinical tables. OCR is fallible, and an intake form
-> that misreads `PCN` as `Pen-V` would land as a charted allergy
-> with no clinician in the loop. So extraction surfaces as a
-> *suggestion* with citations; promotion to the chart is an explicit
+> "Extraction surfaces as a *suggestion* with citations, not a write
+> to the canonical clinical tables. OCR is fallible — an intake form
+> that misreads `PCN` as `Pen-V` would land as a charted allergy with
+> no clinician in the loop. Promotion to the chart is an explicit
 > human action."
 >
 > *(click View source, modal opens)*
 >
-> "And here's the trust artifact. Every extracted field has a
-> bounding box back to the region of the PDF the model thinks it
-> read it from. A clinician verifying an extracted field clicks
-> through, sees the source pixels, and decides. This is the citation
-> story for vision: the equivalent of a quote-and-page-number for
-> a structured field on a scanned form."
+> "Here's the trust artifact. Every extracted field has a bounding
+> box back to the region of the PDF the model thinks it read it
+> from. A clinician verifying a field clicks through, sees the
+> source pixels, and decides. The citation story for vision."
 
 **Watch out for.**
 
 - The `View source (N)` button label varies — `N` is whatever bbox
   count the extraction produced (usually 12–22 for the Chen intake).
   Read the literal number on screen, don't rehearse "(18)".
-- If the modal renders the PDF *without* rectangles, that means the
-  bbox overlay didn't load — probably a rendering race. Close, wait
-  one second, click "View source" again.
+- If the modal renders the PDF *without* rectangles, the bbox overlay
+  didn't load (rendering race). Close, wait one second, click "View
+  source" again.
 - PNG personas (Reyes, Kowalski) won't render in the modal — PDF.js
-  doesn't parse `image/png` bytes. Stick to **typed PDFs only**
-  (Chen, Whitaker) for this segment. If you need a fallback persona,
-  use Whitaker (`p02-whitaker-intake.pdf`).
+  doesn't parse `image/png` bytes. **Typed PDFs only**
+  (Chen, Whitaker). Fallback persona: Whitaker (`p02-whitaker-intake.pdf`).
 - Bbox placement is approximate (Haiku-vision lands the right
   region, sometimes one row off). Don't pixel-peep on camera.
-- If the chat reply duplicates the panel content, scroll the bubble
-  so the panel is centered when you click "View source." Both the
-  bubble and the panel are valid; the panel is the structured one.
-- If the extraction fails (rare), your fallback is to skip to the
-  eval segment and explicitly call out: "doc-upload pipeline is
-  shipped, demoed in the live defense." The recording is still
-  defensible — but try once more first.
+- If the extraction fails (rare), skip to the eval segment and
+  explicitly call out: "doc-upload pipeline is shipped, demoed in
+  the live defense." Try once more first.
 
 ---
 
-## 4:30 – 5:30 · Eval pipeline as correctness claim
+## 3:15 – 3:45 · Eval pipeline as correctness claim
 
 **Surface.** Cmd-Tab to the prepped terminal. Full-screen.
 
@@ -347,49 +313,39 @@ end.
      -m gate_validation -v
    ```
 
-2. Watch the test run. It loads the 50-case YAML suite, runs them
-   through a regressed adapter, scores per category, feeds the
-   aggregate to the gate, and asserts the gate returns a *failing*
-   verdict. Runtime is ~6-15s depending on cache state.
-3. The test passes (the gate caught the regression).
-4. Scroll up in the terminal so the test name and the PASSED line
-   are both visible at the end of the segment.
+2. Watch the test run. It loads the 50-case YAML suite, scores per
+   category, feeds the aggregate to the gate, and asserts the gate
+   returns a *failing* verdict on a deliberately regressed adapter.
+   Runtime ~6-15s.
+3. The test passes (the gate caught the regression). Scroll up so
+   the test name and the PASSED line are both visible.
 
-> "The eval pipeline isn't a regression check — it's a correctness
-> claim. There's a fifty-case golden suite covering five categories:
-> extraction, evidence retrieval, citations, refusal, missing data.
-> What I'm running now is a *gate self-test*. It runs the full
-> suite against an adapter that's been deliberately regressed —
-> specifically, an adapter that asserts a clinical value with the
-> citation deliberately stripped — and asserts that the gate
-> *fails*. So this test passes when the gate would have blocked
-> the regression. The fabricated value is `A1c = 15.5%` with no
-> source attached; in production, that's exactly the failure mode
-> the citation contract exists to prevent."
+> "A gate self-test against the eval pipeline. The fifty-case golden
+> suite covers extraction, evidence retrieval, citations, refusal,
+> and missing-data. This run feeds it through an adapter that
+> deliberately fabricates `A1c = 15.5%` with the citation stripped,
+> and asserts the gate *fails*. Test passes when the gate would
+> have blocked the regression. That's the citation contract enforced
+> as a build-time check — the observability surface for correctness."
 
 **Watch out for.**
 
 - The test is marked `gate_validation` and is **deselected by
   default**. The `-m gate_validation` flag is mandatory; without it
   pytest reports `0 tests collected` and the segment dies.
-- If the run is unexpectedly slow (>30s), the per-category LLM
-  judge is hitting a cold network. Cancel with Ctrl-C and re-run —
-  the harness is mock-LLM-only by design but the imports can be
-  slow on first load.
-- If the test *fails* (would mean the gate didn't catch the
-  regression), don't try to debug on camera — that's a real bug
-  and a re-record. Stop the take.
-- Don't read the terminal scroll-back verbatim; the narration is
-  the load-bearing part. Pytest output is supporting material.
+- If the run is unexpectedly slow (>30s), cancel with Ctrl-C and
+  re-run — the harness is mock-LLM-only by design but imports can
+  be slow on first load.
+- If the test *fails* (gate didn't catch the regression), don't
+  debug on camera — that's a real bug and a re-record. Stop the take.
 - The pinned baseline is a stub (`baselines/week2.json` =
-  `_meta.status: "stub"`). If a grader asks in defense, the answer
-  is "the gate self-test proves the gate bites; the stub is the
-  next planned regen, deferred for cost." Don't volunteer the
-  caveat in the demo voiceover — keep the segment crisp.
+  `_meta.status: "stub"`). If asked in defense: "the gate self-test
+  proves the gate bites; the stub is the next planned regen."
+  Don't volunteer in voiceover.
 
 ---
 
-## 5:30 – 6:00 · Close
+## 3:45 – 4:00 · Close
 
 **Surface.** Cmd-Tab back to the browser. Patient dashboard with
 drawer open is fine; the address bar is the visual anchor.
@@ -399,22 +355,18 @@ drawer open is fine; the address bar is the visual anchor.
 1. Click into the address bar so the URL is visible again.
 2. Hold the shot.
 
-> "That's W2: a Vue 3 dashboard against FHIR, an AgentForge co-pilot
-> with verifiable citations for both chart and guideline questions,
-> a vision-extraction pipeline that surfaces suggestions with bbox
-> citations back to the source, and an eval gate that proves it
-> catches the class of regression we'd most want to catch.
-> Everything is at this URL; the code and the architectural defense
-> live in the GitLab repo at
-> labs.gauntletai.com/cameroncandelori/openemr."
+> "Vue 3 dashboard against FHIR, an AgentForge co-pilot with
+> verifiable citations for chart and guideline questions, a
+> vision-extraction pipeline with bbox citations, and a gate that
+> proves it catches the class of regression we'd most want to catch.
+> Code at labs.gauntletai.com/cameroncandelori/openemr."
 
 **Watch out for.**
 
-- 30 seconds is generous for this; aim for 22 seconds of voice +
-  8 seconds of held-shot silence at the end so the editor has clean
-  audio to fade out under.
+- Aim for ~12 seconds of voice + 3 seconds of held-shot silence at
+  the end so the editor has clean audio to fade out under.
 - Don't re-list the personas, the eval-suite size, or the deviation
-  count. The close is a thesis recap, not a feature inventory.
+  count. Thesis recap, not a feature inventory.
 
 ---
 
@@ -428,7 +380,7 @@ Run these before publishing the cut.
       relevant frames or re-record. The client_id was rotated on
       2026-05-08 specifically because of a prior leak — don't
       repeat the mistake on video.
-- [ ] **Trim long pauses at minutes 3-4.** The doc-upload
+- [ ] **Trim long pauses at minutes 2-3.** The doc-upload
       extraction wait is ~12-15s of dead air. Cut to ~5-6s on
       camera and let the voiceover bridge the rest. The bbox
       reveal is the payoff; the wait is not the show.
@@ -444,10 +396,10 @@ Run these before publishing the cut.
       proper nouns (Pinia, FastAPI, LangGraph, FHIR, OAuth2,
       Anthropic, Haiku, OpenEMR, AgentForge, Whitaker, Chen),
       and ship as a sidecar `.vtt`. Graders may have audio off.
-- [ ] **Final length.** Trim or re-pace to land between 5:30 and
-      6:30. Anything under 5:00 reads as "didn't cover the
-      material"; anything over 7:00 starts losing the grader's
-      attention. Six minutes is the target.
+- [ ] **Final length.** Trim or re-pace to land between 3:30 and
+      4:30. Per the W2 brief the window is 3–5 minutes; under 3:00
+      reads as "didn't cover the material," over 5:00 falls outside
+      the spec. 4:00 is the target.
 - [ ] **Export.** 1080p, H.264, target ~50 MB (the GitLab MR
       attachment limit and most cohort-submission portals both
       tolerate ≤100 MB easily).
