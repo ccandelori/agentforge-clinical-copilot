@@ -967,8 +967,10 @@ function projectCareTeam(c: fhir4.CareTeam): CareTeam {
     const ref = p.member?.reference
     if (ref === undefined) continue
     const id = extractRefId(p.member) ?? ref
+    // OpenEMR's FhirCareTeamService doesn't populate participant.member.display;
+    // fall back to '' here and let CareTeamCard render 'Unknown member' so the
+    // role badge is still visible. Resolving Practitioner.name is post-W2.
     const name = p.member?.display ?? ''
-    if (name === '') continue
     members.push({ id, name, role: pickCareTeamRole(p) })
   }
   return {
