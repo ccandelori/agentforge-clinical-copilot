@@ -49,6 +49,25 @@ function invalidate(id: string): void {
   cache.delete(id)
 }
 
+/**
+ * Drop a patient's cache entry so the next `usePatient(id)` mount or
+ * `refresh()` re-fetches every card.
+ *
+ * Exported for the Gap 2 commit-to-chart flow: when
+ * `<ExtractionPanel>` successfully promotes accepted intake rows
+ * into the chart, the AllergiesCard / ProblemListCard /
+ * MedicationsCard need to re-query OpenEMR. Calling this from the
+ * panel's commit-success handler (then either remounting the chart
+ * or calling the same `usePatient` instance's `refresh()`) is the
+ * load-bearing UX wiring for "the cards refresh after commit".
+ *
+ * Safe to call with an unknown patient id — Map#delete returns
+ * false silently when the key is absent.
+ */
+export function invalidatePatientCache(id: string): void {
+  invalidate(id)
+}
+
 export interface UsePatientResult {
   readonly patient: Ref<Patient | null>
   readonly vitals: Ref<readonly Vital[]>
