@@ -92,6 +92,13 @@ declare namespace fhir4 {
     total?: number
     entry?: BundleEntry[]
   }
+  interface Practitioner extends Resource {
+    resourceType: 'Practitioner'
+    identifier?: Identifier[]
+    name?: HumanName[]
+    telecom?: ContactPoint[]
+    address?: Address[]
+  }
   interface Patient extends Resource {
     resourceType: 'Patient'
     identifier?: Identifier[]
