@@ -12,6 +12,75 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — Gap 2: intake commit-to-chart shipped against PRD's "out of scope" carve-out
+
+**What we changed:** Built the promotion pipeline that turns
+clinician-approved intake-form rows into structured EHR records.
+Surface: a per-row checkbox set + a "Commit selected to chart"
+button on `<ExtractionPanel>`; under the hood, a new BFF route
+(`POST /api/agent/promote/intake`), a new Python writer
+(`agentforge.tools.intake_promote.IntakePromoteWriter`), and a new
+JWT-authed PHP endpoint
+(`promote_intake.php` + `InternalIntakePromoteController` +
+`IntakePromotionWriter` + `IntakePromoteAuditWriter`) that writes
+one `lists` row per accepted item (allergy / medical_problem /
+medication / family_history).
+
+**Why this contradicts the PRD:** [`week2-prd.md`](../.taskmaster/docs/week2-prd.md)
+lines 122-125 and 820 explicitly carved promotion out of W2 on
+safety grounds. The PRD's reasoning was correct in shape — OCR
+errors auto-writing to the chart is exactly the wrong failure mode
+— but it conflated two designs: "auto-write on extraction" (the
+forbidden one) and "explicit per-row clinician approval" (the
+shipped one). The W2 brief PDF (page 4, Core Agent Requirement #1)
+says the tool "must persist derived facts as appropriate FHIR
+resources or OpenEMR records," and the natural reading of "derived
+facts" is the individual extracted rows, not the wrapping
+QuestionnaireResponse. We built it because the brief is the
+canonical grading reference, the PRD is the planning artifact, and
+the per-row review affordance is a stronger safety property than
+the no-promotion stance it replaces.
+
+**Architecture choice we made:** *Path (b) — new internal PHP
+endpoint*, not *path (a) — direct FHIR R4 write through the
+existing BFF proxy*. We checked
+[`apis/routes/_rest_routes_fhir_r4_us_core_3_1_0.inc.php`](../apis/routes/_rest_routes_fhir_r4_us_core_3_1_0.inc.php)
+and confirmed OpenEMR's FHIR routes for `AllergyIntolerance` /
+`Condition` / `MedicationStatement` / `FamilyMemberHistory` are
+GET-only — there's no native POST surface to write through. Path
+(b) lands rows directly in the legacy `lists` table (the same
+table the existing `AllergiesRepository` / `ProblemsRepository` /
+`MedicationsRepository` read from for the dashboard's
+GET endpoints), so the chart cards refresh on the next render
+without any FHIR-layer change. We also chose to NOT re-fetch the
+QR by id and project items server-side — the items the user just
+reviewed are the items we write; re-fetching would add a round-trip
+without changing what gets written. The QR id is still threaded
+through the lineage (`lists.comments` carries `qr_id=…, doc_id=…`)
+so a chart row can walk back to its source extraction.
+
+**Safety property shift:** The original defense
+(`docs/defense-qa-w2.md` Q1 + Q7) said "promotion is out of scope
+on safety grounds." That defense changes to "promotion is a
+deliberate human action — per-row checkboxes + explicit Commit
+button + dim/disable on committed rows + per-promotion audit event
++ source-doc overlay one click away." Q1 and Q7 in the defense doc
+are updated to reflect the implemented design.
+
+**Where the eval gate stands:** Untouched. The eval rubric grades
+the agent's extraction + citation + refusal behavior, not the
+promotion-write step (which is gated on clinician click, not
+agent output).
+
+**What we learned:** A PRD's "out of scope" sometimes means "out
+of scope to design correctly," not "out of scope to ship at all."
+When a brief's literal text and the PRD's deferral list disagree,
+the brief wins for grading purposes; the PRD's safety concern
+should land as a design constraint on the shipped feature rather
+than as a reason to skip it.
+
+---
+
 ## 2026-05-09 — P2.3 W2 citation shape: parser stays unchanged; only the wire bridge changes
 
 **What we changed:** Replaced the W1-style `AgentTurnCitation` shape

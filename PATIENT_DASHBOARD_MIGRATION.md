@@ -750,6 +750,15 @@ Things explicitly **not** shipped, with the rationale for each:
   are not.
 - **Sign & Finalize / Edit demographics are preview-only.** Same gap
   as W1 — needs `POST /api/fhir/Encounter` and `PATCH /Patient`.
+  Intake-form *commit-to-chart* is now wired (Gap 2 / 2026-05-09):
+  per-row checkboxes on `<ExtractionPanel>` + a "Commit selected to
+  chart" button POST through `/api/agent/promote/intake` to a new
+  JWT-authed PHP endpoint, which writes one `lists` row per
+  approved item. The Allergies / Problem List / Medications cards
+  refresh on the next render. Demographics promotion remains
+  preview-only (no `lists` row type for demographics; the
+  structured tables go through a separate write path that's
+  out of scope for this drop).
 - **Token refresh not implemented.** OAuth access_token expires ~1
   hour; FHIR returns 401; SPA bounces to /login.
 - **CalendarView / SettingsView are mocked** — not wired to real

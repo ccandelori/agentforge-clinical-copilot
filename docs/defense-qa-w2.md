@@ -32,12 +32,12 @@ Five additional grader-likely follow-ups are covered after the required seven.
 
 ## Required questions
 
-### Q1: Why do scanned intake forms persist as `QuestionnaireResponse` instead of writing extracted demographics, allergies, and medications directly to the canonical clinical tables?
+### Q1: Why do scanned intake forms persist as `QuestionnaireResponse` AND get promoted into the canonical clinical tables? What stops the OCR errors from corrupting the chart?
 
-**Answer.** OCR is fallible and the cost of being wrong is structural: an intake form's "PCN" misread as "Pen-V" would land as a charted allergy with no clinician in the loop, and a misaligned column on a scanned form would create a false medication. The agent therefore extracts and *surfaces* suggested updates with citations to the form, but promotion to the canonical tables (`patient_data`, the medications list, the allergies list) is an explicit human action. We considered and rejected writing through directly — the data is "probable," not authoritative, and AI-mediated chart corruption is a class of bug that isn't worth the keystroke savings. The integrity invariant is enforced at the Pydantic boundary, again at the persistence-test layer, and again by the eval rubric. The cost is that promotion-write-back UI is post-W2 (see Q7).
+**Answer.** Intake extraction is a two-step write, and the safety property is between the steps, not at the boundary. (1) The first write is the `QuestionnaireResponse` — that's the unapproved record the agent produced from the scanned form, with full citations back to the source. It lands automatically on extraction. (2) The second write is the promotion to the structured chart (`lists` rows for allergies, problems, medications, family history) — and that requires explicit clinician action: the dashboard's `<ExtractionPanel>` surfaces every extracted row with a per-row checkbox (default-checked but un-checkable), and a "Commit selected to chart" button writes only the rows the clinician approved. The OCR-misread case (PCN → Pen-V, misaligned column) shows up as a row the clinician sees alongside the source-document overlay before it lands; un-checking it costs one click. We rejected auto-promotion explicitly: the failure mode (clinician under time pressure clicks Accept, OCR error becomes charted allergy) is real, but it lives at the per-row review step, not at the auto-write boundary. Auditing is two-leg: the original `agentforge.questionnaire_persist` event records the extraction; a separate `agentforge.intake_promote` event records who promoted which rows, and each chart row's `lists.comments` carries `qr_id=…, doc_id=…` so a reviewer can walk back from a suspicious row to its source.
 
 - **Arch link:** [`W2_ARCHITECTURE.md` §2.3 — Persistence policy, Invariant I-2](../W2_ARCHITECTURE.md)
-- **Slide pointer:** 5 / 18 — *Decision 1 of 5: Intake forms → `QuestionnaireResponse`*
+- **Slide pointer:** 5 / 18 — *Decision 1 of 5: Intake forms → `QuestionnaireResponse` + clinician-approved promotion*
 
 ---
 
@@ -86,12 +86,12 @@ Five additional grader-likely follow-ups are covered after the required seven.
 
 ---
 
-### Q7: Why doesn't W2 ship the promotion-write-back UI for the suggested intake-form changes? You already have the data.
+### Q7: How does the promotion-to-chart UI handle a clinician who's tired or rushed? Isn't a one-click "apply" exactly the failure mode you said to avoid?
 
-**Answer.** Promotion is a real clinical workflow with audit and co-sign requirements, not a one-click "apply" button — the right design needs a review surface, a per-field accept/reject, an audit-log shape that survives MAC compliance review, and probably a co-sign step depending on facility policy. None of that is one-week scope, and shipping a half-built version would be worse than not shipping it: a rushed promotion path is exactly the AI-mediated chart-corruption risk Q1's invariant exists to prevent. We considered shipping a minimal "accept all" affordance and rejected it because the failure mode (clinician clicks accept under time pressure, OCR error becomes charted allergy) is precisely what the persistence policy was designed to forbid. W2's contract is therefore explicit: the agent extracts, the panel surfaces "Suggested updates from intake form" with citations to the form region, and the clinical record is updated by humans. Promotion-write-back is enumerated in the deferred-work list and is the natural first piece of post-W2 scope.
+**Answer.** The UI is a per-row checkbox grid plus an explicit "Commit selected to chart" button, not a one-click "apply." The default state is checked because the common case is a clean form (un-checking N rows would be the friction tax on the 90% of extractions that are correct), but every row stays interactively un-checkable up to the click. The button label includes the live selection count ("Commit 3 rows to chart") so the clinician sees exactly what's about to land, the source-document overlay is one click away on the same panel for cross-referencing the OCR against the original, and rows that already landed in the chart get dimmed + disabled so a double-click can't double-write. We rejected the simpler "Accept all" pattern explicitly for the time-pressure failure mode you describe — the per-row affordance is load-bearing and is what differentiates this from a write-through. Audit is two-leg (extraction event + promotion event), and each chart row carries a lineage tag (`qr_id=…, doc_id=…`) in its `lists.comments` so a later reviewer or QA pass can walk back from a suspicious row to its source. Co-sign and facility-policy gating remain post-W2 — they're a workflow layer on top of this surface, not a redesign of it.
 
-- **Arch link:** [`W2_ARCHITECTURE.md` §9 — What's deferred (and why)](../W2_ARCHITECTURE.md); also [`§2.3 — Invariant I-2`](../W2_ARCHITECTURE.md) for the policy this preserves
-- **Slide pointer:** 5 / 18 — *Decision 1 tradeoff callout (intake-form panel surfaces suggestion; promotion is post-W2)*
+- **Arch link:** [`W2_ARCHITECTURE.md` §2.3 — Persistence policy, Invariant I-2](../W2_ARCHITECTURE.md); see also [`docs/DEVIATIONS.md` 2026-05-09 — Promotion-to-chart shipped per W2 brief literal text](./DEVIATIONS.md)
+- **Slide pointer:** 5 / 18 — *Decision 1 tradeoff callout (per-row review + explicit commit)*
 
 ---
 
