@@ -13,6 +13,16 @@ gate) under a *regressed* adapter that injects fabricated output for a
 small subset of cases. The contract: the gate must report a failing
 verdict.
 
+Sibling test
+------------
+:mod:`tests.eval.gate.test_gate_blocks_regression_replay` is the W2
+HARD-GATE counterpart that runs against the **real synthesizer code
+path** via recorded LLM fixtures. This file exercises the runner +
+harness + gate layers against a hand-crafted SupervisorOutput; the
+replay sibling proves a code-level regression (e.g. someone edits
+the synthesizer to drop citations) ALSO trips the gate. CI runs both
+on every push.
+
 Why citation-strip stands in for "fabricated lab value"
 -------------------------------------------------------
 The Task 19 brief frames the regression as "fabricated ``LabValue``

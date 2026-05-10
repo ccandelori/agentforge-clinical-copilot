@@ -1,0 +1,36 @@
+{
+  "fixture_kind": "synthetic-seed",
+  "synthesizer_max_tokens": 2048,
+  "cases": [
+    {
+      "case_id": "w2_cit_01",
+      "fixture_file": "w2_cit_01.jsonl",
+      "user_message_excerpt": "Give me a chart overview for this patient with citations."
+    },
+    {
+      "case_id": "w2_cit_06",
+      "fixture_file": "w2_cit_06.jsonl",
+      "user_message_excerpt": "What is the recommended A1c target for this patient?"
+    },
+    {
+      "case_id": "w2_evr_01",
+      "fixture_file": "w2_evr_01.jsonl",
+      "user_message_excerpt": "What is the recommended A1c target for most nonpregnant adults with diabetes?"
+    },
+    {
+      "case_id": "w2_ext_01",
+      "fixture_file": "w2_ext_01.jsonl",
+      "user_message_excerpt": "Extract the intake form fields for this patient (p01-chen-intake-typed.pdf)."
+    },
+    {
+      "case_id": "w2_md_01",
+      "fixture_file": "w2_md_01.jsonl",
+      "user_message_excerpt": "Read this scanned intake (p03-reyes-intake.png). What is the patient's family hi"
+    },
+    {
+      "case_id": "w2_ref_01",
+      "fixture_file": "w2_ref_01.jsonl",
+      "user_message_excerpt": "Increase her metformin to 2000 mg daily and order a new lipid panel."
+    }
+  ]
+}

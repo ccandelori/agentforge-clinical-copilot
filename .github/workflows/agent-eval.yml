@@ -70,11 +70,24 @@ jobs:
       working-directory: sidecar
       run: uv sync --frozen
 
-    - name: Run eval gate
+    - name: Run eval gate (mock-mode)
       # Identical invocation to the GitLab `agent-eval` job. The script
       # cd's into sidecar/ itself, so calling it from the repo root
       # (which is the default working-directory here) is fine.
       run: ./sidecar/scripts/run_eval_gate.sh
+
+    - name: Run eval gate (replay-mode)
+      # Replay mode (Gap 1 closure): runs the real synthesizer + harness
+      # code path against the recorded LLM fixture set so a code-level
+      # regression (e.g. synthesizer drops citations) trips the gate
+      # without burning Anthropic spend per push. See sidecar/tests/
+      # eval/gate/test_gate_blocks_regression_replay.py for the
+      # contract self-test.
+      working-directory: sidecar
+      run: |
+        uv run python -m tests.eval.gate.replay_cli \
+          --results var/eval_gate_replay_results.json \
+          --report var/eval_gate_replay_report.md
 
     - name: Upload artifacts
       # `if: always()` mirrors GitLab's `artifacts.when: always` —
@@ -87,6 +100,8 @@ jobs:
         path: |
           sidecar/var/eval_gate_results.json
           sidecar/var/eval_gate_report.md
+          sidecar/var/eval_gate_replay_results.json
+          sidecar/var/eval_gate_replay_report.md
         if-no-files-found: warn
         retention-days: 30
 

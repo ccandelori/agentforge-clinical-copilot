@@ -104,3 +104,50 @@ class TestSafetyDisclaimer:
         doc = regenerate_baseline.__doc__ or ""
         assert "agentforge.eval.regenerate_baseline" in doc
         assert "--output" in doc
+
+
+class TestRecordingFlag:
+    """The ``--record`` flag enables fixture capture during a real-LLM run.
+
+    These tests verify the CLI plumbing without firing real LLMs:
+    parser surface, mock-mode rejection, and the default fixture
+    directory resolution.
+    """
+
+    def test_parser_accepts_record_flag(self, tmp_path: pathlib.Path) -> None:
+        parser = build_arg_parser()
+        args = parser.parse_args([
+            "--output", str(tmp_path / "x.json"),
+            "--record",
+        ])
+        assert args.record is True
+        assert args.record_dir is None  # falls back to default
+
+    def test_parser_accepts_record_dir(self, tmp_path: pathlib.Path) -> None:
+        parser = build_arg_parser()
+        target = tmp_path / "fixtures"
+        args = parser.parse_args([
+            "--output", str(tmp_path / "x.json"),
+            "--record",
+            "--record-dir", str(target),
+        ])
+        assert args.record_dir == target
+
+    @pytest.mark.asyncio
+    async def test_record_with_mock_is_rejected(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """``--mock --record`` together is nonsensical — must error.
+
+        Mock supervisor doesn't issue any LLM calls, so a recording
+        run against it would write empty fixtures and silently
+        mislead the operator. Refuse loudly instead.
+        """
+        out = tmp_path / "week2.json"
+        with pytest.raises(RuntimeError, match="--record requires a real-LLM run"):
+            await run_cli([
+                "--output", str(out),
+                "--mock",
+                "--record",
+                "--record-dir", str(tmp_path / "fixtures"),
+            ])

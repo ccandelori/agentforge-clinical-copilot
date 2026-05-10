@@ -71,10 +71,14 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from agentforge.llm.recording import (
+    RecordingLLMClient,
+    _RequestLabelContext,
+)
 from agentforge.llm.types import LLMResponse, Message, ToolSpec
 from agentforge.observability.cost import calculate_cost
 from agentforge.schemas.citation import Citation, PageBBox, SourceType
@@ -127,6 +131,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Use a mocked supervisor (returns a passing SupervisorOutput "
             "for every case). Skips real Anthropic / retrieval calls. "
             "Used by the test suite and for smoke checks."
+        ),
+    )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help=(
+            "Record every LLM call's request + response into the fixture "
+            "directory specified by --record-dir. Implies a real-LLM run "
+            "(burns ~$1.54 of Anthropic spend). The recorded fixtures "
+            "feed the replay-mode CI gate (tests.eval.gate.replay_cli) "
+            "so every push exercises the real synthesizer + judge code "
+            "paths against canned responses."
+        ),
+    )
+    parser.add_argument(
+        "--record-dir",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "Where to write per-case fixture files when --record is set. "
+            "Defaults to sidecar/tests/eval/fixtures/recorded/. Files are "
+            "named <case_id>.jsonl; existing files are overwritten."
         ),
     )
     return parser
@@ -317,7 +343,73 @@ class _CostTrackingVisionExtractor:
 _LAST_REAL_RUN_COSTS: _CostAccumulator | None = None
 
 
-def _build_real_supervisor_and_harness() -> tuple[Any, EvalHarnessW2]:
+@dataclass
+class _RecordingState:
+    """Per-run state carried across the recording wrappers.
+
+    Pairs the output directory with one ``RecordingLLMClient`` per
+    LLM seam (synthesizer + judge — planner, vision, and other LLMs
+    are wrapped via the same shared label context so each fixture line
+    can be grepped by case_id). The label context is updated by the
+    suite driver as it walks each case so a future operator inspecting
+    a fixture file can map a request hash back to the case.
+
+    The state is owned by the CLI (``run_cli``) and threaded into
+    :func:`_build_real_supervisor_and_harness` only when ``--record``
+    is passed. The non-recording path leaves it None and pays no
+    overhead.
+    """
+
+    output_dir: pathlib.Path
+    label_ctx: _RequestLabelContext = field(default_factory=_RequestLabelContext)
+    # Map of seam name → RecordingLLMClient. Each seam writes to a
+    # distinct file under output_dir so fixture diffs stay reviewable
+    # (e.g. tweaking the judge prompt only churns judge.jsonl).
+    recorders: dict[str, RecordingLLMClient] = field(default_factory=dict)
+
+    def writer_for(
+        self,
+        seam: str,
+        *,
+        inner: Any,
+    ) -> RecordingLLMClient:
+        """Build (or fetch the cached) RecordingLLMClient for this seam.
+
+        Output goes to ``<output_dir>/__pooled_<seam>.jsonl`` — a single
+        pooled file per seam keyed by request hash. The replay path
+        looks up by case_id; the seed-fixture generator will split the
+        pooled file into per-case fixtures as a follow-up.
+        """
+        existing = self.recorders.get(seam)
+        if existing is not None:
+            return existing
+        path = self.output_dir / f"__pooled_{seam}.jsonl"
+        wrapper = RecordingLLMClient(
+            inner=inner,
+            output_path=path,
+            label_provider=self.label_ctx.render,
+        )
+        self.recorders[seam] = wrapper
+        return wrapper
+
+    def flush_all(self) -> int:
+        """Persist every recorder's calls to disk. Returns total calls."""
+        total = 0
+        for recorder in self.recorders.values():
+            total += recorder.flush()
+        return total
+
+
+# Module-level handle on the most recent recording state. Same pattern
+# as ``_LAST_REAL_RUN_COSTS`` — single-threaded CLI, one invocation per
+# process, so a module-level cell is the path of least resistance.
+_LAST_RECORDING_STATE: _RecordingState | None = None
+
+
+def _build_real_supervisor_and_harness(
+    *,
+    recording_state: _RecordingState | None = None,
+) -> tuple[Any, EvalHarnessW2]:
     """Construct the real production adapter + harness.
 
     Wires:
@@ -401,18 +493,28 @@ def _build_real_supervisor_and_harness() -> tuple[Any, EvalHarnessW2]:
     shared_anthropic = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     primary_model = settings.claude_model or "claude-sonnet-4-5"
-    primary_inner = ClaudeClient(
+    primary_raw = ClaudeClient(
         api_key=settings.anthropic_api_key,
         model=primary_model,
     )
+    primary_inner: Any = primary_raw
+    if recording_state is not None:
+        # Recording wraps INSIDE cost tracking so the recorder sees the
+        # real Anthropic response (the cost-tracker doesn't mutate, just
+        # observes). Order: ClaudeClient → RecordingLLMClient → CostTracker
+        # → planner / synthesizer.
+        primary_inner = recording_state.writer_for("primary", inner=primary_raw)
     primary_llm = _CostTrackingLLMClient(
         inner=primary_inner, model=primary_model, costs=costs
     )
 
-    judge_inner = ClaudeClient(
+    judge_raw = ClaudeClient(
         api_key=settings.anthropic_api_key,
         model=judge_model,
     )
+    judge_inner: Any = judge_raw
+    if recording_state is not None:
+        judge_inner = recording_state.writer_for("judge", inner=judge_raw)
     judge_llm = _CostTrackingLLMClient(
         inner=judge_inner, model=judge_model, costs=costs
     )
@@ -527,7 +629,11 @@ def _build_real_supervisor_and_harness() -> tuple[Any, EvalHarnessW2]:
     return supervisor, harness
 
 
-async def _run_suite(*, mock: bool) -> dict[str, float]:
+async def _run_suite(
+    *,
+    mock: bool,
+    recording_state: _RecordingState | None = None,
+) -> dict[str, float]:
     """Drive all 50 cases through the supervisor and return per-category rates.
 
     ``mock=True`` uses the canned passing supervisor (free, deterministic).
@@ -536,6 +642,12 @@ async def _run_suite(*, mock: bool) -> dict[str, float]:
     sequentially. Real runs stream per-case progress to stderr so a
     human watching can spot a stalled call before burning a full
     budget; mock runs stay quiet to keep the test suite output clean.
+
+    When ``recording_state`` is non-None (``--record`` mode), the
+    supervisor's LLM clients are wrapped in :class:`RecordingLLMClient`
+    facades that capture every call to disk. The driver updates the
+    state's label context per case so a fixture inspector can map a
+    request hash back to its case_id.
     """
     cases = load_week2_cases()
     if not cases:
@@ -545,15 +657,25 @@ async def _run_suite(*, mock: bool) -> dict[str, float]:
         )
 
     if mock:
+        if recording_state is not None:
+            raise RuntimeError(
+                "--record requires a real-LLM run; --mock and --record "
+                "are mutually exclusive."
+            )
         supervisor = _passing_supervisor_output
         harness = _build_mock_harness()
         results = await run_week2_suite(
             cases=cases, supervisor=supervisor, harness=harness
         )
     else:
-        real_supervisor, harness = _build_real_supervisor_and_harness()
+        real_supervisor, harness = _build_real_supervisor_and_harness(
+            recording_state=recording_state,
+        )
         results = await _run_real_suite_with_progress(
-            cases=cases, supervisor=real_supervisor, harness=harness
+            cases=cases,
+            supervisor=real_supervisor,
+            harness=harness,
+            recording_state=recording_state,
         )
 
     rates = summarize_by_category(results)
@@ -572,6 +694,7 @@ async def _run_real_suite_with_progress(
     cases: Sequence[EvalCase],
     supervisor: Any,
     harness: EvalHarnessW2,
+    recording_state: _RecordingState | None = None,
 ) -> list[Any]:
     """Run the W2 suite sequentially with per-case progress reporting.
 
@@ -591,6 +714,10 @@ async def _run_real_suite_with_progress(
     suite_start = time.perf_counter()
     for idx, case in enumerate(cases, start=1):
         case_start = time.perf_counter()
+        # Update the per-case label context BEFORE the supervisor call
+        # so every recorded request is tagged with the right case_id.
+        if recording_state is not None:
+            recording_state.label_ctx.case_id = case.id
         try:
             output = await _invoke_supervisor(supervisor, case)
             eval_result = await harness.evaluate(
@@ -684,21 +811,57 @@ def _build_payload(
     return payload
 
 
+_DEFAULT_RECORD_DIR: pathlib.Path = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "tests"
+    / "eval"
+    / "fixtures"
+    / "recorded"
+)
+
+
 async def run_cli(argv: Sequence[str]) -> int:
     """Entry point exercised by the test suite.
 
     Returns the process exit code: 0 success, 1 measurement failure
     (a category came back missing or the run aborted partway through).
     Argument-parsing errors raise SystemExit through argparse (≠ 0).
+
+    With ``--record``, the run additionally persists per-seam fixture
+    files into ``--record-dir`` (defaulting to
+    ``sidecar/tests/eval/fixtures/recorded/``). The fixtures feed the
+    replay-mode CI gate (:mod:`tests.eval.gate.replay_cli`).
     """
     parser = build_arg_parser()
     args = parser.parse_args(list(argv))
 
-    rates = await _run_suite(mock=args.mock)
+    recording_state: _RecordingState | None = None
+    if args.record:
+        record_dir = args.record_dir or _DEFAULT_RECORD_DIR
+        record_dir.mkdir(parents=True, exist_ok=True)
+        recording_state = _RecordingState(output_dir=record_dir)
+        global _LAST_RECORDING_STATE
+        _LAST_RECORDING_STATE = recording_state
+        print(
+            f"--record on; fixtures will write to {record_dir}",
+            file=sys.stderr,
+        )
+
+    rates = await _run_suite(mock=args.mock, recording_state=recording_state)
+
+    if recording_state is not None:
+        flushed = recording_state.flush_all()
+        print(
+            f"recorded {flushed} LLM call(s) across "
+            f"{len(recording_state.recorders)} seam(s) into "
+            f"{recording_state.output_dir}",
+            file=sys.stderr,
+        )
 
     command_repr = (
         f"agentforge.eval.regenerate_baseline --output {args.output}"
         + (" --mock" if args.mock else "")
+        + (" --record" if args.record else "")
     )
     payload = _build_payload(rates, command=command_repr, mock=args.mock)
 

@@ -204,3 +204,41 @@ agent-eval:
       - sidecar/var/eval_gate_results.json
       - sidecar/var/eval_gate_report.md
     expire_in: 30 days
+
+# ============================================================================
+# Agent eval gate — REPLAY MODE (Gap 1 closure).
+#
+# Runs the W2 eval gate against the *real* synthesizer + harness +
+# (mocked) judge code paths using a recorded LLM fixture set
+# (sidecar/tests/eval/fixtures/recorded/). The fixture set is currently
+# a synthetic seed (sidecar/src/agentforge/eval/seed_fixtures.py) — a
+# real-recorded set lands when an operator runs `regenerate_baseline
+# --record`.
+#
+# This job closes the W2 HARD GATE gap: the mock-mode `agent-eval` job
+# above proves the gate's threshold/regression math, but a code-level
+# regression (e.g. someone edits the synthesizer to drop citations)
+# would slip past mock mode because mock-mode never runs the
+# synthesizer. Replay mode runs the real synthesizer code on canned
+# LLM responses, so a regression in that code makes the harness fail
+# and the gate trips.
+#
+# Costs nothing per push — replay is fully deterministic.
+# ============================================================================
+agent-eval-replay:
+  extends: .python_base
+  stage: test
+  allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - uv run python -m tests.eval.gate.replay_cli
+        --results var/eval_gate_replay_results.json
+        --report var/eval_gate_replay_report.md
+  artifacts:
+    when: always
+    paths:
+      - sidecar/var/eval_gate_replay_results.json
+      - sidecar/var/eval_gate_replay_report.md
+    expire_in: 30 days
