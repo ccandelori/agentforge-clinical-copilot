@@ -102,6 +102,19 @@ the demo script assumes a warm system.
         -m gate_validation -v
       ```
 
+- [ ] **Langfuse tab pre-staged.** Open `https://us.cloud.langfuse.com`
+      in a SECOND browser tab (not window), signed into the AgentForge
+      project, parked on the **Traces** view filtered to recent
+      activity. Run one practice extraction (Chen → upload → commit)
+      so a fresh trace exists; click into it once so the span detail
+      panel is the loaded view. During the segment-4 extraction wait,
+      Cmd-Tab to this tab and the trace is one click away from the
+      `patient_uuid` / `doc_id` HMAC-pseudonymized fields. If Langfuse
+      is mid-load when you Cmd-Tab during the live recording, skip
+      the observability beat — narrate from the dashboard side
+      instead. (The voiceover paragraph in segment 4 is cuttable
+      without losing the segment's headline.)
+
 - [ ] **Notifications silenced.** macOS DND on. Close Slack, mail,
       anything that posts banners. A toast in the top-right of a 4-min
       take is a re-record.
@@ -236,11 +249,16 @@ end.
    (Pre-stage the path in your file dialog's recents.)
 4. The composer shows a pending-attachment chip. Type:
    **"Extract this intake form."** Send.
-5. The reply takes ~12-15s on a warm sidecar. **Don't fill the
-   silence with rambling** — the script below is paced to fill it.
-   The chat reply lists extracted fields; below the bubble,
-   `<ExtractionPanel>` renders with extracted demographics, allergies,
-   medications, etc.
+5. The reply takes ~12-15s on a warm sidecar. **Use the wait
+   productively.** Cmd-Tab to the pre-staged Langfuse browser tab
+   (already on the AgentForge project's traces view). Click into
+   the most recent trace from a prior practice run — point the
+   cursor at the `patient_uuid` field on the span (it'll show as
+   a 12-character hex hash, not `MRN-2026-04481`), then at the
+   `doc_id` field (also hashed). ~10 seconds; Cmd-Tab back to the
+   dashboard before the extraction completes. The chat reply
+   lists extracted fields; below the bubble, `<ExtractionPanel>`
+   renders with extracted demographics, allergies, medications.
 6. Click **"View source (18)"** at the foot of the panel. The
    `DocumentViewer` modal opens.
 7. The PDF renders inside the modal, with blue rectangles overlaying
@@ -265,7 +283,18 @@ end.
 > OpenEMR service layer. Persistence runs server-side, so the audit
 > log is single-sourced through the canonical save path."
 >
-> *(while waiting for the extraction)*
+> *(while waiting for the extraction — Cmd-Tab to Langfuse)*
+>
+> "While the agent runs, this is the deployed-app observability —
+> Langfuse traces every turn. Notice the `patient_uuid` and
+> `doc_id` fields on the span: HMAC pseudonyms, not raw
+> identifiers. The trace is useful for debugging — you can see
+> the planner's tool calls, the vision-extractor latency, the
+> token spend — without ever carrying raw patient strings to a
+> SaaS observability vendor. PHI containment as a runtime
+> property, not just a build-time test."
+>
+> *(Cmd-Tab back to dashboard)*
 >
 > "Extraction surfaces as a *suggestion* with citations, not a write
 > to the canonical clinical tables. OCR is fallible — an intake form
@@ -296,6 +325,13 @@ end.
 - If the extraction fails (rare), skip to the eval segment and
   explicitly call out: "doc-upload pipeline is shipped, demoed in
   the live defense." Try once more first.
+- **Langfuse tab fallback.** If the Cmd-Tab to Langfuse fumbles
+  (wrong tab, slow load, signed out), drop the observability beat
+  — narrate from the dashboard side ("…runs Claude Haiku as a
+  vision model, persists as a `QuestionnaireResponse`…") and
+  resume on schedule. Do NOT debug Langfuse on camera; the
+  segment-5 voiceover already covers PHI-safe logging via the
+  rubric, this is just the bonus deployed-app demonstration.
 
 ---
 
