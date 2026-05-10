@@ -763,11 +763,15 @@ def create_app(
         from agentforge.dashboard_auth.openemr_patient_pid import (
             OpenEMRPatientPidFetcher,
         )
+        from agentforge.dashboard_auth.promote_route import (
+            make_agent_promote_router,
+        )
         from agentforge.dashboard_auth.turn_route import make_agent_turn_router
         from agentforge.dashboard_auth.upload_route import (
             make_agent_upload_router,
         )
         from agentforge.tools.document_upload import DocumentUploadWriter
+        from agentforge.tools.intake_promote import IntakePromoteWriter
 
         me_fetcher = OpenEMRMeFetcher(
             http=dashboard_me_http,
@@ -845,6 +849,26 @@ def create_app(
                 jwt_minter=jwt_minter,
                 auth_gateway=auth_gateway,
                 document_bytes_fetcher=document_bytes_fetcher_instance,
+            )
+        )
+        # Intake-promotion BFF route (Gap 2). Same auth pipeline as
+        # /api/agent/turn and /api/agent/upload; the writer reuses the
+        # dashboard httpx client (same cert posture as /me +
+        # /patient_pid) so production deployments don't need a second
+        # TLS-trust configuration.
+        intake_promote_writer = IntakePromoteWriter(
+            base_url=settings.openemr_base_url,
+            http_client=dashboard_me_http,
+        )
+        app.include_router(
+            make_agent_promote_router(
+                settings=settings,
+                session_store=session_store,
+                me_fetcher=me_fetcher,
+                patient_pid_fetcher=patient_pid_fetcher,
+                jwt_minter=jwt_minter,
+                auth_gateway=auth_gateway,
+                promote_writer=intake_promote_writer,
             )
         )
 
