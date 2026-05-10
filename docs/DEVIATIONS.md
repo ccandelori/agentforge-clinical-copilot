@@ -12,6 +12,120 @@ created; this file is the lightweight running record.
 
 ---
 
+## 2026-05-09 — Promote-to-chart fix: populate canonical `lists` columns so the FHIR projections render correctly
+
+**What we changed:** `IntakePromotionWriter` now populates
+canonical `lists`-table columns for allergy rows so the
+dashboard's `AllergiesCard` actually renders the substance,
+category, and severity that the clinician approved on the
+extraction panel:
+
+- `lists.diagnosis` ← substance text (the panel's `title`).
+  Without this, the FHIR projection drops `code` into the
+  data-absent-unknown branch and the card renders the substance
+  literally as "Unknown" — which the frontend's keyword-based
+  category classifier then mis-buckets as "environmental".
+- `lists.severity_al` ← parsed from the trailing
+  `(<severity>)` group on the panel's `details` string. Only
+  the round-trip-clean buckets `mild` and `severe` get written;
+  anything else (including `moderate`, missing, or the LLM's
+  free-form synonyms beyond `low/high/life-threatening`) is
+  intentionally left at the schema default of `NULL` so the
+  frontend's downstream "moderate" default surfaces.
+
+The `lists.reaction` column is intentionally **not** populated
+with free text. That column expects a `list_options.option_id`
+(joined to `list_id='reaction'`); writing a plain string would
+either fail the FHIR projection's `foreach` over
+`$dataRecord['reaction']` or silently drop. The reaction text
+the panel collected continues to land in `lists.comments` via
+the existing `details` channel, so a clinician browsing the
+chart row directly still sees it; it just doesn't surface on
+the AllergiesCard.
+
+The `lists.subtype` column is also left empty — the FHIR
+projection hardcodes `category = "medication"` and never reads
+`subtype`, and the frontend re-classifies the category from the
+substance text via keyword matching (so populating
+`lists.diagnosis` correctly is what fixes the category badge,
+not `lists.subtype`).
+
+**Why path (a) instead of `AllergyIntoleranceService::insert()`
+(path b):** The service-layer insert requires a `puuid` (we
+have a `pid`), constructs a fresh `UuidRegistry` whose
+constructor mutates global state, and uses the legacy procedural
+`sqlInsert()` instead of the DBAL `Connection` we already hold.
+Calling it from a JWT-auth'd internal endpoint would mix two
+incompatible auth pipelines (legacy `$_SESSION` + global state
+vs. JWT + DBAL). Path (a) — directly populating the canonical
+columns — is the smaller, more reviewable change and it lets the
+existing `lists.title` / `lists.user` / `lists.comments` / audit
+plumbing keep working unchanged.
+
+**Why we didn't widen the wire schema (PromotionItem / PromoteItem
+/ CommitItem) to carry structured `severity` / `category`
+fields:** the W2 deadline gives us roughly 10 hours, and the
+explicit constraints on this fix forbade touching `vue-ui/` or
+the BFF promote route. Parsing the structured fields out of the
+`details` string the panel already produces ("`<reaction>
+(<severity>)`") gives us the same effective behaviour for free
+without a three-layer coordinated change. A post-W2 cleanup
+should widen the schema so the structured fields travel
+explicitly rather than via string parsing.
+
+**Medication routing is deferred (separate decision below).**
+`type='medication'` rows continue to land in `lists` so the
+audit log reflects the clinician's approval, but they don't
+render in `MedicationsCard` (which reads from FHIR
+`MedicationRequest`, projected from the `prescriptions` table).
+Re-routing medication writes to `prescriptions` requires a new
+writer (UUID generation, several `NOT NULL` columns including
+`txDate` / `usage_category_title` / `request_intent_title`,
+plus the rxnorm coding decision) and is out of scope for this
+fix.
+
+**Family history is also deferred.** OpenEMR's modern dashboard
+doesn't expose `FHIR FamilyMemberHistory` — there's no
+`FamilyHistoryCard.vue` in `vue-ui/`. Family-history rows land
+in `lists.type='family_history'` correctly and would surface in
+the legacy chart UI, but the demo workaround on the new
+dashboard is "extracted, in DB, but no UI surface"; visible in
+the ExtractionPanel pre-commit, invisible post-commit. The
+post-W2 fix is a `FamilyHistoryCard.vue` that consumes
+`FamilyMemberHistory` (which OpenEMR already projects via
+`FhirFamilyMemberHistoryService`).
+
+**What we learned:** When the FHIR projection layer accepts
+free text in some columns and option-id references in others,
+the safe write path is the one that exercises both paths
+end-to-end before touching the schema. Three full hops here
+were invisible until manual testing surfaced "Unknown
+ENVIRONMENT moderate" in the dashboard:
+
+1. `lists.diagnosis` is treated as `TYPE:CODE` text by
+   `BaseService::addCoding()`; plain text becomes
+   `code = title`, `code_type = null`, surviving as
+   `code.coding[0].display` and `code.text`.
+2. `lists.severity_al` is mapped through a 3→2 bucket
+   compression in `FhirAllergyIntoleranceService` (mild/moderate
+   → low; severe → high); the frontend then re-expands
+   2→3 (low → mild; high → severe; default → moderate). Only
+   `mild` and `severe` round-trip cleanly.
+3. The frontend's category badge comes from a keyword match on
+   the substance text, not from the FHIR `category` field
+   (which is hardcoded to "medication" anyway). Populating
+   `diagnosis = title` fixes both the substance label AND the
+   category badge.
+
+**Artifacts:** branch `fix/promote-fhir-projection`, commit
+populating `lists.diagnosis` + `lists.severity_al` for allergy
+rows + new `IntakePromotionWriterTest` cases pinning the field
+mapping (mocked DBAL connection asserts the SQL params
+include the populated fields and that the severity bucket
+omission for `moderate` / null details is intentional).
+
+---
+
 ## 2026-05-09 — Gap 2: intake commit-to-chart shipped against PRD's "out of scope" carve-out
 
 **What we changed:** Built the promotion pipeline that turns
