@@ -1252,9 +1252,51 @@ export async function getCareTeams(patientId: string): Promise<readonly CareTeam
     `/api/fhir/CareTeam?${params.toString()}`,
   )
   if (!isBundle(bundle)) return []
-  return bundleEntries<fhir4.CareTeam>(bundle, 'CareTeam')
+  const teams = bundleEntries<fhir4.CareTeam>(bundle, 'CareTeam')
     .filter(isCareTeamResource)
     .map(projectCareTeam)
+
+  // Resolve Practitioner names. OpenEMR's FhirCareTeamService doesn't
+  // populate participant.member.display, so projectCareTeam leaves
+  // member.name === ''. Fetch each unique Practitioner in parallel and
+  // backfill names. Failures fall through to the existing 'Unknown
+  // member' placeholder so a single 404 doesn't break the whole card.
+  const practitionerIds = new Set<string>()
+  for (const team of teams) {
+    for (const member of team.members) {
+      if (member.name === '' && member.id !== '') practitionerIds.add(member.id)
+    }
+  }
+  if (practitionerIds.size === 0) return teams
+
+  const nameById = new Map<string, string>()
+  await Promise.all(
+    Array.from(practitionerIds).map(async (id) => {
+      try {
+        const p = await fhirFetch<fhir4.Practitioner>(
+          `/api/fhir/Practitioner/${encodeURIComponent(id)}`,
+        )
+        if (p.resourceType !== 'Practitioner') return
+        const name = p.name?.[0]
+        if (name === undefined) return
+        const given = (name.given ?? []).join(' ').trim()
+        const family = (name.family ?? '').trim()
+        const display = [given, family].filter((s) => s !== '').join(' ')
+        if (display !== '') nameById.set(id, display)
+      } catch {
+        // Practitioner not resolvable — keep 'Unknown member' fallback.
+      }
+    }),
+  )
+
+  return teams.map((team) => ({
+    ...team,
+    members: team.members.map((m) =>
+      m.name === '' && nameById.has(m.id)
+        ? { ...m, name: nameById.get(m.id)! }
+        : m,
+    ),
+  }))
 }
 
 /**
