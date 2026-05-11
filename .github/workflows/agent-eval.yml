@@ -110,7 +110,7 @@ jobs:
       # workflow_dispatch). Runs even on gate failure so the verdict
       # is visible inline.
       if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@v8
+      uses: actions/github-script@v9
       env:
         REPORT_PATH: sidecar/var/eval_gate_report.md
       with:
