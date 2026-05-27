@@ -187,7 +187,7 @@ services:
   # the dev container is never reachable off-host.
   redis:
     restart: unless-stopped
-    image: redis:7-alpine
+    image: redis:8-alpine
     ports:
     - "127.0.0.1:${WT_REDIS_PORT:-6379}:6379"
     volumes:
