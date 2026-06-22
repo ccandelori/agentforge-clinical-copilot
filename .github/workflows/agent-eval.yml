@@ -59,7 +59,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Install uv
       # uv ships as a PyPI wheel — same bootstrap as `.gitlab-ci.yml`'s
